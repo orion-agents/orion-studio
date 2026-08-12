@@ -3,7 +3,7 @@
 triage_project_sync.py
 ======================
 
-Sync triage state from `zed-industries/zed` issues into the
+Sync triage state from `orion-agents/orion-studio` issues into the
 "Zed weekly triage" project (#84).
 
 Auto-derives `Status`, `Stale since`, `Aged?`, `Intake week` from issue labels

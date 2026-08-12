@@ -26,7 +26,7 @@ winget install Zed.Zed
 For most Linux users, the easiest way to install Zed is through our installation script:
 
 ```sh
-curl -f https://zed.dev/install.sh | sh
+curl -f https://orion.dev/install.sh | sh
 ```
 
 After installation, you can launch Zed from your Applications folder (macOS), Start menu (Windows), or directly from the terminal using:
@@ -346,8 +346,8 @@ To set expectations clearly, here's what PyCharm offers that Zed doesn't have:
 PyCharm offers Code With Me as a separate plugin for collaboration. Zed has collaboration built into the core experience.
 
 - Open the Collab Panel in the left dock
-- Create a channel and [invite your collaborators](https://zed.dev/docs/collaboration#inviting-a-collaborator) to join
-- [Share your screen or your codebase](https://zed.dev/docs/collaboration#share-a-project) directly
+- Create a channel and [invite your collaborators](https://orion.dev/docs/collaboration#inviting-a-collaborator) to join
+- [Share your screen or your codebase](https://orion.dev/docs/collaboration#share-a-project) directly
 
 Once connected, you'll see each other's cursors, selections, and edits in real time. Voice chat is included. There's no need for separate tools or third-party logins.
 
@@ -368,9 +368,9 @@ Once signed in, just start typing. Zed will offer suggestions inline for you to 
 
 To use other AI models in Zed, you have several options:
 
-- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and access through [Zed Pro](https://zed.dev/docs/account/zed-hosted-models.html).
-- Bring your own [API keys](https://zed.dev/docs/ai/use-api-access.html), no authentication needed
-- Use [External Agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
+- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://orion.dev/docs/authentication) and access through [Zed Pro](https://orion.dev/docs/account/zed-hosted-models.html).
+- Bring your own [API keys](https://orion.dev/docs/ai/use-api-access.html), no authentication needed
+- Use [External Agents like Claude Agent](https://orion.dev/docs/ai/external-agents.html)
 
 ## Advanced Config and Productivity Tweaks
 

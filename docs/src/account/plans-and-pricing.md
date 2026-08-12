@@ -5,7 +5,7 @@ description: Compare Zed's Free, Pro, and Business plans, and understand token-b
 
 # Plans & Pricing
 
-For costs and more information on pricing, visit [Zed's pricing page](https://zed.dev/pricing).
+For costs and more information on pricing, visit [Zed's pricing page](https://orion.dev/pricing).
 
 Zed works without AI features or a subscription. No [authentication](../authentication.md) is required for the editor itself.
 
@@ -39,7 +39,7 @@ For a full feature overview, see [Zed Business](../business/overview.md). For bi
 
 ### Student Plan {#student}
 
-The [Zed Student plan](https://zed.dev/education) includes all Zed Pro features: unlimited [Edit Predictions](../ai/edit-prediction.md), all [hosted AI models](./zed-hosted-models.md) except Claude Opus, and $10/month in token credits. Available free for one year to verified university students.
+The [Zed Student plan](https://orion.dev/education) includes all Zed Pro features: unlimited [Edit Predictions](../ai/edit-prediction.md), all [hosted AI models](./zed-hosted-models.md) except Claude Opus, and $10/month in token credits. Available free for one year to verified university students.
 
 ## Usage {#usage}
 

@@ -1,6 +1,6 @@
-# The Zed Rust Extension API
+# The Orion Studio Rust Extension API
 
-This crate lets you write extensions for Zed in Rust.
+This crate lets you write extensions for Orion Studio in Rust.
 
 ## Extension Manifest
 
@@ -18,7 +18,7 @@ repository = "https://github.com/your/extension-repository"
 
 ## Cargo metadata
 
-Zed extensions are packaged as WebAssembly files. In your Cargo.toml, you'll
+Orion Studio extensions are packaged as WebAssembly files. In your Cargo.toml, you'll
 need to set your `crate-type` accordingly:
 
 ```toml
@@ -34,18 +34,23 @@ crate-type = ["cdylib"]
 To define your extension, create a type that implements the `Extension` trait, and register it.
 
 ```rust
-use zed_extension_api as zed;
+use zed_extension_api as orion;
 
 struct MyExtension {
     // ... state
 }
 
-impl zed::Extension for MyExtension {
+impl orion::Extension for MyExtension {
     // ...
 }
 
-zed::register_extension!(MyExtension);
+orion::register_extension!(MyExtension);
 ```
+
+> **Compatibility note:** The legacy `use zed_extension_api as zed;` alias continues to
+> work during the transition window. The underlying WIT package name (`zed:extension`)
+> is unchanged so existing extensions keep loading; `orion` is simply the canonical
+> authoring namespace going forward.
 
 ## Testing your extension
 
@@ -53,17 +58,17 @@ To run your extension in Zed as you're developing it:
 
 - Make sure you have [Rust installed](https://www.rust-lang.org/learn/get-started)
 - Have the `wasm32-wasip2` target installed (`rustup target add wasm32-wasip2`)
-- Open the extensions view using the `zed: extensions` action in the command palette.
+- Open the extensions view using the `orion: extensions` action in the command palette.
 - Click the `Install Dev Extension` button in the top right
 - Choose the path to your extension directory.
 
-## Compatible Zed versions
+## Compatible Orion Studio versions
 
-Extensions created using newer versions of the Zed extension API won't be compatible with older versions of Zed.
+Extensions created using newer versions of the Orion Studio extension API won't be compatible with older versions of Orion Studio.
 
-Here is the compatibility of the `zed_extension_api` with versions of Zed:
+Here is the compatibility of the `zed_extension_api` with versions of Orion Studio:
 
-| Zed version | `zed_extension_api` version |
+| Orion Studio version | `zed_extension_api` version |
 | ----------- | --------------------------- |
 | `0.192.x`   | `0.0.1` - `0.6.0`           |
 | `0.186.x`   | `0.0.1` - `0.5.0`           |

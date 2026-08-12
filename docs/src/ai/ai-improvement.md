@@ -72,7 +72,7 @@ these conditions are met:
 1. You opt in by toggling **Training Data Collection** under the **Privacy**
    section of the Edit Prediction status bar menu.
 2. The project is open source, detected by the presence of a license file. See
-   the [license detection logic](https://github.com/zed-industries/zed/blob/main/crates/edit_prediction/src/license_detection.rs).
+   the [license detection logic](https://github.com/orion-agents/orion-studio/blob/main/crates/edit_prediction/src/license_detection.rs).
 3. The file is not excluded by `edit_predictions.disabled_globs`.
 
 Edit Prediction setup and provider configuration live on the
@@ -101,7 +101,7 @@ regardless of opt-in status:
 ```
 
 You can explicitly exclude additional paths or file extensions by adding them to
-[`edit_predictions.disabled_globs`](https://zed.dev/docs/reference/all-settings#edit-predictions)
+[`edit_predictions.disabled_globs`](https://orion.dev/docs/reference/all-settings#edit-predictions)
 in your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
@@ -147,4 +147,4 @@ feedback or opting into Edit Prediction training data collection. See
 
 ## Applicable Terms {#applicable-terms}
 
-See the [Zed Terms of Service](https://zed.dev/terms) for more.
+See the [Zed Terms of Service](https://orion.dev/terms) for more.

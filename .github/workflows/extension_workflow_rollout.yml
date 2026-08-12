@@ -18,7 +18,7 @@ permissions:
   contents: read
 jobs:
   fetch_extension_repos:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && (github.ref == 'refs/tags/extension-workflows' || github.ref == 'refs/heads/main')
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions') && (github.ref == 'refs/tags/extension-workflows' || github.ref == 'refs/heads/main')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: checkout_zed_repo
@@ -182,7 +182,7 @@ jobs:
         title: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
           This PR updates the CI workflow files from the main Zed repository
-          based on the commit zed-industries/zed@${{ github.sha }}
+          based on the commit orion-agents/orion-studio@${{ github.sha }}
 
           ${{ inputs.change-description }}
         commit-message: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`

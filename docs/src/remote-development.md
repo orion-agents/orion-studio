@@ -14,7 +14,7 @@ For day-to-day workflows, pair remote development with [Tasks](./tasks.md),
 
 Remote development requires two computers, your local machine that runs the Zed UI and the remote server which runs a Zed headless server. The two communicate over SSH, so you will need to be able to SSH from your local machine into the remote server to use this feature.
 
-![Architectural overview of Zed Remote Development](https://zed.dev/img/remote-development/diagram.png)
+![Architectural overview of Zed Remote Development](https://orion.dev/img/remote-development/diagram.png)
 
 On your local machine, Zed runs its UI, talks to language models, uses Tree-sitter to parse and syntax-highlight code, and stores unsaved changes and recent projects. The source code, language servers, tasks, and the terminal all run on the remote server. [AI features](./ai/overview.md) work in remote sessions, including the Agent Panel and Inline Assistant.
 
@@ -22,7 +22,7 @@ On your local machine, Zed runs its UI, talks to language models, uses Tree-sitt
 
 ## Setup
 
-1. Download and install the latest [Zed](https://zed.dev/releases). You need at least Zed v0.159.
+1. Download and install the latest [Zed](https://orion.dev/releases). You need at least Zed v0.159.
 1. Use {#kb projects::OpenRemote} to open the "Remote Projects" dialog.
 1. Click "Connect New Server" and enter the command you use to SSH into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
 1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, Zed will download the server on the remote host and start it.
@@ -222,18 +222,18 @@ Any prompts that SSH needs will be shown in the UI, so you can verify host keys,
 
 Once the master connection is established, Zed will check to see if the remote server binary is present in `~/.zed_server` on the remote, and that its version matches the current version of Zed that you're using.
 
-If it is not there or the version mismatches, Zed will try to download the latest version. By default, it will download from `https://zed.dev` directly, but if you set: `{"upload_binary_over_ssh":true}` in your settings for that server, it will download the binary to your local machine and then upload it to the remote server.
+If it is not there or the version mismatches, Zed will try to download the latest version. By default, it will download from `https://orion.dev` directly, but if you set: `{"upload_binary_over_ssh":true}` in your settings for that server, it will download the binary to your local machine and then upload it to the remote server.
 
-If you'd like to maintain the server binary yourself you can. You can either download our prebuilt versions from [GitHub](https://github.com/zed-industries/zed/releases), or [build your own](https://zed.dev/docs/development):
+If you'd like to maintain the server binary yourself you can. You can either download our prebuilt versions from [GitHub](https://github.com/orion-agents/orion-studio/releases), or [build your own](https://orion.dev/docs/development):
 
 ```bash
 cargo build --release --package remote_server
 llvm-objcopy --strip-debug target/release/remote_server
 ```
 
-Stripping debug symbols matches the packaging step in [`script/bundle-linux`](https://github.com/zed-industries/zed/blob/main/script/bundle-linux) and keeps the binary closer to the size of Zed's prebuilt downloads. Prefer `llvm-objcopy` because GNU `objcopy` may not understand newer LLVM-emitted CREL sections.
+Stripping debug symbols matches the packaging step in [`script/bundle-linux`](https://github.com/orion-agents/orion-studio/blob/main/script/bundle-linux) and keeps the binary closer to the size of Zed's prebuilt downloads. Prefer `llvm-objcopy` because GNU `objcopy` may not understand newer LLVM-emitted CREL sections.
 
-The official Linux release builds a musl/static remote server. If you need that, follow the current target and flags in [`script/bundle-linux`](https://github.com/zed-industries/zed/blob/main/script/bundle-linux); for x86-64 Linux, that looks like:
+The official Linux release builds a musl/static remote server. If you need that, follow the current target and flags in [`script/bundle-linux`](https://github.com/orion-agents/orion-studio/blob/main/script/bundle-linux); for x86-64 Linux, that looks like:
 
 ```bash
 RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --package remote_server --target x86_64-unknown-linux-musl
@@ -250,7 +250,7 @@ Each connection tries to run the development server in proxy mode. This mode wil
 
 In the case that reconnecting fails, the daemon will not be re-used. That said, unsaved changes are by default persisted locally, so that you do not lose work. You can always reconnect to the project at a later date and Zed will restore unsaved changes.
 
-If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #support forums on [Discord](https://zed.dev/community-links).
+If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/orion-agents/orion-studio/issues/new) or reach out in the #support forums on [Discord](https://orion.dev/community-links).
 
 ## Supported SSH Options
 
@@ -284,5 +284,5 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 - [Configuring Zed](./configuring-zed.md): Manage shared and project settings,
   including `.zed/settings.json`.
 - [Agent Panel](./ai/agent-panel.md): Use AI workflows in remote projects.
-- [Remote Development on zed.dev](https://zed.dev/remote-development): Product
+- [Remote Development on zed.dev](https://orion.dev/remote-development): Product
   overview and release updates.

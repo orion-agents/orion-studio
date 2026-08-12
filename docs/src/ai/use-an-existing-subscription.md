@@ -30,7 +30,7 @@ Claude Pro and Max subscriptions are separate from Anthropic API credits. Use Cl
 
 For Anthropic API access, use [Use API Access](./use-api-access.md#anthropic).
 
-See [What Anthropic's New Claude Billing Means for Zed Users](https://zed.dev/blog/anthropic-subscription-changes) for more context.
+See [What Anthropic's New Claude Billing Means for Zed Users](https://orion.dev/blog/anthropic-subscription-changes) for more context.
 
 ## GitHub Copilot {#github-copilot}
 

@@ -1,8 +1,8 @@
+use orion::lsp::CompletionKind;
+use orion::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use std::fs;
-use zed::lsp::CompletionKind;
-use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::process::Command;
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as orion, Result};
 
 struct TestExtension {
     cached_binary_path: Option<String>,
@@ -12,9 +12,9 @@ impl TestExtension {
     fn language_server_binary_path(
         &mut self,
         language_server_id: &LanguageServerId,
-        _worktree: &zed::Worktree,
+        _worktree: &orion::Worktree,
     ) -> Result<String> {
-        let (platform, arch) = zed::current_platform();
+        let (platform, arch) = orion::current_platform();
 
         let current_dir = std::env::current_dir().unwrap();
         println!("current_dir: {}", current_dir.display());
@@ -41,8 +41,8 @@ impl TestExtension {
         );
 
         let command = match platform {
-            zed::Os::Linux | zed::Os::Mac => Command::new("echo"),
-            zed::Os::Windows => Command::new("cmd").args(["/C", "echo"]),
+            orion::Os::Linux | orion::Os::Mac => Command::new("echo"),
+            orion::Os::Windows => Command::new("cmd").args(["/C", "echo"]),
         };
         let output = command.arg("hello from a child process!").output()?;
         println!(
@@ -56,39 +56,39 @@ impl TestExtension {
             return Ok(path.clone());
         }
 
-        zed::set_language_server_installation_status(
+        orion::set_language_server_installation_status(
             language_server_id,
-            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
+            &orion::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let release = zed::latest_github_release(
+        let release = orion::latest_github_release(
             "gleam-lang/gleam",
-            zed::GithubReleaseOptions {
+            orion::GithubReleaseOptions {
                 require_assets: true,
                 pre_release: false,
             },
         )?;
 
         let ext = "tar.gz";
-        let download_type = zed::DownloadedFileType::GzipTar;
+        let download_type = orion::DownloadedFileType::GzipTar;
 
         // Do this if you want to actually run this extension -
         // the actual asset is a .zip. But the integration test is simpler
         // if every platform uses .tar.gz.
         //
         // ext = "zip";
-        // download_type = zed::DownloadedFileType::Zip;
+        // download_type = orion::DownloadedFileType::Zip;
 
         let asset_name = format!(
             "gleam-{version}-{arch}-{os}.{ext}",
             version = release.version,
             arch = match arch {
-                zed::Architecture::Aarch64 => "aarch64",
-                zed::Architecture::X8664 => "x86_64",
+                orion::Architecture::Aarch64 => "aarch64",
+                orion::Architecture::X8664 => "x86_64",
             },
             os = match platform {
-                zed::Os::Mac => "apple-darwin",
-                zed::Os::Linux => "unknown-linux-musl",
-                zed::Os::Windows => "pc-windows-msvc",
+                orion::Os::Mac => "apple-darwin",
+                orion::Os::Linux => "unknown-linux-musl",
+                orion::Os::Windows => "pc-windows-msvc",
             },
         );
 
@@ -102,17 +102,17 @@ impl TestExtension {
         let binary_path = format!("{version_dir}/gleam");
 
         if !fs::metadata(&binary_path).is_ok_and(|stat| stat.is_file()) {
-            zed::set_language_server_installation_status(
+            orion::set_language_server_installation_status(
                 language_server_id,
-                &zed::LanguageServerInstallationStatus::Downloading,
+                &orion::LanguageServerInstallationStatus::Downloading,
             );
 
-            zed::download_file(&asset.download_url, &version_dir, download_type)
+            orion::download_file(&asset.download_url, &version_dir, download_type)
                 .map_err(|e| format!("failed to download file: {e}"))?;
 
-            zed::set_language_server_installation_status(
+            orion::set_language_server_installation_status(
                 language_server_id,
-                &zed::LanguageServerInstallationStatus::None,
+                &orion::LanguageServerInstallationStatus::None,
             );
 
             let entries =
@@ -132,7 +132,7 @@ impl TestExtension {
     }
 }
 
-impl zed::Extension for TestExtension {
+impl orion::Extension for TestExtension {
     fn new() -> Self {
         Self {
             cached_binary_path: None,
@@ -142,9 +142,9 @@ impl zed::Extension for TestExtension {
     fn language_server_command(
         &mut self,
         language_server_id: &LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<zed::Command> {
-        Ok(zed::Command {
+        worktree: &orion::Worktree,
+    ) -> Result<orion::Command> {
+        Ok(orion::Command {
             command: self.language_server_binary_path(language_server_id, worktree)?,
             args: vec!["lsp".to_string()],
             env: Default::default(),
@@ -154,8 +154,8 @@ impl zed::Extension for TestExtension {
     fn label_for_completion(
         &self,
         _language_server_id: &LanguageServerId,
-        completion: zed::lsp::Completion,
-    ) -> Option<zed::CodeLabel> {
+        completion: orion::lsp::Completion,
+    ) -> Option<orion::CodeLabel> {
         let name = &completion.label;
         let ty = strip_newlines_from_detail(&completion.detail?);
         let let_binding = "let a";
@@ -188,7 +188,7 @@ impl zed::Extension for TestExtension {
     }
 }
 
-zed::register_extension!(TestExtension);
+orion::register_extension!(TestExtension);
 
 /// Removes newlines from the completion detail.
 ///

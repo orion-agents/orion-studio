@@ -160,7 +160,7 @@ def create_issue_text(section_to_issues: dict[str, list[dict[str, Any]]]) -> str
     lines.append("\n---\n")
     lines.append(
         "*For details on how this issue is generated, "
-        "[see the script](https://github.com/zed-industries/zed/blob/main/script/update_top_ranking_issues/main.py)*"
+        "[see the script](https://github.com/orion-agents/orion-studio/blob/main/script/update_top_ranking_issues/main.py)*"
     )
 
     return "\n".join(lines)

@@ -33,20 +33,20 @@ Check out the [MCP Server Extensions](../extensions/mcp-extensions.md) page to l
 
 Many MCP servers are available as extensions. Find them via:
 
-1. [the Zed website](https://zed.dev/extensions?filter=context-servers)
+1. [the Zed website](https://orion.dev/extensions?filter=context-servers)
 2. in the app, open the Command Palette and run the {#action zed::Extensions} action
 3. in the app, open **Settings → AI → MCP Servers**, click `Add Server`, and choose `Install from Extensions`
 
 Popular servers available as an extension include:
 
-- [Context7](https://zed.dev/extensions/mcp-server-context7)
-- [GitHub](https://zed.dev/extensions/mcp-server-github)
-- [Puppeteer](https://zed.dev/extensions/mcp-server-puppeteer)
-- [Gem](https://zed.dev/extensions/gem)
-- [Brave Search](https://zed.dev/extensions/mcp-server-brave-search)
+- [Context7](https://orion.dev/extensions/mcp-server-context7)
+- [GitHub](https://orion.dev/extensions/mcp-server-github)
+- [Puppeteer](https://orion.dev/extensions/mcp-server-puppeteer)
+- [Gem](https://orion.dev/extensions/gem)
+- [Brave Search](https://orion.dev/extensions/mcp-server-brave-search)
 - [Prisma](https://github.com/aqrln/prisma-mcp-zed)
-- [Framelink Figma](https://zed.dev/extensions/mcp-server-figma)
-- [Resend](https://zed.dev/extensions/mcp-server-resend)
+- [Framelink Figma](https://orion.dev/extensions/mcp-server-figma)
+- [Resend](https://orion.dev/extensions/mcp-server-resend)
 
 ### As Custom Servers
 
@@ -98,7 +98,7 @@ Mentioning the MCP server by name can help the model pick tools from that server
 
 However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-profiles.md) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
 
-As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
+As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://orion.dev/extensions/mcp-server-container-use):
 
 ```json [settings]
 "agent": {

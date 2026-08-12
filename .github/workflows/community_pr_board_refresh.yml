@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   refresh:
-    if: github.repository == 'zed-industries/zed'
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 15
 
@@ -31,7 +31,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: orion-agents
           repositories: zed
           permission-issues: read
           permission-organization-projects: write

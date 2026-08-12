@@ -1,15 +1,16 @@
 #!/usr/bin/env sh
 set -eu
 
-# Downloads a tarball from https://zed.dev/releases and unpacks it
+# Downloads a tarball from https://orion.dev/releases and unpacks it
 # into ~/.local/. If you'd prefer to do this manually, instructions are at
-# https://zed.dev/docs/linux.
+# https://orion.dev/docs/linux.
 
 main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
-    channel="${ZED_CHANNEL:-stable}"
-    ZED_VERSION="${ZED_VERSION:-latest}"
+    channel="${ORION_STUDIO_CHANNEL:-${ZED_CHANNEL:-stable}}"
+    ZED_VERSION="${ORION_STUDIO_VERSION:-${ZED_VERSION:-latest}}"
+    ZED_BUNDLE_PATH="${ORION_STUDIO_BUNDLE_PATH:-$ZED_BUNDLE_PATH}"
     # Use TMPDIR if available (for environments with non-standard temp directories)
     if [ -n "${TMPDIR:-}" ] && [ -d "${TMPDIR}" ]; then
         temp="$(mktemp -d "$TMPDIR/zed-XXXXXX")"
@@ -54,10 +55,10 @@ main() {
 
     "$platform" "$@"
 
-    if [ "$(command -v zed)" = "$HOME/.local/bin/zed" ]; then
-        echo "Zed has been installed. Run with 'zed'"
+    if [ "$(command -v orion-studio)" = "$HOME/.local/bin/orion-studio" ]; then
+        echo "Orion Studio has been installed. Run with 'orion-studio'"
     else
-        echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
+        echo "To run Orion Studio from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
 
         case "$SHELL" in
@@ -74,16 +75,16 @@ main() {
                 ;;
         esac
 
-        echo "To run Zed now, '~/.local/bin/zed'"
+        echo "To run Orion Studio now, '~/.local/bin/orion-studio'"
     fi
 }
 
 linux() {
     if [ -n "${ZED_BUNDLE_PATH:-}" ]; then
-        cp "$ZED_BUNDLE_PATH" "$temp/zed-linux-$arch.tar.gz"
+        cp "$ZED_BUNDLE_PATH" "$temp/orion-studio-linux-$arch.tar.gz"
     else
-        echo "Downloading Zed version: $ZED_VERSION"
-        curl "https://cloud.zed.dev/releases/$channel/$ZED_VERSION/download?asset=zed&arch=$arch&os=linux&source=install.sh" > "$temp/zed-linux-$arch.tar.gz"
+        echo "Downloading Orion Studio version: $ZED_VERSION"
+        curl "https://cloud.orion.dev/releases/$channel/$ZED_VERSION/download?asset=orion-studio&arch=$arch&os=linux&source=install.sh" > "$temp/orion-studio-linux-$arch.tar.gz"
     fi
 
     suffix=""
@@ -94,56 +95,58 @@ linux() {
     appid=""
     case "$channel" in
       stable)
-        appid="dev.zed.Zed"
+        appid="dev.orion.OrionStudio"
         ;;
       nightly)
-        appid="dev.zed.Zed-Nightly"
+        appid="dev.orion.OrionStudio-Nightly"
         ;;
       preview)
-        appid="dev.zed.Zed-Preview"
+        appid="dev.orion.OrionStudio-Preview"
         ;;
       dev)
-        appid="dev.zed.Zed-Dev"
+        appid="dev.orion.OrionStudio-Dev"
         ;;
       *)
         echo "Unknown release channel: ${channel}. Using stable app ID."
-        appid="dev.zed.Zed"
+        appid="dev.orion.OrionStudio"
         ;;
     esac
 
     # Unpack
-    rm -rf "$HOME/.local/zed$suffix.app"
-    mkdir -p "$HOME/.local/zed$suffix.app"
-    tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
+    rm -rf "$HOME/.local/orion-studio$suffix.app"
+    mkdir -p "$HOME/.local/orion-studio$suffix.app"
+    tar -xzf "$temp/orion-studio-linux-$arch.tar.gz" -C "$HOME/.local/"
 
     # Setup ~/.local directories
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 
     # Link the binary
-    if [ -f "$HOME/.local/zed$suffix.app/bin/zed" ]; then
-        ln -sf "$HOME/.local/zed$suffix.app/bin/zed" "$HOME/.local/bin/zed"
+    if [ -f "$HOME/.local/orion-studio$suffix.app/bin/orion-studio" ]; then
+        ln -sf "$HOME/.local/orion-studio$suffix.app/bin/orion-studio" "$HOME/.local/bin/orion-studio"
     else
         # support for versions before 0.139.x.
-        ln -sf "$HOME/.local/zed$suffix.app/bin/cli" "$HOME/.local/bin/zed"
+        ln -sf "$HOME/.local/orion-studio$suffix.app/bin/cli" "$HOME/.local/bin/orion-studio"
     fi
+    # Legacy compatibility alias for muscle memory / existing scripts.
+    ln -sf "$HOME/.local/bin/orion-studio" "$HOME/.local/bin/zed"
 
     # Copy .desktop file
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
-    src_dir="$HOME/.local/zed$suffix.app/share/applications"
+    src_dir="$HOME/.local/orion-studio$suffix.app/share/applications"
     if [ -f "$src_dir/${appid}.desktop" ]; then
         cp "$src_dir/${appid}.desktop" "${desktop_file_path}"
     else
         # Fallback for older tarballs
-        cp "$src_dir/zed$suffix.desktop" "${desktop_file_path}"
+        cp "$src_dir/orion-studio$suffix.desktop" "${desktop_file_path}"
     fi
-    sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
+    sed -i "s|Icon=orion-studio|Icon=$HOME/.local/orion-studio$suffix.app/share/icons/hicolor/512x512/apps/orion-studio.png|g" "${desktop_file_path}"
+    sed -i "s|Exec=orion-studio|Exec=$HOME/.local/orion-studio$suffix.app/bin/orion-studio|g" "${desktop_file_path}"
 }
 
 macos() {
-    echo "Downloading Zed version: $ZED_VERSION"
-    curl "https://cloud.zed.dev/releases/$channel/$ZED_VERSION/download?asset=zed&os=macos&arch=$arch&source=install.sh" > "$temp/Zed-$arch.dmg"
-    hdiutil attach -quiet "$temp/Zed-$arch.dmg" -mountpoint "$temp/mount"
+    echo "Downloading Orion Studio version: $ZED_VERSION"
+    curl "https://cloud.orion.dev/releases/$channel/$ZED_VERSION/download?asset=orion-studio&os=macos&arch=$arch&source=install.sh" > "$temp/Orion-Studio-$arch.dmg"
+    hdiutil attach -quiet "$temp/Orion-Studio-$arch.dmg" -mountpoint "$temp/mount"
     app="$(cd "$temp/mount/"; echo *.app)"
     echo "Installing $app"
     if [ -d "/Applications/$app" ]; then
@@ -155,7 +158,9 @@ macos() {
 
     mkdir -p "$HOME/.local/bin"
     # Link the binary
-    ln -sf "/Applications/$app/Contents/MacOS/cli" "$HOME/.local/bin/zed"
+    ln -sf "/Applications/$app/Contents/MacOS/cli" "$HOME/.local/bin/orion-studio"
+    # Legacy compatibility alias.
+    ln -sf "$HOME/.local/bin/orion-studio" "$HOME/.local/bin/zed"
 }
 
 main "$@"

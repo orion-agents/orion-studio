@@ -9,7 +9,7 @@ FreeBSD is not currently a supported platform, so this guide is a work in progre
 
 ## Repository
 
-Clone the [Zed repository](https://github.com/zed-industries/zed).
+Clone the [Zed repository](https://github.com/orion-agents/orion-studio).
 
 ## Dependencies
 
@@ -19,7 +19,7 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
   script/freebsd
   ```
 
-  If preferred, you can inspect [`script/freebsd`](https://github.com/zed-industries/zed/blob/main/script/freebsd) and perform the steps manually.
+  If preferred, you can inspect [`script/freebsd`](https://github.com/orion-agents/orion-studio/blob/main/script/freebsd) and perform the steps manually.
 
 ## Building from source
 

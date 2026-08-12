@@ -12,7 +12,7 @@ permissions:
   contents: read
 jobs:
   check_nightly_tag:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -36,7 +36,7 @@ jobs:
   run_tests_linux:
     needs:
     - check_nightly_tag
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_nightly_tag.outputs.skip != 'true'
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions') && needs.check_nightly_tag.outputs.skip != 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -482,7 +482,7 @@ jobs:
   build_nix_linux_x86_64:
     needs:
     - run_tests_linux
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -515,7 +515,7 @@ jobs:
   build_nix_mac_aarch64:
     needs:
     - run_tests_linux
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-mac-large
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -570,7 +570,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - id: generate-token

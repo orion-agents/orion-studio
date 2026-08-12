@@ -15,7 +15,7 @@ Navigating through the icon theme list by moving up and down will change the ico
 
 ## Installing more Icon Themes
 
-More icon themes are available from the Extensions page, which you can access via the command palette with {#action zed::Extensions} or the [Zed website](https://zed.dev/extensions?filter=icon-themes).
+More icon themes are available from the Extensions page, which you can access via the command palette with {#action zed::Extensions} or the [Zed website](https://orion.dev/extensions?filter=icon-themes).
 
 ## Configuring Icon Themes
 

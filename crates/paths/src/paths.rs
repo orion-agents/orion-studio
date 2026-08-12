@@ -1,4 +1,4 @@
-//! Paths to locations used by Zed.
+//! Paths to locations used by Orion Studio.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,12 @@ use util::paths::SanitizedPath;
 pub use util::paths::home_dir;
 use util::rel_path::RelPath;
 
+mod migration;
+pub use migration::{
+    MIGRATION_MARKER_NAME, MIGRATION_SCHEMA_VERSION, MigrationError, MigrationState,
+    legacy_config_dir, legacy_data_dir, migrate_root,
+};
+
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 
@@ -15,36 +21,14 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// and state directory paths.
 ///
 /// Forks should change this to avoid colliding with Zed's user data.
-pub const APP_NAME: &str = "Zed";
+pub const APP_NAME: &str = "Orion Studio";
 
-/// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
+/// Lowercased slug form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
-pub const APP_NAME_LOWERCASE: &str = {
-    assert!(!APP_NAME.is_empty(), "APP_NAME must not be empty");
-    assert!(APP_NAME.as_bytes().is_ascii(), "APP_NAME must be ASCII");
-    const BYTES: [u8; APP_NAME.len()] = {
-        let mut bytes = [0u8; APP_NAME.len()];
-        let mut i = 0;
-        while i < APP_NAME.len() {
-            assert!(
-                APP_NAME.as_bytes()[i] != b'/' && APP_NAME.as_bytes()[i] != b'\\',
-                "APP_NAME must not contain path separators",
-            );
-            assert!(
-                APP_NAME.as_bytes()[i] >= 0x20,
-                "APP_NAME must not contain control characters"
-            );
-            bytes[i] = APP_NAME.as_bytes()[i];
-            i += 1;
-        }
-        bytes.make_ascii_lowercase();
-        bytes
-    };
-    match std::str::from_utf8(&BYTES) {
-        Ok(s) => s,
-        Err(_) => unreachable!(),
-    }
-};
+///
+/// This is a separate slug (`orion-studio`) rather than a literal lowercase of
+/// [`APP_NAME`] (`Orion Studio`), so filesystem paths stay space-free.
+pub const APP_NAME_LOWERCASE: &str = "orion-studio";
 
 /// A custom data directory override, set only by `set_custom_data_dir`.
 /// This is used to override the default data directory location.
@@ -53,30 +37,40 @@ static CUSTOM_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// The resolved data directory, combining custom override or platform defaults.
 /// This is set once and cached for subsequent calls.
-/// On macOS, this is `~/Library/Application Support/Zed`.
-/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/zed`.
-/// On Windows, this is `%LOCALAPPDATA%\Zed`.
+/// On macOS, this is `~/Library/Application Support/Orion Studio`.
+/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/orion-studio`.
+/// On Windows, this is `%LOCALAPPDATA%\Orion Studio`.
 static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// The resolved config directory, combining custom override or platform defaults.
 /// This is set once and cached for subsequent calls.
-/// On macOS, this is `~/.config/zed`.
-/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/zed`.
-/// On Windows, this is `%APPDATA%\Zed`.
+/// On macOS, this is `~/.config/orion-studio`.
+/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/orion-studio`.
+/// On Windows, this is `%APPDATA%\Orion Studio`.
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// Returns the relative path to the zed_server directory on the ssh host.
+/// Returns the relative path to the orion_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::from_unix_str(".orion_server").unwrap());
+    *CACHED
+}
+
+/// Legacy relative path to the `zed_server` directory on the ssh host.
+///
+/// Retained so S04 can detect and migrate data from existing Zed installs.
+/// Do not use for new installs; scheduled for removal after the migration window.
+pub fn remote_server_dir_relative_legacy() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
         LazyLock::new(|| RelPath::from_unix_str(".zed_server").unwrap());
     *CACHED
 }
 
 // Remove this once 223 goes stable
-/// Returns the relative path to the zed_wsl_server directory on the wsl host.
+/// Returns the relative path to the orion_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::from_unix_str(".zed_wsl_server").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".orion_wsl_server").unwrap());
     *CACHED
 }
 
@@ -236,19 +230,19 @@ pub fn logs_dir() -> &'static PathBuf {
     })
 }
 
-/// Returns the path to the Zed server directory on this SSH host.
+/// Returns the path to the Orion server directory on this SSH host.
 pub fn remote_server_state_dir() -> &'static PathBuf {
     static REMOTE_SERVER_STATE: OnceLock<PathBuf> = OnceLock::new();
     REMOTE_SERVER_STATE.get_or_init(|| data_dir().join("server_state"))
 }
 
-/// Returns the path to the `Zed.log` file.
+/// Returns the path to the `Orion Studio.log` file.
 pub fn log_file() -> &'static PathBuf {
     static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
     LOG_FILE.get_or_init(|| logs_dir().join(format!("{}.log", APP_NAME)))
 }
 
-/// Returns the path to the `Zed.log.old` file.
+/// Returns the path to the `Orion Studio.log.old` file.
 pub fn old_log_file() -> &'static PathBuf {
     static OLD_LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
     OLD_LOG_FILE.get_or_init(|| logs_dir().join(format!("{}.log.old", APP_NAME)))
@@ -634,4 +628,56 @@ pub fn global_gitignore_path() -> Option<PathBuf> {
     GLOBAL_GITIGNORE_PATH
         .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_name_constants_use_orion() {
+        assert_eq!(APP_NAME, "Orion Studio");
+        assert_eq!(APP_NAME_LOWERCASE, "orion-studio");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn data_dir_uses_app_name_on_macos() {
+        let dir = data_dir();
+        assert!(
+            dir.ends_with("Application Support/Orion Studio"),
+            "unexpected data dir: {dir:?}"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn data_dir_uses_lowercase_slug_on_linux() {
+        let dir = data_dir();
+        assert!(
+            dir.to_string_lossy().ends_with("orion-studio"),
+            "unexpected data dir: {dir:?}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn data_dir_uses_app_name_on_windows() {
+        let dir = data_dir();
+        assert!(
+            dir.ends_with("Orion Studio"),
+            "unexpected data dir: {dir:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_remote_server_dir_retained_for_migration() {
+        // S04 reads the old `.zed_server` directory for data migration; the
+        // canonical new path must not collide with it.
+        assert_eq!(
+            remote_server_dir_relative_legacy().as_unix_str(),
+            ".zed_server"
+        );
+        assert_eq!(remote_server_dir_relative().as_unix_str(), ".orion_server");
+    }
 }

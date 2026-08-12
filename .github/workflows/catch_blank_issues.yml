@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   add-triage-label:
-    if: github.repository == 'zed-industries/zed'
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 5
     steps:
@@ -20,7 +20,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: orion-agents
           repositories: zed
           permission-members: read
           permission-issues: write
@@ -32,7 +32,7 @@ jobs:
           script: |
             try {
               const response = await github.rest.teams.getMembershipForUserInOrg({
-                org: 'zed-industries',
+                org: 'orion-agents',
                 team_slug: 'staff',
                 username: context.payload.sender.login
               });

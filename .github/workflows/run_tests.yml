@@ -18,7 +18,7 @@ permissions:
   contents: read
 jobs:
   orchestrate:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::harden_runner
@@ -140,7 +140,7 @@ jobs:
       run_tests: ${{ steps.filter.outputs.run_tests }}
       changed_extensions: ${{ steps.filter.outputs.changed_extensions }}
   check_style:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::harden_runner
@@ -847,9 +847,9 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       GIT_AUTHOR_NAME: Protobuf Action
-      GIT_AUTHOR_EMAIL: ci@zed.dev
+      GIT_AUTHOR_EMAIL: ci@orion.dev
       GIT_COMMITTER_NAME: Protobuf Action
-      GIT_COMMITTER_EMAIL: ci@zed.dev
+      GIT_COMMITTER_EMAIL: ci@orion.dev
     steps:
     - name: steps::harden_runner
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
@@ -920,7 +920,7 @@ jobs:
     - check_licenses
     - check_scripts
     - extension_tests
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: run_tests::tests_pass

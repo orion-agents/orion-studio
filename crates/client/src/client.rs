@@ -60,8 +60,11 @@ pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
 
-static ZED_SERVER_URL: LazyLock<Option<String>> =
-    LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
+static SERVER_URL: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ORION_STUDIO_SERVER_URL")
+        .ok()
+        .or_else(|| std::env::var("ZED_SERVER_URL").ok())
+});
 static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
 
 pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
@@ -116,7 +119,7 @@ pub struct ClientSettings {
 
 impl Settings for ClientSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
-        if let Some(server_url) = &*ZED_SERVER_URL {
+        if let Some(server_url) = &*SERVER_URL {
             return Self {
                 server_url: server_url.clone(),
                 credentials_url: content.credentials_url.clone(),
@@ -1938,15 +1941,24 @@ impl ProtoClient for Client {
     }
 }
 
-/// prefix for the zed:// url scheme
+/// prefix for the zed:// url scheme (legacy compatibility alias)
 pub const ZED_URL_SCHEME: &str = "zed";
 
+/// prefix for the canonical orion:// url scheme
+pub const ORION_URL_SCHEME: &str = "orion";
+
 /// A parsed Zed link that can be handled internally by the application.
+///
+/// Note: the type name `ZedLink` is a stable internal identifier and is intentionally
+/// retained; it now also matches the canonical `orion://` scheme in addition to the
+/// legacy `zed://` scheme. See docs/plan/evidence/S02-identity-and-compatibility-contract.md.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ZedLink {
     /// Join a channel: `zed.dev/channel/channel-name-123` or `zed://channel/channel-name-123`
+    /// (also `orion.dev/...` / `orion://channel/...`)
     Channel { channel_id: u64 },
     /// Open channel notes: `zed.dev/channel/channel-name-123/notes` or with heading `notes#heading`
+    /// (also `orion.dev/...` / `orion://channel/.../notes`)
     ChannelNotes {
         channel_id: u64,
         heading: Option<String>,
@@ -1958,6 +1970,9 @@ pub enum ZedLink {
 /// Returns a [`Some`] containing the parsed link if the link is a recognized Zed link
 /// that should be handled internally by the application.
 /// Returns [`None`] for links that should be opened in the browser.
+///
+/// Accepts both the canonical `orion://` scheme and the legacy `zed://` scheme so that
+/// old links keep working during the compatibility window.
 pub fn parse_zed_link(link: &str, cx: &App) -> Option<ZedLink> {
     let server_url = &ClientSettings::get_global(cx).server_url;
     let path = link
@@ -1965,6 +1980,10 @@ pub fn parse_zed_link(link: &str, cx: &App) -> Option<ZedLink> {
         .and_then(|result| result.strip_prefix('/'))
         .or_else(|| {
             link.strip_prefix(ZED_URL_SCHEME)
+                .and_then(|result| result.strip_prefix("://"))
+        })
+        .or_else(|| {
+            link.strip_prefix(ORION_URL_SCHEME)
                 .and_then(|result| result.strip_prefix("://"))
         })?;
 
@@ -2475,5 +2494,34 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    fn test_parse_zed_link_accepts_orion_and_zed_schemes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let app = cx.to_app();
+
+        // Canonical orion:// scheme parses.
+        assert_eq!(
+            parse_zed_link("orion://channel/foo-123", &app),
+            Some(ZedLink::Channel { channel_id: 123 })
+        );
+        assert_eq!(
+            parse_zed_link("orion://channel/foo-123/notes#heading", &app),
+            Some(ZedLink::ChannelNotes {
+                channel_id: 123,
+                heading: Some("heading".to_string())
+            })
+        );
+
+        // Legacy zed:// scheme still parses during the compatibility window.
+        assert_eq!(
+            parse_zed_link("zed://channel/foo-123", &app),
+            Some(ZedLink::Channel { channel_id: 123 })
+        );
+
+        // Unrecognized links are left for the browser.
+        assert_eq!(parse_zed_link("https://example.com", &app), None);
+        assert_eq!(parse_zed_link("not-a-link", &app), None);
     }
 }

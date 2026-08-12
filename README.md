@@ -1,35 +1,37 @@
-# Zed
+# Orion Studio
 
-[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
-[![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
+[![Orion Studio](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/orion-agents/orion-studio/main/assets/badge/v0.json)](https://orion.dev)
+[![CI](https://github.com/orion-agents/orion-studio/actions/workflows/run_tests.yml/badge.svg)](https://github.com/orion-agents/orion-studio/actions/workflows/run_tests.yml)
 
-Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+Welcome to Orion Studio, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+
+Orion Studio is a fork of [Zed](https://zed.dev), built on the open-source GPUI framework and the work of Zed Industries, Inc.
 
 ---
 
 ### Installation
 
-On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or install Zed via your local package manager ([macOS](https://zed.dev/docs/installation#macos)/[Linux](https://zed.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://zed.dev/docs/windows#package-managers)).
+On macOS, Linux, and Windows you can [download Orion Studio directly](https://orion.dev/download) or install Orion Studio via your local package manager ([macOS](https://orion.dev/docs/installation#macos)/[Linux](https://orion.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://orion.dev/docs/windows#package-managers)).
 
 Other platforms are not yet available:
 
-- Web ([tracking discussion](https://github.com/zed-industries/zed/discussions/26195))
+- Web ([tracking discussion](https://github.com/orion-agents/orion-studio/discussions/26195))
 
-### Developing Zed
+### Developing Orion Studio
 
-- [Building Zed for macOS](./docs/src/development/macos.md)
-- [Building Zed for Linux](./docs/src/development/linux.md)
-- [Building Zed for Windows](./docs/src/development/windows.md)
+- [Building Orion Studio for macOS](./docs/src/development/macos.md)
+- [Building Orion Studio for Linux](./docs/src/development/linux.md)
+- [Building Orion Studio for Windows](./docs/src/development/windows.md)
 
 ### Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Orion Studio.
 
-Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
+Also... we're hiring! Check out our [jobs](https://orion.dev/jobs) page for open roles.
 
 ### Licensing
 
-Zed source code is licensed primarily under GPL-3.0-or-later, with Apache-2.0 components where marked.
+Orion Studio source code is licensed primarily under GPL-3.0-or-later, with Apache-2.0 components where marked. This preserves the upstream licensing of the Zed project from which this fork derives.
 
 License information for third party dependencies must be correctly provided for CI to pass.
 
@@ -41,9 +43,8 @@ We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automati
 
 ## Sponsorship
 
-Zed is developed by **Zed Industries, Inc.**, a for-profit company.
+Orion Studio is derived from the work of **Zed Industries, Inc.**, a for-profit company, and is released under the same open-source licenses.
 
-If you’d like to financially support the project, you can do so via GitHub Sponsors.
+If you'd like to financially support the upstream project, you can do so via GitHub Sponsors.
 Sponsorships go directly to Zed Industries and are used as general company revenue.
 There are no perks or entitlements associated with sponsorship.
-

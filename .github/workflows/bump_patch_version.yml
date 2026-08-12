@@ -12,7 +12,7 @@ permissions:
   contents: read
 jobs:
   run_bump_patch_version:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     permissions:
       contents: write

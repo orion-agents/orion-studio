@@ -19,7 +19,7 @@ permissions: {}
 jobs:
   identify-duplicates:
     # For manual testing, allow running on any branch; for automatic runs, only on main repo
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'zed-industries/zed'
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'orion-agents/orion-studio'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -40,7 +40,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: orion-agents
           repositories: zed
           permission-discussions: read
           permission-issues: write

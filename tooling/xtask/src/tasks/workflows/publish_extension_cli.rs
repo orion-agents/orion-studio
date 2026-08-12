@@ -208,7 +208,7 @@ fn create_pull_request_extensions(
     let title = format!("Bump extension CLI version to `{}`", short_sha);
 
     let body = formatdoc! {r#"
-        This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{{{ github.sha }}}}.
+        This PR bumps the extension CLI version to https://github.com/orion-agents/orion-studio/commit/${{{{ github.sha }}}}.
 
         {message}
     "#};

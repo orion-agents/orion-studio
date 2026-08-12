@@ -126,8 +126,10 @@ impl Component for CollabNotification {
                             "a_very_long_username_that_might_overflow is sharing a project in Zed:",
                         ))
                         .child(
-                            Label::new("zed-cloud, zed, edit-prediction-bench, zed.dev")
-                                .color(Color::Muted),
+                            Label::new(
+                                "cloud.orion.dev, orion.dev, edit-prediction-bench, orion.dev",
+                            )
+                            .color(Color::Muted),
                         ),
                     )
                     .into_any_element(),

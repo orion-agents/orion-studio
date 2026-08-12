@@ -12,7 +12,7 @@ permissions:
   contents: read
 jobs:
   resolve_versions:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'orion-agents'
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: generate-token

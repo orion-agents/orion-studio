@@ -8,7 +8,7 @@ description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copi
 Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
 As you type, Zed requests predictions from the edit prediction provider, which returns individual or multi-line suggestions you accept by pressing `tab`.
 
-The default provider is [Zeta, an open source model developed by Zed](https://zed.dev/blog/zeta2), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
+The default provider is [Zeta, an open source model developed by Zed](https://orion.dev/blog/zeta2), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
 
 For privacy and training data details, see
 [AI Privacy](./privacy-and-security.md) and
@@ -35,7 +35,7 @@ The Z icon in the status bar also indicates Zeta is active.
 
 ### Pricing and Plans
 
-The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../account/plans-and-pricing.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
+The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../account/plans-and-pricing.md) removes this limit. See [Zed's pricing page](https://orion.dev/pricing) for details.
 
 ### Switching Modes {#switching-modes}
 
@@ -54,7 +54,7 @@ Toggle between them via the `mode` key:
 
 Or directly via the UI through the status bar menu:
 
-![Edit Prediction status bar menu, with the modes toggle.](https://zed.dev/img/edit-prediction/status-bar-menu.webp)
+![Edit Prediction status bar menu, with the modes toggle.](https://orion.dev/img/edit-prediction/status-bar-menu.webp)
 
 > Note that edit prediction modes work with any prediction provider.
 

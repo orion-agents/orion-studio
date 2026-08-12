@@ -13,7 +13,7 @@ use crate::{
     git::CommitDetails,
 };
 
-const PULL_REQUEST_BASE_URL: &str = "https://github.com/zed-industries/zed/pull";
+const PULL_REQUEST_BASE_URL: &str = "https://github.com/orion-agents/orion-studio/pull";
 
 #[derive(Debug)]
 pub struct ReportEntry<R> {

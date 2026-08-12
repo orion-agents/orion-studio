@@ -96,6 +96,6 @@ can be stored in each opt-in case.
 - [Admin Controls](../business/admin-controls.md): How owners and admins control
   Zed-hosted models, Edit Prediction, and feedback sharing.
 - [AI Quick Start](./quick-start.md#turn-ai-off): How to turn AI off.
-- [Privacy Policy](https://zed.dev/privacy-policy): Zed's privacy policy.
-- [Subprocessors](https://zed.dev/subprocessors): Zed's subprocessors.
-- [Terms of Service](https://zed.dev/terms): Zed's terms.
+- [Privacy Policy](https://orion.dev/privacy-policy): Zed's privacy policy.
+- [Subprocessors](https://orion.dev/subprocessors): Zed's subprocessors.
+- [Terms of Service](https://orion.dev/terms): Zed's terms.

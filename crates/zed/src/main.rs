@@ -397,7 +397,7 @@ fn main() {
                         app_version.patch,
                     )
                     .to_string(),
-                    binary: "zed".to_string(),
+                    binary: "orion-studio".to_string(),
                     release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
                     commit_sha: app_commit_sha
                         .as_ref()
@@ -410,7 +410,7 @@ fn main() {
                         background_executor1.spawn(task).detach();
                     }
                 },
-                |pid| paths::temp_dir().join(format!("zed-crash-handler-{pid}")),
+                |pid| paths::temp_dir().join(format!("orion-studio-crash-handler-{pid}")),
                 move |duration| background_executor.timer(duration),
             )),
         )
@@ -1684,7 +1684,11 @@ fn stdout_is_a_pty() -> bool {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true, max_term_width = 100)]
+#[command(
+    name = "orion-studio",
+    disable_version_flag = true,
+    max_term_width = 100
+)]
 struct Args {
     /// A sequence of space-separated paths or urls that you want to open.
     ///

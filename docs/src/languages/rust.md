@@ -160,7 +160,7 @@ If disabled with `checkOnSave: false` (see the example of the server configurati
 ## More server configuration
 
 <!--
-TBD: Is it possible to specify RUSTFLAGS? https://github.com/zed-industries/zed/issues/14334
+TBD: Is it possible to specify RUSTFLAGS? https://github.com/orion-agents/orion-studio/issues/14334
 -->
 
 The Rust-analyzer [manual](https://rust-analyzer.github.io/book/) describes various features and configuration options for the rust-analyzer language server.

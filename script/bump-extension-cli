@@ -31,4 +31,4 @@ which gh > /dev/null 2>&1 || {
 gh workflow run publish_extension_cli.yml --ref main -f message="$1"
 
 echo "Workflow triggered. Monitor progress at:"
-echo "  https://github.com/zed-industries/zed/actions/workflows/publish_extension_cli.yml"
+echo "  https://github.com/orion-agents/orion-studio/actions/workflows/publish_extension_cli.yml"

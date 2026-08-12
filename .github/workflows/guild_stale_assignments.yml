@@ -1,4 +1,4 @@
-# Scheduled sweep of the Guild board (https://github.com/orgs/zed-industries/projects/74).
+# Scheduled sweep of the Guild board (https://github.com/orgs/orion-agents/projects/74).
 # For an "In Progress" issue assigned to a guild member with no linked PR: post a
 # check-in comment once the assignee goes quiet, re-nudging after any renewed
 # silence, and clear the assignment (moving the issue back to a To-Do column by
@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   sweep:
-    if: github.repository == 'zed-industries/zed'
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 15
 
@@ -31,7 +31,7 @@ jobs:
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
+          owner: orion-agents
           repositories: zed
           permission-issues: write
           permission-members: read

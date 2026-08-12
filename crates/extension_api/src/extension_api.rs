@@ -46,6 +46,19 @@ pub use wit::{
 #[doc(hidden)]
 pub use wit::Guest;
 
+/// Canonical Orion Studio extension namespace.
+///
+/// Re-exports the same generated WIT bindings as the legacy `zed` module so that
+/// new extensions can adopt the `orion::` namespace. The underlying WIT package
+/// remains `zed:extension` for ABI compatibility, so both old and new extensions
+/// continue to load. The `zed_extension_api as zed` crate alias is retained as a
+/// compatibility path during the transition window.
+///
+/// See docs/plan/evidence/S02-identity-and-compatibility-contract.md.
+pub mod orion {
+    pub use crate::wit::zed::extension::*;
+}
+
 /// Constructs for interacting with language servers over the
 /// Language Server Protocol (LSP).
 pub mod lsp {

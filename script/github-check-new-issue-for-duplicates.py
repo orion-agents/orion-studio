@@ -486,7 +486,7 @@ def parse_duplicate_magnets():
 
     # parse the issue body
     # format: ## area_name
-    #         -   [N dupes] https://github.com/zed-industries/zed/issues/NUMBER
+    #         -   [N dupes] https://github.com/orion-agents/orion-studio/issues/NUMBER
     magnets = {}  # number -> {number, areas, dupe_count}
     current_area = None
 
