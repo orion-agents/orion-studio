@@ -190,7 +190,8 @@ pub(crate) fn release() -> Workflow {
     );
 
     named::workflow()
-        .on(Event::default().push(Push::default().tags(vec!["v*".to_string()])))
+        .on(Event::default()
+            .push(Push::default().tags(vec!["v*".to_string(), "!v*-pre".to_string()])))
         .concurrency(vars::one_workflow_per_non_main_branch())
         .with_minimal_permissions()
         .add_env(("CARGO_TERM_COLOR", "always"))
@@ -948,6 +949,36 @@ mod tests {
             .with_context(|| {
                 format!("Generated release job {job_id:?} has no job-level environment")
             })
+    }
+
+    #[test]
+    fn stable_release_trigger_excludes_bootstrap_preview_tags() -> Result<()> {
+        let content = release()
+            .to_string()
+            .map_err(|error| anyhow::anyhow!("Unable to serialize release workflow: {error:?}"))?;
+        let workflow: Value =
+            serde_yaml::from_str(&content).context("Unable to parse generated release workflow")?;
+        let tag_patterns = workflow
+            .as_mapping()
+            .and_then(|workflow| workflow.get(&yaml_key("on")))
+            .and_then(Value::as_mapping)
+            .and_then(|on| on.get(&yaml_key("push")))
+            .and_then(Value::as_mapping)
+            .and_then(|push| push.get(&yaml_key("tags")))
+            .and_then(Value::as_sequence)
+            .context("Generated release workflow has no push tag patterns")?;
+        let tag_patterns = tag_patterns
+            .iter()
+            .map(Value::as_str)
+            .collect::<Option<Vec<_>>>()
+            .context("Generated release workflow has a non-string push tag pattern")?;
+
+        ensure!(
+            tag_patterns == ["v*", "!v*-pre"],
+            "Stable release workflow must not run for bootstrap preview tags"
+        );
+
+        Ok(())
     }
 
     #[test]
