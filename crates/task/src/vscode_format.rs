@@ -86,7 +86,7 @@ fn generate_label(command: &Option<Command>) -> String {
 }
 
 impl VsCodeTaskDefinition {
-    fn into_zed_format(
+    fn into_orion_format(
         self,
         replacer: &EnvVariableReplacer,
     ) -> anyhow::Result<Option<TaskTemplate>> {
@@ -154,7 +154,7 @@ impl TryFrom<VsCodeTaskFile> for TaskTemplates {
             .into_iter()
             .filter_map(|vscode_definition| {
                 vscode_definition
-                    .into_zed_format(&replacer)
+                    .into_orion_format(&replacer)
                     .log_err()
                     .flatten()
             })
@@ -277,9 +277,9 @@ mod tests {
                 label: "tsc: watch ./src".to_string(),
                 command: "node".to_string(),
                 args: vec![
-                    "${ZED_WORKTREE_ROOT}/node_modules/typescript/lib/tsc.js".to_string(),
+                    "${ORION_STUDIO_WORKTREE_ROOT}/node_modules/typescript/lib/tsc.js".to_string(),
                     "--build".to_string(),
-                    "${ZED_WORKTREE_ROOT}/src".to_string(),
+                    "${ORION_STUDIO_WORKTREE_ROOT}/src".to_string(),
                     "--watch".to_string(),
                 ],
                 ..Default::default()

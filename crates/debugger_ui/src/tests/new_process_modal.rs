@@ -7,8 +7,8 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use task::{
-    DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext, TaskContext, VariableName,
-    ZedDebugConfig,
+    DebugRequest, DebugScenario, LaunchRequest, OrionDebugConfig, SharedTaskContext, TaskContext,
+    VariableName,
 };
 use text::Point;
 use util::path;
@@ -74,7 +74,16 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                 .to_string()
                 .leak(),
         ),
-        // Path with $ZED_WORKTREE_ROOT - should be substituted without double appending
+        // Canonical task variable - should be substituted without double appending
+        (
+            format!(
+                "$ORION_STUDIO_WORKTREE_ROOT{0}src{0}program",
+                std::path::MAIN_SEPARATOR
+            )
+            .leak(),
+            path!("/test/worktree/path/src/program"),
+        ),
+        // Legacy task variables remain readable during migration.
         (
             format!(
                 "$ZED_WORKTREE_ROOT{0}src{0}program",
@@ -111,11 +120,9 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                             input_path
                         );
 
-                        let expected_other_field = if input_path.contains("$ZED_WORKTREE_ROOT") {
-                            input_path.replace("$ZED_WORKTREE_ROOT", path!("/test/worktree/path"))
-                        } else {
-                            input_path.to_string()
-                        };
+                        let expected_other_field = input_path
+                            .replace("$ORION_STUDIO_WORKTREE_ROOT", path!("/test/worktree/path"))
+                            .replace("$ZED_WORKTREE_ROOT", path!("/test/worktree/path"));
 
                         assert_eq!(
                             config["otherField"].as_str().unwrap(),
@@ -375,7 +382,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
         registry.enumerate_adapters::<Vec<_>>()
     });
 
-    let zed_config = ZedDebugConfig {
+    let orion_config = OrionDebugConfig {
         label: "test_debug_session".into(),
         adapter: "test_adapter".into(),
         request: DebugRequest::Launch(LaunchRequest {
@@ -400,11 +407,11 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
             })
             .unwrap_or_else(|| panic!("Adapter {} should exist", adapter_name));
 
-        let mut adapter_specific_config = zed_config.clone();
+        let mut adapter_specific_config = orion_config.clone();
         adapter_specific_config.adapter = adapter_name.to_string().into();
 
         let debug_scenario = adapter
-            .config_from_zed_format(adapter_specific_config)
+            .config_from_orion_format(adapter_specific_config)
             .await
             .unwrap_or_else(|_| {
                 panic!(

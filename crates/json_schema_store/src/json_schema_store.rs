@@ -12,7 +12,13 @@ use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
 use settings::{LSP_SETTINGS_SCHEMA_URL_PREFIX, Settings as _, SettingsLocation};
 use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 
-const SCHEMA_URI_PREFIX: &str = "zed://schemas/";
+const SCHEMA_URI_PREFIX: &str = "orion://schemas/";
+const LEGACY_SCHEMA_URI_PREFIX: &str = "zed://schemas/";
+
+fn schema_path(uri: &str) -> Option<&str> {
+    uri.strip_prefix(SCHEMA_URI_PREFIX)
+        .or_else(|| uri.strip_prefix(LEGACY_SCHEMA_URI_PREFIX))
+}
 
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
 const PACKAGE_JSON_SCHEMA: &str = include_str!("schemas/package.json");
@@ -102,22 +108,21 @@ enum ChangedSchemas {
 
 impl SchemaStore {
     fn notify_schema_changed(&mut self, changed_schemas: ChangedSchemas, cx: &mut App) {
-        let uris_to_invalidate = match changed_schemas {
-            ChangedSchemas::Settings => {
-                let settings_uri_prefix = &format!("{SCHEMA_URI_PREFIX}settings");
-                let project_settings_uri = &format!("{SCHEMA_URI_PREFIX}project_settings");
-                DYNAMIC_SCHEMA_CACHE
-                    .write()
-                    .extract_if(|uri, _| {
-                        uri == project_settings_uri || uri.starts_with(settings_uri_prefix)
+        let uris_to_invalidate: Vec<String> = match changed_schemas {
+            ChangedSchemas::Settings => DYNAMIC_SCHEMA_CACHE
+                .write()
+                .extract_if(|uri, _| {
+                    schema_path(uri).is_some_and(|path| {
+                        path == "project_settings" || path.starts_with("settings")
                     })
-                    .map(|(url, _)| url)
-                    .collect()
-            }
+                })
+                .map(|(url, _)| url)
+                .collect(),
             ChangedSchemas::DebugTasks => DYNAMIC_SCHEMA_CACHE
                 .write()
-                .remove_entry(&format!("{SCHEMA_URI_PREFIX}debug_tasks"))
-                .map_or_else(Vec::new, |(uri, _)| vec![uri]),
+                .extract_if(|uri, _| schema_path(uri) == Some("debug_tasks"))
+                .map(|(uri, _)| uri)
+                .collect(),
         };
 
         if uris_to_invalidate.is_empty() {
@@ -143,7 +148,7 @@ pub fn handle_schema_request(
     uri: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<String>> {
-    let path = match uri.strip_prefix(SCHEMA_URI_PREFIX) {
+    let path = match schema_path(&uri) {
         Some(path) => path,
         None => return Task::ready(Err(anyhow::anyhow!("Invalid schema URI: {}", uri))),
     };
@@ -179,7 +184,7 @@ fn resolve_static_schema(path: &str) -> Option<String> {
         "snippets" => Some(SNIPPETS_SCHEMA.clone()),
         "jsonc" => Some(JSONC_SCHEMA.clone()),
         "keymap" => Some(KEYMAP_SCHEMA.clone()),
-        "zed_inspector_style" => {
+        "orion_inspector_style" | "zed_inspector_style" => {
             #[cfg(debug_assertions)]
             {
                 Some(INSPECTOR_STYLE_SCHEMA.clone())
@@ -236,8 +241,7 @@ async fn resolve_dynamic_schema(
             let lsp_path = rest
                 .and_then(|r| {
                     r.strip_prefix(
-                        LSP_SETTINGS_SCHEMA_URL_PREFIX
-                            .strip_prefix(SCHEMA_URI_PREFIX)
+                        schema_path(LSP_SETTINGS_SCHEMA_URL_PREFIX)
                             .and_then(|s| s.strip_prefix("settings/"))
                             .unwrap_or("lsp/"),
                     )
@@ -511,9 +515,9 @@ pub fn all_schema_file_associations(
             .unwrap()
             .push(serde_json::json!({
                 "fileMatch": [
-                    "zed-inspector-style.json"
+                    "orion-studio-inspector-style.json"
                 ],
-                "url": format!("{SCHEMA_URI_PREFIX}zed_inspector_style")
+                "url": format!("{SCHEMA_URI_PREFIX}orion_inspector_style")
             }));
     }
 
@@ -626,4 +630,22 @@ fn schema_file_match(path: &std::path::Path) -> String {
         .display()
         .to_string()
         .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::schema_path;
+
+    #[test]
+    fn accepts_canonical_and_legacy_schema_uris() {
+        assert_eq!(
+            schema_path("orion://schemas/settings/lsp/rust-analyzer/settings"),
+            Some("settings/lsp/rust-analyzer/settings")
+        );
+        assert_eq!(
+            schema_path("zed://schemas/settings/lsp/rust-analyzer/settings"),
+            Some("settings/lsp/rust-analyzer/settings")
+        );
+        assert_eq!(schema_path("https://orion.dev/schema.json"), None);
+    }
 }

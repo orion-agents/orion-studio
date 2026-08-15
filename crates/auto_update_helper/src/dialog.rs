@@ -34,13 +34,13 @@ use crate::{
 #[repr(C)]
 #[derive(Debug)]
 struct DialogInfo {
-    rx: Receiver<Result<()>>,
+    receiver: Receiver<Result<()>>,
     progress_bar: isize,
 }
 
 pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWND> {
     unsafe {
-        let class_name = windows::core::w!("Zed-Auto-Updater-Dialog-Class");
+        let class_name = windows::core::w!("OrionStudio-Auto-Updater-Dialog-Class");
         let module = GetModuleHandleW(None).context("unable to get module handle")?;
         let handle = LoadImageW(
             Some(module.into()),
@@ -58,21 +58,24 @@ pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWN
             hIcon: HICON(handle.0),
             ..Default::default()
         };
-        RegisterClassW(&wc);
+        if RegisterClassW(&wc) == 0 {
+            return Err(windows::core::Error::from_win32())
+                .context("unable to register the Orion Studio update dialog class");
+        }
         let mut rect = RECT::default();
         GetWindowRect(GetDesktopWindow(), &mut rect)
             .context("unable to get desktop window rect")?;
         let width = 400;
         let height = 150;
         let info = Box::new(RefCell::new(DialogInfo {
-            rx: receiver,
+            receiver,
             progress_bar: 0,
         }));
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
             class_name,
-            windows::core::w!("Zed"),
+            windows::core::w!("Orion Studio"),
             WS_VISIBLE | WS_POPUP | WS_CAPTION,
             rect.right / 2 - width / 2,
             rect.bottom / 2 - height / 2,
@@ -171,7 +174,7 @@ unsafe extern "system" fn wnd_proc(
                 &HSTRING::from(font_name),
             );
             let temp = SelectObject(hdc, font.into());
-            let string = HSTRING::from("Updating Zed...");
+            let string = HSTRING::from("Updating Orion Studio...");
             return_if_failed!(TextOutW(hdc, 20, 15, &string).ok());
             return_if_failed!(DeleteObject(temp).ok());
 
@@ -186,11 +189,11 @@ unsafe extern "system" fn wnd_proc(
         }),
         WM_TERMINATE => {
             with_dialog_data(hwnd, |data| {
-                if let Ok(result) = data.borrow_mut().rx.recv()
-                    && let Err(e) = result
+                if let Ok(result) = data.borrow_mut().receiver.recv()
+                    && let Err(error) = result
                 {
-                    log::error!("Failed to update Zed: {:?}", e);
-                    show_error(format!("Error: {:?}", e));
+                    log::error!("Failed to update Orion Studio: {:?}", error);
+                    show_error(format!("Error: {:?}", error));
                 }
             });
             unsafe { PostQuitMessage(0) };

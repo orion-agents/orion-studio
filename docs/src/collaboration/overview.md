@@ -1,48 +1,28 @@
 ---
 title: Collaboration
-description: "Real-time collaboration in Zed: share projects, edit code together, and communicate with voice chat."
+description: Configure Orion Studio real-time collaboration with an operator-deployed service.
 ---
 
 # Collaboration {#collaboration}
 
-Zed supports real-time multiplayer editing. Multiple people can work in the same project simultaneously, seeing each other's cursors and edits as they happen.
+Orion Studio contains real-time collaboration client and server code, but no
+public Orion collaboration or authentication service is assumed to be deployed.
+These features become available only after an operator configures compatible
+account, collaboration, database, WebSocket, and LiveKit services.
 
-Open the Collaboration Panel with {#kb collab_panel::ToggleFocus}. You'll need to [sign in](../authentication.md#signing-in) to access collaboration features.
+The client must not silently route collaboration traffic to Zed-hosted
+infrastructure. When no service is configured, local editing and other offline
+workflows remain available.
 
-## Collaboration Panel {#collaboration-panel}
+After deployment, open the Collaboration Panel with
+{#kb collab_panel::ToggleFocus}. A configured sign-in flow may then expose
+[Channels](./channels.md) and
+[Contacts and Private Calls](./contacts-and-private-calls.md).
 
-The Collaboration Panel has two sections:
+> **Security:** sharing a project grants collaborators access to files within
+> that project and may expose terminals, language servers, and screen content.
+> Collaborate only with trusted people and review the operator's privacy and
+> retention policy.
 
-1. [Channels](./channels.md): Persistent project rooms for team collaboration, with shared projects and voice chat.
-2. [Contacts and Private Calls](./contacts-and-private-calls.md): Your contacts list for ad-hoc private sessions.
-
-> **Warning:** Sharing a project gives collaborators access to your local file system within that project. Only collaborate with people you trust.
-
-See the [Data and Privacy FAQs](https://orion.dev/faq#data-and-privacy) for more details.
-
-## Audio Settings {#audio-settings}
-
-### Selecting Audio Devices
-
-You can select specific input and output audio devices instead of using system defaults. To configure audio devices:
-
-1. Open {#kb zed::OpenSettings}
-2. Navigate to **Collaboration** > **Experimental**
-3. Use the **Output Audio Device** and **Input Audio Device** dropdowns to select your preferred devices
-
-Changes take effect immediately. If you select a device that becomes unavailable, Zed falls back to system defaults.
-
-To test your audio configuration, click **Test Audio** in the same section. This opens a window where you can verify your microphone and speaker work correctly with the selected devices.
-
-**JSON configuration:**
-
-```json [settings]
-{
-  "audio": {
-    "experimental.output_audio_device": "Device Name (device-id)",
-    "experimental.input_audio_device": "Device Name (device-id)"
-  }
-}
-```
-
-Set either value to `null` to use system defaults.
+Audio device settings are available under **Collaboration > Experimental** in
+Settings ({#kb zed::OpenSettings}) after the feature is enabled.

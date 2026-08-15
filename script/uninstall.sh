@@ -46,7 +46,7 @@ main() {
 
     "$platform"
 
-    echo "Zed has been uninstalled"
+    echo "Orion Studio has been uninstalled"
 }
 
 linux() {
@@ -106,7 +106,7 @@ linux() {
         prompt_remove_preferences
     fi
 
-    rm -rf $HOME/.orion_studio_server
+    rm -rf "$HOME/.orion_studio_server"
 }
 
 macos() {
@@ -150,7 +150,7 @@ macos() {
     rm -rf "$HOME/Library/Preferences/$app_id.plist"
     rm -rf "$HOME/Library/Saved Application State/$app_id.savedState"
 
-    # Remove the entire Zed directory if no installations remain
+    # Remove Orion Studio data after the final installation is removed.
     if check_remaining_installations; then
         rm -rf "$HOME/Library/Application Support/Orion Studio"
         rm -rf "$HOME/Library/Logs/Orion Studio"
@@ -158,7 +158,7 @@ macos() {
         prompt_remove_preferences
     fi
 
-    rm -rf $HOME/.orion_studio_server
+    rm -rf "$HOME/.orion_studio_server"
 }
 
 main "$@"

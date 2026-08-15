@@ -8,11 +8,11 @@
 
 ## 修改文件（仅本子计划范围）
 
-| 文件 | 改动摘要 |
-|---|---|
-| `crates/paths/src/paths.rs` | 规范 `APP_NAME = "Orion Studio"`；新增独立 slug 常量 `APP_NAME_LOWERCASE = "orion-studio"`（Linux/FreeBSD XDG 路径，避免空格）；远程目录规范 `.orion_server` + 保留 `remote_server_dir_relative_legacy()`（`.zed_server`，供 S04 探测）；`.zed_wsl_server` → `.orion_wsl_server`；日志名 `Orion Studio.log`；新增测试模块 |
-| `crates/zed_env_vars/src/zed_env_vars.rs` | 新增规范 `ORION_STUDIO_STATELESS`，保留 `ZED_STATELESS` 兼容别名（两者均优先读新变量、回退读旧变量，旧变量不被写回——保留 `zed`/`agent`/`db` 三个外部引用符号）；新增兼容读取测试 |
-| `crates/release_channel/src/lib.rs` | docs URL → `orion.dev/docs`；显示名 → `Orion Studio` 系列；release/env 变量改为 `ORION_STUDIO_RELEASE_CHANNEL` / `ORION_STUDIO_APP_VERSION` 并兼容回退旧 `ZED_*`；更新并扩展测试 |
+| 文件                                      | 改动摘要                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/paths/src/paths.rs`               | 规范 `APP_NAME = "Orion Studio"`；新增独立 slug 常量 `APP_NAME_LOWERCASE = "orion-studio"`（Linux/FreeBSD XDG 路径，避免空格）；远程目录规范 `.orion_server` + 保留 `remote_server_dir_relative_legacy()`（`.zed_server`，供 S04 探测）；`.zed_wsl_server` → `.orion_wsl_server`；日志名 `Orion Studio.log`；新增测试模块 |
+| `crates/zed_env_vars/src/zed_env_vars.rs` | 新增规范 `ORION_STUDIO_STATELESS`，保留 `ZED_STATELESS` 兼容别名（两者均优先读新变量、回退读旧变量，旧变量不被写回——保留 `zed`/`agent`/`db` 三个外部引用符号）；新增兼容读取测试                                                                                                                                          |
+| `crates/release_channel/src/lib.rs`       | docs URL → `orion.dev/docs`；显示名 → `Orion Studio` 系列；release/env 变量改为 `ORION_STUDIO_RELEASE_CHANNEL` / `ORION_STUDIO_APP_VERSION` 并兼容回退旧 `ZED_*`；更新并扩展测试                                                                                                                                          |
 
 ## 规范常量（已改）
 
@@ -31,15 +31,15 @@
 
 ## 验收命令与真实结果
 
-| 命令 | 结果 |
-|---|---|
-| `git diff --check`（3 crates） | 通过，无 whitespace 错误 |
-| `cargo +stable metadata --no-deps --format-version 1` | 通过（workspace 解析 OK） |
-| `cargo +stable fmt --all -- --check` | 通过（exit 0，全工作区格式干净） |
-| `cargo +stable test -p paths` | 3 passed（app_name_constants_use_orion、legacy_remote_server_dir_retained_for_migration、data_dir_uses_app_name_on_macos） |
-| `cargo +stable test -p zed_env_vars` | 1 passed（canonical_env_takes_precedence_and_legacy_still_reads） |
-| `cargo +stable test -p release_channel` | 2 passed（test_display_name_for_release_channel、test_docs_url_for_release_channel） |
-| `cargo +stable check -p paths -p zed_env_vars -p release_channel` | 通过（含 gpui 依赖链） |
+| 命令                                                              | 结果                                                                                                                       |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `git diff --check`（3 crates）                                    | 通过，无 whitespace 错误                                                                                                   |
+| `cargo +stable metadata --no-deps --format-version 1`             | 通过（workspace 解析 OK）                                                                                                  |
+| `cargo +stable fmt --all -- --check`                              | 通过（exit 0，全工作区格式干净）                                                                                           |
+| `cargo +stable test -p paths`                                     | 3 passed（app_name_constants_use_orion、legacy_remote_server_dir_retained_for_migration、data_dir_uses_app_name_on_macos） |
+| `cargo +stable test -p zed_env_vars`                              | 1 passed（canonical_env_takes_precedence_and_legacy_still_reads）                                                          |
+| `cargo +stable test -p release_channel`                           | 2 passed（test_display_name_for_release_channel、test_docs_url_for_release_channel）                                       |
+| `cargo +stable check -p paths -p zed_env_vars -p release_channel` | 通过（含 gpui 依赖链）                                                                                                     |
 
 修复记录：rustc 1.95 将 `std::env::set_var/remove_var` 标记为 `unsafe`，测试原调用未包 `unsafe {}` 导致 E0133；`release_channel` 的 `if let Ok` 误接到 `Option` 导致 E0308。两处均已修正并复测通过。
 

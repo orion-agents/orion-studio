@@ -1,11 +1,11 @@
 ---
 title: MCP Server Extensions
-description: "MCP Server Extensions for Zed extensions."
+description: "MCP Server Extensions for Orion Studio extensions."
 ---
 
 # MCP Server Extensions
 
-> We plan to deprecate MCP server extensions in favor of the [official MCP registry](https://registry.modelcontextprotocol.io/). To keep your MCP server available in Zed, publish it to the official registry as well. Follow our deprecation progress in the [tracking issue](https://github.com/orion-agents/orion-studio/issues/59351).
+> We plan to deprecate MCP server extensions in favor of the [official MCP registry](https://registry.modelcontextprotocol.io/). To keep your MCP server available in Orion Studio, publish it to the official registry as well. Follow our deprecation progress in the [tracking issue](https://github.com/orion-agents/orion-studio/issues/59351).
 
 [Model Context Protocol servers](../ai/mcp.md) can be exposed as extensions for use in the Agent Panel.
 
@@ -44,9 +44,7 @@ If you need to download the MCP server from an external source (GitHub Releases,
 
 ## Available Extensions
 
-See MCP servers published as extensions [on Zed's site](https://orion.dev/extensions?filter=context-servers).
-
-Review their repositories to see common implementation patterns and structure.
+Open the in-app Extensions page with {#action zed::Extensions} to inspect MCP extensions available from the registry configured for your build. Review their repositories to see common implementation patterns and structure. A public Orion extension catalog is not assumed to be deployed.
 
 ## Testing
 

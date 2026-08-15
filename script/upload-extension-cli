@@ -9,7 +9,11 @@ if [ "$#" -ne 1 ] || ! [[ $commit =~ ^[0-9a-f]{40}$ ]]; then
     exit 1
 fi
 
-bucket_name="zed-extension-cli"
+bucket_name="${ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME:-}"
+if [[ ! "$bucket_name" =~ ^orion-studio-[a-z0-9-]+$ ]]; then
+    echo "ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME must name an Orion-owned bucket" >&2
+    exit 1
+fi
 target_triple=$(rustc -vV | sed -n 's|host: ||p')
 
 upload_to_blob_store_public $bucket_name "target/release/zed-extension" "${commit}/${target_triple}/zed-extension"

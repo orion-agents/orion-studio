@@ -18,11 +18,11 @@
 - crates/zed/Cargo.toml：只修改 package、default-run、binary 和直接相关 metadata。
 - crates/zed/build.rs：只修改与 package/binary identity 直接相关的逻辑。
 - crates/zed/src/main.rs：只修改 binary identity 直接相关的启动入口。
-- crates/zed/** 中与上述变更直接相关的测试。
+- crates/zed/\*\* 中与上述变更直接相关的测试。
 
 禁止在本子计划：
 
-- 批量重命名 crates/*。
+- 批量重命名 crates/\*。
 - 修改 crates/cli、client、collab、resources、release workflow。
 - 重新设计 workspace 依赖。
 - 无理由更新 Cargo.lock 或升级依赖。
@@ -34,11 +34,11 @@
 
 运行：
 
-~~~text
+```text
 cargo +stable metadata --no-deps --format-version 1
 cargo +stable metadata --no-deps --format-version 1 | \
   rg '"name"|"default-members"|"targets"|"kind"'
-~~~
+```
 
 记录：
 
@@ -91,19 +91,19 @@ cargo +stable metadata --no-deps --format-version 1 | \
 
 ## 验收命令
 
-~~~text
+```text
 git diff --check
 cargo +stable metadata --no-deps --format-version 1
 cargo +stable fmt --all -- --check
 cargo +stable check -p <最终主 package> --bin <最终 binary>
-~~~
+```
 
 将尖括号替换为 S02 的最终值。如果首次拉取 Git 依赖失败，记录完整错误和
 环境，不修改依赖源。能运行时再执行：
 
-~~~text
+```text
 cargo +stable test -p <最终主 package>
-~~~
+```
 
 ## 验收标准
 
@@ -136,4 +136,3 @@ cargo +stable test -p <最终主 package>
 - package/binary 前后值。
 - metadata、check、test 的真实结果。
 - 仍需 S06/S10 处理的引用。
-

@@ -3,8 +3,8 @@ use gh_workflow::*;
 use crate::tasks::workflows::{
     runners,
     steps::{
-        self, CommonPermissionSets, NamedJob, RepositoryTarget, TokenPermissions, ZippyGitIdentity,
-        named,
+        self, AutomationGitIdentity, CommonPermissionSets, NamedJob, RepositoryTarget,
+        TokenPermissions, named,
     },
     vars::{StepOutput, WorkflowInput},
 };
@@ -43,11 +43,11 @@ fn run_cherry_pick(
             .add_env(("BRANCH", branch.to_string()))
             .add_env(("COMMIT", commit.to_string()))
             .add_env(("CHANNEL", channel.to_string()))
-            .with_zippy_git_identity()
+            .with_orion_automation_git_identity()
             .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy()
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
         .for_repository(RepositoryTarget::current())
         .with_permissions([
             (TokenPermissions::Contents, Level::Write),

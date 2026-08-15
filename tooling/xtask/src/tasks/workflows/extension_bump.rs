@@ -5,13 +5,12 @@ use crate::tasks::workflows::{
     extension_tests::{self},
     runners,
     steps::{
-        self, BASH_SHELL, CommonJobConditions, CommonPermissionSets,
-        DEFAULT_REPOSITORY_OWNER_GUARD, GitHubScriptStep, GitRef, NamedJob, RefSha,
-        RepositoryTarget, TokenPermissions, cache_rust_dependencies_namespace, checkout_repo,
-        create_ref, dependant_job, generate_token, named,
+        self, BASH_SHELL, CommonPermissionSets, DEFAULT_REPOSITORY_GUARD, GitHubScriptStep, GitRef,
+        NamedJob, RefSha, RepositoryTarget, TokenPermissions, cache_rust_dependencies_namespace,
+        checkout_repo, create_ref, dependant_job, generate_token, named,
     },
     vars::{
-        JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
+        self, JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
         one_workflow_per_non_main_branch_and_token,
     },
 };
@@ -19,7 +18,7 @@ use crate::tasks::workflows::{
 const VERSION_CHECK: &str =
     r#"sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]'"#;
 
-// This is used by various extensions repos in the zed-extensions org to bump extension versions.
+// This is reusable by extension repositories in the configured Orion Studio organization.
 pub(crate) fn extension_bump() -> Workflow {
     let bump_type = WorkflowInput::string("bump-type", Some("patch".to_owned()));
     // TODO: Ideally, this would have a default of `false`, but this is currently not
@@ -80,8 +79,8 @@ pub(crate) fn extension_bump() -> Workflow {
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env((
-            "ZED_EXTENSION_CLI_SHA",
-            extension_tests::ZED_EXTENSION_CLI_SHA,
+            "ORION_STUDIO_EXTENSION_CLI_SHA",
+            extension_tests::EXTENSION_CLI_SHA,
         ))
         .add_job(check_version_changed.name, check_version_changed.job)
         .add_job(bump_version.name, bump_version.job)
@@ -97,12 +96,32 @@ fn extension_job_defaults() -> Defaults {
     )
 }
 
+fn extension_source_guard() -> String {
+    format!(
+        "({DEFAULT_REPOSITORY_GUARD} || (vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION))"
+    )
+}
+
+fn extension_automation_write_guard() -> String {
+    format!(
+        "{} && vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != ''",
+        extension_source_guard()
+    )
+}
+
+fn extension_registry_write_guard() -> Expression {
+    Expression::new(format!(
+        "{} && vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY != ''",
+        extension_automation_write_guard()
+    ))
+}
+
 fn check_version_changed() -> (NamedJob, StepOutput, StepOutput) {
     let (compare_versions, version_changed, current_version) = compare_versions();
 
     let job = Job::default()
         .defaults(extension_job_defaults())
-        .with_repository_owner_guard()
+        .cond(Expression::new(extension_source_guard()))
         .outputs([
             (version_changed.name.to_owned(), version_changed.to_string()),
             (
@@ -134,13 +153,15 @@ fn create_version_label(
     let job = steps::dependant_job(dependencies)
         .defaults(extension_job_defaults())
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.event_name == 'push' && \
+            "{} && github.event_name == 'push' && \
             github.ref == 'refs/heads/main' && {version_changed} == 'true'",
+            extension_automation_write_guard(),
             version_changed = version_changed_output.expr(),
         )))
         .outputs([(tag.name.to_owned(), tag.to_string())])
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
+        .add_step(validate_extension_organization_config())
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
         .add_step(determine_tag_step)
@@ -231,12 +252,14 @@ fn bump_extension_version(
     let job = steps::dependant_job(dependencies)
         .defaults(extension_job_defaults())
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == true || {version_changed} == 'false')",
+            "{} &&\n({force_bump} == true || {version_changed} == 'false')",
+            extension_automation_write_guard(),
             force_bump = force_bump_output.expr(),
             version_changed = version_changed_output.expr(),
         )))
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(5u32)
+        .add_step(validate_extension_organization_config())
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
         .add_step(cache_rust_dependencies_namespace())
@@ -287,7 +310,7 @@ fn bump_version(
             {{
                 echo "title=Bump version to ${{NEW_VERSION}}";
                 echo "body=This PR bumps the version of this extension to v${{NEW_VERSION}}";
-                echo "branch_name=zed-zippy-autobump";
+                echo "branch_name=orion-studio-automation-autobump";
             }} >> "$GITHUB_OUTPUT"
         else
             {{
@@ -299,7 +322,7 @@ fn bump_version(
                 echo "";
                 echo "- N/A";
                 echo "EOF";
-                echo "branch_name=zed-zippy-${{EXTENSION_ID}}-autobump";
+                echo "branch_name=orion-studio-automation-${{EXTENSION_ID}}-autobump";
             }} >> "$GITHUB_OUTPUT"
         fi
 
@@ -335,7 +358,10 @@ fn trigger_release(
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
-    let extension_registry = RepositoryTarget::new("zed-industries", &["extensions"]);
+    let extension_registry = RepositoryTarget::new(
+        vars::ORION_STUDIO_EXTENSION_ORGANIZATION,
+        &[vars::ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY],
+    );
     let (generate_token, generated_token) =
         generate_token(&app_id.to_string(), &app_secret.to_string())
             .for_repository(extension_registry)
@@ -351,8 +377,9 @@ fn trigger_release(
 
     let job = dependant_job(dependencies)
         .defaults(extension_job_defaults())
-        .with_repository_owner_guard()
+        .cond(extension_registry_write_guard())
         .runs_on(runners::LINUX_SMALL)
+        .add_step(validate_extension_registry_config())
         .add_step(generate_token)
         .add_step(checkout_repo())
         .add_step(get_extension_id)
@@ -365,10 +392,65 @@ fn trigger_release(
     named::job(job)
 }
 
+fn validate_extension_registry_config() -> Step<Run> {
+    named::bash(indoc! {r#"
+        if [[ "$EXTENSION_REGISTRY_ENABLED" != "true" ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED must be true"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_ORGANIZATION" =~ ^orion(-[a-z0-9]+)*$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_REGISTRY_REPOSITORY" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY must be a repository name without an owner"
+            exit 1
+        fi
+    "#})
+    .add_env((
+        "EXTENSION_REGISTRY_ENABLED",
+        vars::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED,
+    ))
+    .add_env((
+        "EXTENSION_ORGANIZATION",
+        vars::ORION_STUDIO_EXTENSION_ORGANIZATION,
+    ))
+    .add_env((
+        "EXTENSION_REGISTRY_REPOSITORY",
+        vars::ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY,
+    ))
+}
+
+fn validate_extension_organization_config() -> Step<Run> {
+    named::bash(indoc! {r#"
+        if [[ "$EXTENSION_REGISTRY_ENABLED" != "true" ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED must be true"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_ORGANIZATION" =~ ^orion(-[a-z0-9]+)*$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization"
+            exit 1
+        fi
+    "#})
+    .add_env((
+        "EXTENSION_REGISTRY_ENABLED",
+        vars::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED,
+    ))
+    .add_env((
+        "EXTENSION_ORGANIZATION",
+        vars::ORION_STUDIO_EXTENSION_ORGANIZATION,
+    ))
+}
+
 fn get_extension_id() -> (Step<Run>, StepOutput) {
     let step = named::bash(indoc! {
     r#"
         EXTENSION_ID="$(sed -n 's/id = \"\(.*\)\"/\1/p' < extension.toml)"
+
+        if [[ ! "$EXTENSION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::extension.toml does not contain a valid extension id"
+            exit 1
+        fi
 
         echo "extension_id=${EXTENSION_ID}" >> "$GITHUB_OUTPUT"
     "#})
@@ -384,6 +466,13 @@ fn release_action(
     tag: JobOutput,
     generated_token: &StepOutput,
 ) -> (Step<Use>, StepOutput) {
+    let registry_repository = format!(
+        "{}/{}",
+        vars::ORION_STUDIO_EXTENSION_ORGANIZATION,
+        vars::ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY
+    );
+    // The pinned action repository is an external integration identifier required by
+    // the extension registry protocol; it is not an Orion Studio product label.
     let step = named::uses(
         "huacnlee",
         "zed-extension-action",
@@ -391,7 +480,7 @@ fn release_action(
     )
     .id("extension-update")
     .add_with(("extension-name", extension_id.to_string()))
-    .add_with(("push-to", "zed-industries/extensions"))
+    .add_with(("push-to", registry_repository))
     .add_with(("tag", tag.to_string()))
     .add_env(("COMMITTER_TOKEN", generated_token.to_string()));
 
@@ -412,10 +501,16 @@ fn enable_automerge_if_staff(
         }
 
         const author = process.env.GITHUB_ACTOR;
+        const organization = process.env.EXTENSION_ORGANIZATION;
+        const registryRepository = process.env.EXTENSION_REGISTRY_REPOSITORY;
+        if (!/^orion(?:-[a-z0-9]+)*$/.test(organization) ||
+            !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(registryRepository)) {
+            throw new Error('Invalid Orion Studio extension registry target');
+        }
         let isStaff = false;
         try {
             const response = await github.rest.teams.getMembershipForUserInOrg({
-                org: 'zed-industries',
+                org: organization,
                 team_slug: 'staff',
                 username: author
             });
@@ -432,20 +527,23 @@ fn enable_automerge_if_staff(
         }
 
         // Assign staff member responsible for the bump
-        const pullNumber = parseInt(prNumber);
+        const pullNumber = Number.parseInt(prNumber, 10);
+        if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) {
+            throw new Error(`Invalid pull request number: ${prNumber}`);
+        }
 
         await github.rest.issues.addAssignees({
-            owner: 'zed-industries',
-            repo: 'extensions',
+            owner: organization,
+            repo: registryRepository,
             issue_number: pullNumber,
             assignees: [author]
         });
-        console.log(`Assigned ${author} to PR #${prNumber} in zed-industries/extensions`);
+        console.log(`Assigned ${author} to PR #${prNumber} in ${organization}/${registryRepository}`);
 
         // Get the GraphQL node ID
         const { data: pr } = await github.rest.pulls.get({
-            owner: 'zed-industries',
-            repo: 'extensions',
+            owner: organization,
+            repo: registryRepository,
             pull_number: pullNumber
         });
 
@@ -461,17 +559,27 @@ fn enable_automerge_if_staff(
             }
         `, { pullRequestId: pr.node_id });
 
-        console.log(`Automerge enabled for PR #${prNumber} in zed-industries/extensions`);
+        console.log(`Automerge enabled for PR #${prNumber} in ${organization}/${registryRepository}`);
     "#})
     .custom_name("enable_automerge_if_staff")
     .token(generated_token)
     .env("PR_NUMBER", pull_request_number.to_string())
+    .env(
+        "EXTENSION_ORGANIZATION",
+        vars::ORION_STUDIO_EXTENSION_ORGANIZATION,
+    )
+    .env(
+        "EXTENSION_REGISTRY_REPOSITORY",
+        vars::ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY,
+    )
 }
 
 fn extension_workflow_secrets() -> (WorkflowSecret, WorkflowSecret) {
-    let app_id = WorkflowSecret::new("app-id", "The app ID used to create the PR");
-    let app_secret =
-        WorkflowSecret::new("app-secret", "The app secret for the corresponding app ID");
+    let app_id = WorkflowSecret::new("app-id", "The Orion Studio automation app ID");
+    let app_secret = WorkflowSecret::new(
+        "app-secret",
+        "The private key for the Orion Studio automation app",
+    );
 
     (app_id, app_secret)
 }

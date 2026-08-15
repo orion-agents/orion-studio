@@ -33,12 +33,12 @@ impl RenderOnce for EndTrialUpsell {
             )
             .child(PlanDefinitions.pro_plan())
             .child(
-                Button::new("cta-button", "Upgrade to Zed Pro")
+                Button::new("cta-button", "Upgrade to Orion Pro")
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click(move |_, _window, cx| {
                         telemetry::event!("Upgrade To Pro Clicked", state = "end-of-trial");
-                        cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                        cx.open_url(&zed_urls::upgrade_to_orion_pro_url(cx))
                     }),
             );
 
@@ -65,7 +65,7 @@ impl RenderOnce for EndTrialUpsell {
             .child(PlanDefinitions.free_plan());
 
         AgentPanelOnboardingCard::new()
-            .child(Headline::new("Your Zed Pro Trial has expired"))
+            .child(Headline::new("Your Orion Pro Trial has expired"))
             .child(
                 Label::new("You've been automatically reset to the Free plan.")
                     .color(Color::Muted)

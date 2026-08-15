@@ -1,14 +1,15 @@
 ---
-title: Business Support - Zed Business
-description: How to contact Zed for business inquiries and support.
+title: Business Support
+description: Support boundary for operator-deployed Orion Studio business services.
 ---
 
 # Business Support
 
-For billing and business support (account setup, invoices, organization questions), email [billing-support@zed.dev](mailto:billing-support@zed.dev). Business support is prioritized relative to other support channels.
+No public Orion Studio billing or business-support address is configured in
+this repository. Operators that offer a managed service must publish a verified
+support channel, response expectations, escalation process, and security
+contact.
 
-For general questions, email [hi@zed.dev](mailto:hi@zed.dev).
-
-## Open-source issues
-
-Questions and bugs about the Zed editor itself (features, extensions, language support, crashes) go through the main Zed project on [GitHub](https://github.com/orion-agents/orion-studio/issues).
+For open-source desktop defects, use the
+[Orion Studio issue tracker](https://github.com/orion-agents/orion-studio/issues).
+Do not contact Zed support for Orion Studio accounts, billing, or deployments.

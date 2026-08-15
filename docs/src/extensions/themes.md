@@ -1,21 +1,19 @@
 ---
 title: Themes
-description: "Themes for Zed extensions."
+description: "Themes for Orion Studio extensions."
 ---
 
 # Themes
 
 The `themes` directory in an extension should contain one or more theme files.
 
-Each theme file should adhere to the JSON schema specified at [`https://orion.dev/schema/themes/v0.2.0.json`](https://orion.dev/schema/themes/v0.2.0.json).
-
-See [this blog post](https://orion.dev/blog/user-themes-now-in-preview) for additional background on creating themes.
+Each theme file must match the schema implemented by Orion Studio's [`theme` crate](https://github.com/orion-agents/orion-studio/tree/main/crates/theme/src). A hosted `orion.dev` schema endpoint is not assumed to be deployed.
 
 ## Theme JSON Structure
 
-The structure of a Zed theme is defined in the [Zed Theme JSON Schema](https://orion.dev/schema/themes/v0.2.0.json).
+The structure of an Orion Studio theme is defined by the theme types in the repository.
 
-A Zed theme consists of a Theme Family object including:
+An Orion Studio theme consists of a Theme Family object including:
 
 - `name`: The name for the theme family
 - `author`: The name of the author of the theme family
@@ -57,7 +55,4 @@ The core components of a Theme object include:
 
 ## Designing Your Theme
 
-You can use [Zed's Theme Builder](https://orion.dev/theme-builder) to design your own custom theme based on an existing one.
-
-This tool lets you fine-tune and preview how surfaces in Zed will look.
-You can then export the JSON and publish it in Zed's extension store.
+Start from an existing theme in [`assets/themes`](https://github.com/orion-agents/orion-studio/tree/main/assets/themes), edit the JSON, and test it as a local or development extension. A hosted Orion Theme Builder or public extension store is not assumed to be available.

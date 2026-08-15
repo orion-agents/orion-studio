@@ -1,13 +1,13 @@
 ---
-title: Building Zed for macOS
-description: "Guide to building zed for macos for Zed development."
+title: Building Orion Studio for macOS
+description: "Guide to building Orion Studio on macOS."
 ---
 
-# Building Zed for macOS
+# Building Orion Studio for macOS
 
 ## Repository
 
-Clone the [Zed repository](https://github.com/orion-agents/orion-studio).
+Clone the [Orion Studio repository](https://github.com/orion-agents/orion-studio).
 
 ## Dependencies
 
@@ -36,9 +36,9 @@ Clone the [Zed repository](https://github.com/orion-agents/orion-studio).
   brew install cmake
   ```
 
-## Building Zed from Source
+## Building Orion Studio from Source
 
-Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
+Once you have the dependencies installed, you can build Orion Studio using [Cargo](https://doc.rust-lang.org/cargo/).
 
 For a debug build:
 
@@ -60,7 +60,7 @@ cargo test --workspace
 
 ## Visual Regression Tests
 
-Zed includes visual regression tests that capture screenshots of real Zed windows and compare them against baseline images. These tests require macOS with Screen Recording permission.
+Orion Studio includes visual regression tests that capture screenshots of real Orion Studio windows and compare them against baseline images. These tests require macOS with Screen Recording permission.
 
 ### Prerequisites
 
@@ -74,7 +74,7 @@ You must grant Screen Recording permission to your terminal:
 ### Running Visual Tests
 
 ```sh
-cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+cargo run -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests
 ```
 
 ### Baseline Images
@@ -89,7 +89,7 @@ Before making any UI changes, generate baseline images from a known-good state:
 
 ```sh
 git checkout origin/main
-UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+UPDATE_BASELINE=1 cargo run -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests
 git checkout -
 ```
 
@@ -100,7 +100,7 @@ This creates baselines that reflect the current expected UI.
 When UI changes are intentional, update the baseline images after your changes:
 
 ```sh
-UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+UPDATE_BASELINE=1 cargo run -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests
 ```
 
 > **Note:** In the future, baselines may be stored externally. For now, they
@@ -111,7 +111,7 @@ UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visua
 ### Error compiling metal shaders
 
 ```sh
-error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/zed)`**
+error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/orion-studio)`**
 
 xcrun: error: unable to find utility "metal", not a developer tool or in PATH
 ```
@@ -175,18 +175,18 @@ This error seems to be caused by OS resource constraints. Installing and running
 
 ### Avoiding continual rebuilds
 
-If Zed continually rebuilds root crates, you may be opening the Zed codebase itself in your development build.
+If Orion Studio continually rebuilds root crates, you may be opening the Orion Studio codebase itself in your development build.
 
 This causes problems because `cargo run` exports a bunch of environment
 variables which are picked up by the `rust-analyzer` that runs in the development
-build of Zed. These environment variables are in turn passed to `cargo check`, which
+build of Orion Studio. These environment variables are in turn passed to `cargo check`, which
 invalidates the build cache of some of the crates we depend on.
 
 To avoid this, run the built binary against a different project, for example `cargo run ~/path/to/other/project`.
 
 ### Speeding up verification
 
-If you build Zed frequently, macOS may keep verifying new builds, which can add a few seconds to each iteration.
+If you build Orion Studio frequently, macOS may keep verifying new builds, which can add a few seconds to each iteration.
 
 To fix this, you can:
 

@@ -1,0 +1,1033 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+exec python3 - "$@" <<'PY'
+import argparse
+import csv
+import hashlib
+import io
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+
+ALLOWLIST_PATH = Path("docs/plan/evidence/orion-brand-allowlist.tsv")
+ALLOWLIST_HEADER = (
+    "path",
+    "token",
+    "line_sha256",
+    "occurrence",
+    "category",
+    "reason",
+)
+ALLOWED_CATEGORIES = {
+    "compatibility",
+    "migration",
+    "abi",
+    "upstream",
+    "legal",
+    "test-fixture",
+    "historical",
+    "third-party",
+}
+PLAN_PREFIX = "docs/plan/"
+UNTRACKED_EXCLUDED_ROOTS = (
+    ".git",
+    ".workbuddy",
+    ".cache",
+    ".next",
+    ".pnpm-store",
+    "build",
+    "dist",
+    "node_modules",
+    "out",
+    "target",
+)
+BINARY_SUFFIXES = {
+    ".a",
+    ".avi",
+    ".bin",
+    ".bmp",
+    ".bz2",
+    ".class",
+    ".dll",
+    ".dylib",
+    ".eot",
+    ".exe",
+    ".gif",
+    ".gz",
+    ".icns",
+    ".ico",
+    ".jar",
+    ".jpeg",
+    ".jpg",
+    ".mov",
+    ".mp3",
+    ".mp4",
+    ".o",
+    ".otf",
+    ".pdf",
+    ".png",
+    ".rar",
+    ".rlib",
+    ".rmeta",
+    ".so",
+    ".tar",
+    ".tiff",
+    ".ttf",
+    ".wasm",
+    ".webm",
+    ".webp",
+    ".woff",
+    ".woff2",
+    ".wav",
+    ".xz",
+    ".zip",
+    ".provisionprofile",
+}
+BINARY_FILENAMES = {".DS_Store"}
+MAX_ALLOWLIST_BYTES = 16 * 1024 * 1024
+MAX_ALLOWLIST_FIELD_CHARACTERS = 1024 * 1024
+MAX_ALLOWLIST_RULES = 200_000
+MAX_ENUMERATION_BYTES = 64 * 1024 * 1024
+MAX_ENUMERATED_PATHS = 250_000
+MAX_TEXT_FILE_BYTES = 16 * 1024 * 1024
+MAX_LINE_BYTES = 1024 * 1024
+MAX_BRAND_HITS = 100_000
+
+# Keep the spellings split so this checker does not report its own definitions.
+LOWER_PRODUCT = "z" + "ed"
+UPPER_PRODUCT = "Z" + "ED"
+MATCHERS = (
+    (
+        "legacy-domain",
+        re.compile(re.escape(LOWER_PRODUCT) + r"[.]dev", re.IGNORECASE),
+    ),
+    (
+        "legacy-organization",
+        re.compile(re.escape(LOWER_PRODUCT) + r"-industries", re.IGNORECASE),
+    ),
+    (
+        "legacy-environment",
+        re.compile(
+            r"(?<![A-Za-z0-9])"
+            + re.escape(LOWER_PRODUCT)
+            + r"_[A-Za-z0-9_]+",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "legacy-bundle-id",
+        re.compile(
+            r"(?<![A-Za-z0-9])dev[.]"
+            + re.escape(LOWER_PRODUCT)
+            + r"(?:[.][A-Za-z0-9_-]+)*",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "legacy-url-scheme",
+        re.compile(
+            r"(?<![A-Za-z0-9])" + re.escape(LOWER_PRODUCT) + r"://",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "legacy-product-token",
+        re.compile(
+            r"(?<![A-Za-z0-9])"
+            + re.escape(LOWER_PRODUCT)
+            + r"[A-Za-z0-9_]*",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+class UsageError(Exception):
+    pass
+
+
+class RuntimeGateError(Exception):
+    pass
+
+
+class StructuredArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise UsageError(message)
+
+
+@dataclass(frozen=True)
+class Hit:
+    path: str
+    line_number: int
+    column_number: int
+    kind: str
+    token: str
+    line: str
+    line_sha256: str
+    source_kind: str
+    occurrence: int = 0
+
+    @property
+    def key(self) -> tuple[str, str, str, int]:
+        return (self.path, self.token, self.line_sha256, self.occurrence)
+
+
+@dataclass
+class Rule:
+    allowlist_line: int
+    path: str
+    token: str
+    line_sha256: str
+    occurrence: int
+    category: str
+    reason: str
+    match_count: int = 0
+
+    @property
+    def key(self) -> tuple[str, str, str, int]:
+        return (self.path, self.token, self.line_sha256, self.occurrence)
+
+
+@dataclass(frozen=True)
+class ReadResult:
+    text: Optional[str]
+    outcome: str
+    message: Optional[str] = None
+    symlink: bool = False
+
+
+@dataclass
+class ScanStats:
+    enumerated_files: int = 0
+    scanned_files: int = 0
+    symlink_targets_scanned: int = 0
+    binary_extension_files_skipped: int = 0
+    nul_text_files: int = 0
+    invalid_utf8_files: int = 0
+    oversized_files: int = 0
+    read_errors: int = 0
+    invalid_utf8_paths: int = 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = StructuredArgumentParser(
+        description="Reject unapproved legacy product identity in Orion Studio sources.",
+        epilog=(
+            "Allowlist entries use an exact path and token, the SHA-256 of the UTF-8 "
+            "logical line without its terminator, and a one-based occurrence. "
+            "Symbolic links are not followed; their UTF-8 target text is scanned."
+        ),
+    )
+    parser.add_argument(
+        "--max-findings",
+        type=int,
+        default=None,
+        help="Print at most this many findings while retaining the strict exit status.",
+    )
+    arguments = parser.parse_args()
+    if arguments.max_findings is not None and arguments.max_findings < 0:
+        raise UsageError("--max-findings must be zero or greater")
+    return arguments
+
+
+def json_value(value: object) -> str:
+    return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+
+
+def emit_record(record_type: str, fields: list[tuple[str, object]]) -> None:
+    values = ["ORION_BRAND_" + record_type]
+    values.extend(key + "=" + json_value(value) for key, value in fields)
+    print("\t".join(values))
+
+
+def emit_error_summary(error_kind: str, error_count: int) -> None:
+    emit_record(
+        "SUMMARY",
+        [
+            ("status", "ERROR"),
+            ("exit_code", 2),
+            ("error_kind", error_kind),
+            ("errors", error_count),
+        ],
+    )
+
+
+def repository_root() -> Path:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeGateError("cannot locate repository root: " + str(error)) from error
+
+    if completed.returncode != 0:
+        message = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeGateError(
+            "cannot locate repository root"
+            + ((": " + message) if message else "")
+        )
+    try:
+        root_text = completed.stdout.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise RuntimeGateError("repository root is not valid UTF-8") from error
+    if not root_text:
+        raise RuntimeGateError("repository root is empty")
+    return Path(root_text)
+
+
+def is_plan_path(path: str) -> bool:
+    return path == PLAN_PREFIX.removesuffix("/") or path.startswith(PLAN_PREFIX)
+
+
+def is_fixed_untracked_exclusion(path: str) -> bool:
+    root_part = path.split("/", 1)[0]
+    return root_part in UNTRACKED_EXCLUDED_ROOTS
+
+
+def exclusion_pathspecs(names: tuple[str, ...]) -> list[str]:
+    pathspecs: list[str] = []
+    for name in names:
+        pathspecs.extend(
+            [
+                ":(top,exclude)" + name,
+                ":(top,exclude)" + name + "/**",
+            ]
+        )
+    return pathspecs
+
+
+def run_git_path_enumeration(root: Path, arguments: list[str]) -> bytes:
+    command = ["git", "ls-files", "-z", *arguments]
+    try:
+        with tempfile.TemporaryFile() as stderr_file:
+            process = subprocess.Popen(
+                command,
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=stderr_file,
+            )
+            if process.stdout is None:
+                process.kill()
+                process.wait()
+                raise RuntimeGateError("Git path enumeration has no output stream")
+
+            chunks: list[bytes] = []
+            output_size = 0
+            while True:
+                chunk = process.stdout.read(64 * 1024)
+                if not chunk:
+                    break
+                output_size += len(chunk)
+                if output_size > MAX_ENUMERATION_BYTES:
+                    process.kill()
+                    process.wait()
+                    raise RuntimeGateError(
+                        "Git path enumeration exceeded the byte limit"
+                    )
+                chunks.append(chunk)
+
+            return_code = process.wait()
+            stderr_file.seek(0)
+            stderr = stderr_file.read(64 * 1024)
+    except OSError as error:
+        raise RuntimeGateError("cannot enumerate repository paths: " + str(error)) from error
+
+    if return_code != 0:
+        message = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeGateError(
+            "Git path enumeration failed" + ((": " + message) if message else "")
+        )
+    return b"".join(chunks)
+
+
+def decode_enumerated_paths(
+    output: bytes, source: str
+) -> tuple[list[str], list[tuple[str, str]]]:
+    paths: list[str] = []
+    errors: list[tuple[str, str]] = []
+    for raw_path in output.split(b"\0"):
+        if not raw_path:
+            continue
+        try:
+            path = raw_path.decode("utf-8")
+        except UnicodeDecodeError:
+            errors.append(
+                (
+                    "<non-utf8-path>",
+                    source + " path bytes are not valid UTF-8: " + raw_path.hex(),
+                )
+            )
+            continue
+        paths.append(path)
+    return paths, errors
+
+
+def working_tree_paths(
+    root: Path,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    plan_exclusions = exclusion_pathspecs((PLAN_PREFIX.removesuffix("/"),))
+    untracked_exclusions = exclusion_pathspecs(UNTRACKED_EXCLUDED_ROOTS)
+    tracked_output = run_git_path_enumeration(
+        root,
+        ["--cached", "--", ".", *plan_exclusions],
+    )
+    deleted_output = run_git_path_enumeration(
+        root,
+        ["--deleted", "--", ".", *plan_exclusions],
+    )
+    ordinary_untracked_output = run_git_path_enumeration(
+        root,
+        [
+            "--others",
+            "--exclude-standard",
+            "--",
+            ".",
+            *plan_exclusions,
+            *untracked_exclusions,
+        ],
+    )
+    ignored_untracked_output = run_git_path_enumeration(
+        root,
+        [
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--",
+            ".",
+            *plan_exclusions,
+            *untracked_exclusions,
+        ],
+    )
+
+    tracked_paths, tracked_errors = decode_enumerated_paths(
+        tracked_output, "tracked"
+    )
+    deleted_paths, deleted_errors = decode_enumerated_paths(
+        deleted_output, "deleted"
+    )
+    ordinary_untracked_paths, ordinary_untracked_errors = decode_enumerated_paths(
+        ordinary_untracked_output, "untracked"
+    )
+    ignored_untracked_paths, ignored_untracked_errors = decode_enumerated_paths(
+        ignored_untracked_output, "ignored-untracked"
+    )
+    errors = [
+        *tracked_errors,
+        *deleted_errors,
+        *ordinary_untracked_errors,
+        *ignored_untracked_errors,
+    ]
+    deleted_path_set = set(deleted_paths)
+    filtered_paths = {
+        path
+        for path in tracked_paths
+        if path not in deleted_path_set and not is_plan_path(path)
+    }
+    filtered_paths.update(
+        path
+        for path in [*ordinary_untracked_paths, *ignored_untracked_paths]
+        if not is_plan_path(path) and not is_fixed_untracked_exclusion(path)
+    )
+    if len(filtered_paths) > MAX_ENUMERATED_PATHS:
+        raise RuntimeGateError("repository path count exceeded the safety limit")
+    return sorted(filtered_paths), sorted(errors)
+
+
+def read_stable_regular_file(path: Path, maximum_bytes: int) -> bytes:
+    try:
+        initial = path.lstat()
+    except OSError as error:
+        raise RuntimeGateError("cannot inspect file: " + str(error)) from error
+    if stat.S_ISLNK(initial.st_mode):
+        raise RuntimeGateError("refusing to follow a symbolic link")
+    if not stat.S_ISREG(initial.st_mode):
+        raise RuntimeGateError("path is not a regular file")
+    if initial.st_size > maximum_bytes:
+        raise RuntimeGateError("file exceeds the byte limit")
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise RuntimeGateError("cannot open file: " + str(error)) from error
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise RuntimeGateError("opened path is not a regular file")
+        if before.st_size > maximum_bytes:
+            raise RuntimeGateError("file exceeds the byte limit")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            data = stream.read(maximum_bytes + 1)
+        after = os.fstat(descriptor)
+    except OSError as error:
+        raise RuntimeGateError("cannot read file: " + str(error)) from error
+    finally:
+        os.close(descriptor)
+
+    if len(data) > maximum_bytes:
+        raise RuntimeGateError("file exceeds the byte limit")
+    initial_identity = (initial.st_dev, initial.st_ino)
+    opened_identity = (before.st_dev, before.st_ino)
+    if initial_identity != opened_identity:
+        raise RuntimeGateError("file changed before it was opened")
+    before_state = (before.st_size, before.st_mtime_ns)
+    after_state = (after.st_size, after.st_mtime_ns)
+    if before_state != after_state:
+        raise RuntimeGateError("file changed while it was read")
+    return data
+
+
+def read_text_file(root: Path, relative_path: str) -> ReadResult:
+    path = root / relative_path
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        return ReadResult(None, "read-error", "cannot inspect path: " + str(error))
+
+    if stat.S_ISLNK(metadata.st_mode):
+        try:
+            target = os.readlink(path)
+            target.encode("utf-8")
+        except UnicodeEncodeError:
+            return ReadResult(
+                None,
+                "invalid-utf8",
+                "symbolic-link target is not valid UTF-8",
+                symlink=True,
+            )
+        except OSError as error:
+            return ReadResult(
+                None,
+                "read-error",
+                "cannot read symbolic-link target: " + str(error),
+                symlink=True,
+            )
+        return ReadResult(target, "text", symlink=True)
+
+    if not stat.S_ISREG(metadata.st_mode):
+        return ReadResult(None, "read-error", "path is not a regular file")
+    if path.name in BINARY_FILENAMES or path.suffix.lower() in BINARY_SUFFIXES:
+        return ReadResult(None, "binary-extension")
+    if metadata.st_size > MAX_TEXT_FILE_BYTES:
+        return ReadResult(
+            None,
+            "oversized",
+            "text file exceeds the byte limit of " + str(MAX_TEXT_FILE_BYTES),
+        )
+
+    try:
+        data = read_stable_regular_file(path, MAX_TEXT_FILE_BYTES)
+    except RuntimeGateError as error:
+        return ReadResult(None, "read-error", str(error))
+    if b"\0" in data:
+        return ReadResult(None, "nul-text", "text or unknown file contains NUL")
+    try:
+        return ReadResult(data.decode("utf-8"), "text")
+    except UnicodeDecodeError as error:
+        return ReadResult(
+            None,
+            "invalid-utf8",
+            "text or unknown file is not valid UTF-8 at byte " + str(error.start),
+        )
+
+
+def line_digest(line: str) -> str:
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()
+
+
+def scan(
+    root: Path,
+) -> tuple[list[Hit], ScanStats, list[tuple[str, str, str]]]:
+    paths, path_errors = working_tree_paths(root)
+    stats = ScanStats(
+        enumerated_files=len(paths),
+        invalid_utf8_paths=len(path_errors),
+    )
+    scan_errors: list[tuple[str, str, str]] = [
+        ("invalid-utf8-path", path, message) for path, message in path_errors
+    ]
+    hits: list[Hit] = []
+
+    hit_limit_reached = False
+    for relative_path in paths:
+        result = read_text_file(root, relative_path)
+        if result.outcome == "binary-extension":
+            stats.binary_extension_files_skipped += 1
+            continue
+        if result.outcome != "text" or result.text is None:
+            if result.outcome == "nul-text":
+                stats.nul_text_files += 1
+            elif result.outcome == "invalid-utf8":
+                stats.invalid_utf8_files += 1
+            elif result.outcome == "oversized":
+                stats.oversized_files += 1
+            else:
+                stats.read_errors += 1
+            scan_errors.append(
+                (
+                    result.outcome,
+                    relative_path,
+                    result.message or "cannot scan path",
+                )
+            )
+            continue
+
+        stats.scanned_files += 1
+        if result.symlink:
+            stats.symlink_targets_scanned += 1
+        for line_number, line in enumerate(result.text.splitlines(), start=1):
+            if len(line.encode("utf-8")) > MAX_LINE_BYTES:
+                stats.oversized_files += 1
+                scan_errors.append(
+                    (
+                        "oversized-line",
+                        relative_path,
+                        "line "
+                        + str(line_number)
+                        + " exceeds the byte limit of "
+                        + str(MAX_LINE_BYTES),
+                    )
+                )
+                continue
+
+            occupied_intervals: list[tuple[int, int]] = []
+            digest = line_digest(line)
+            for kind, pattern in MATCHERS:
+                for match in pattern.finditer(line):
+                    overlaps = any(
+                        not (match.end() <= start or match.start() >= end)
+                        for start, end in occupied_intervals
+                    )
+                    if overlaps:
+                        continue
+                    occupied_intervals.append((match.start(), match.end()))
+                    hits.append(
+                        Hit(
+                            path=relative_path,
+                            line_number=line_number,
+                            column_number=match.start() + 1,
+                            kind=kind,
+                            token=match.group(0),
+                            line=line,
+                            line_sha256=digest,
+                            source_kind=(
+                                "symlink-target" if result.symlink else "file"
+                            ),
+                        )
+                    )
+                    if len(hits) >= MAX_BRAND_HITS:
+                        scan_errors.append(
+                            (
+                                "hit-limit",
+                                "<repository>",
+                                "brand hit count reached the safety limit of "
+                                + str(MAX_BRAND_HITS),
+                            )
+                        )
+                        hit_limit_reached = True
+                        break
+                if hit_limit_reached:
+                    break
+            if hit_limit_reached:
+                break
+        if hit_limit_reached:
+            break
+
+    hits.sort(
+        key=lambda hit: (
+            hit.path,
+            hit.line_number,
+            hit.column_number,
+            hit.kind,
+            hit.token,
+        )
+    )
+    occurrences: dict[tuple[str, str, str], int] = {}
+    numbered_hits: list[Hit] = []
+    for hit in hits:
+        occurrence_key = (hit.path, hit.token, hit.line_sha256)
+        occurrence = occurrences.get(occurrence_key, 0) + 1
+        occurrences[occurrence_key] = occurrence
+        numbered_hits.append(
+            Hit(
+                path=hit.path,
+                line_number=hit.line_number,
+                column_number=hit.column_number,
+                kind=hit.kind,
+                token=hit.token,
+                line=hit.line,
+                line_sha256=hit.line_sha256,
+                source_kind=hit.source_kind,
+                occurrence=occurrence,
+            )
+        )
+    return numbered_hits, stats, sorted(scan_errors)
+
+
+def valid_exact_path(path: str) -> bool:
+    if not path or path.startswith("/") or is_plan_path(path):
+        return False
+    parts = path.split("/")
+    return all(part not in {"", ".", ".."} for part in parts)
+
+
+def load_allowlist(root: Path) -> tuple[list[Rule], list[tuple[int, str]]]:
+    path = root / ALLOWLIST_PATH
+    errors: list[tuple[int, str]] = []
+    try:
+        data = read_stable_regular_file(path, MAX_ALLOWLIST_BYTES)
+    except RuntimeGateError as error:
+        return [], [(0, "cannot read allowlist: " + str(error))]
+    if b"\0" in data:
+        return [], [(0, "allowlist contains NUL")]
+    try:
+        content = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        return [], [
+            (0, "allowlist is not valid UTF-8 at byte " + str(error.start))
+        ]
+
+    previous_field_limit = csv.field_size_limit()
+    csv.field_size_limit(MAX_ALLOWLIST_FIELD_CHARACTERS)
+    try:
+        reader = csv.reader(io.StringIO(content, newline=""), delimiter="\t", strict=True)
+        rows: list[tuple[int, list[str]]] = []
+        try:
+            for row in reader:
+                line_number = reader.line_num
+                if not row or (len(row) == 1 and not row[0]):
+                    continue
+                if len(row) == 1 and row[0].startswith("#"):
+                    continue
+                rows.append((line_number, row))
+                if len(rows) > MAX_ALLOWLIST_RULES + 1:
+                    errors.append(
+                        (line_number, "allowlist exceeds the rule count limit")
+                    )
+                    break
+        except (csv.Error, UnicodeError) as error:
+            errors.append((reader.line_num or 0, "invalid TSV: " + str(error)))
+    finally:
+        csv.field_size_limit(previous_field_limit)
+
+    if errors:
+        return [], sorted(errors)
+    if not rows:
+        return [], [(0, "allowlist has no header")]
+
+    header_line, header = rows[0]
+    if tuple(header) != ALLOWLIST_HEADER:
+        return [], [
+            (
+                header_line,
+                "header must be exactly: " + " | ".join(ALLOWLIST_HEADER),
+            )
+        ]
+
+    rules: list[Rule] = []
+    rule_lines_by_key: dict[tuple[str, str, str, int], int] = {}
+    for line_number, row in rows[1:]:
+        if len(row) != len(ALLOWLIST_HEADER):
+            errors.append(
+                (
+                    line_number,
+                    "expected "
+                    + str(len(ALLOWLIST_HEADER))
+                    + " tab-separated fields",
+                )
+            )
+            continue
+        rule_path, token, digest, occurrence_source, category, reason = row
+        if not all(row):
+            errors.append((line_number, "all fields must be non-empty"))
+            continue
+        if "\0" in "".join(row):
+            errors.append((line_number, "fields must not contain NUL"))
+            continue
+        if not valid_exact_path(rule_path):
+            errors.append(
+                (
+                    line_number,
+                    "path must be an exact canonical repository-relative file outside docs/plan",
+                )
+            )
+            continue
+        if "\n" in token or "\r" in token:
+            errors.append((line_number, "token must be a single exact line fragment"))
+            continue
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            errors.append(
+                (line_number, "line_sha256 must be 64 lowercase hexadecimal characters")
+            )
+            continue
+        if not re.fullmatch(r"[1-9][0-9]*", occurrence_source):
+            errors.append((line_number, "occurrence must be a positive integer"))
+            continue
+        occurrence = int(occurrence_source)
+        if category not in ALLOWED_CATEGORIES:
+            errors.append(
+                (
+                    line_number,
+                    "category must be one of: "
+                    + ", ".join(sorted(ALLOWED_CATEGORIES)),
+                )
+            )
+            continue
+
+        rule = Rule(
+            allowlist_line=line_number,
+            path=rule_path,
+            token=token,
+            line_sha256=digest,
+            occurrence=occurrence,
+            category=category,
+            reason=reason,
+        )
+        previous_line = rule_lines_by_key.get(rule.key)
+        if previous_line is not None:
+            errors.append(
+                (
+                    line_number,
+                    "duplicate exact rule; first declared on allowlist line "
+                    + str(previous_line),
+                )
+            )
+            continue
+        rule_lines_by_key[rule.key] = line_number
+        rules.append(rule)
+
+    return rules, sorted(errors)
+
+
+def suggested_category(hit: Hit) -> str:
+    lowercase_path = hit.path.lower()
+    lowercase_line = hit.line.lower()
+    path_parts = set(lowercase_path.split("/"))
+
+    if (
+        "test" in path_parts
+        or "tests" in path_parts
+        or "test_data" in path_parts
+        or "fixtures" in path_parts
+        or "snapshots" in path_parts
+        or "test" in Path(lowercase_path).stem
+    ):
+        return "test-fixture"
+    if "migration" in lowercase_path or "migrate" in lowercase_line:
+        return "migration"
+    if (
+        "legacy" in lowercase_line
+        or "compat" in lowercase_line
+        or "deprecated" in lowercase_line
+        or "fallback" in lowercase_line
+    ):
+        return "compatibility"
+    if LOWER_PRODUCT + ":extension" in lowercase_line or LOWER_PRODUCT + "::" in lowercase_line:
+        return "abi"
+    if (
+        hit.kind == "legacy-organization"
+        or "github.com/" + LOWER_PRODUCT + "-industries" in lowercase_line
+    ):
+        return "upstream"
+    if lowercase_path == "cargo.lock" or "third_party" in path_parts or "vendor" in path_parts:
+        return "third-party"
+    if lowercase_path in {".git-blame-ignore-revs", ".mailmap"}:
+        return "historical"
+    if (
+        "copyright" in lowercase_line
+        or "license" in lowercase_line
+        or lowercase_path.startswith("legal/")
+    ):
+        return "legal"
+    return "compatibility"
+
+
+def main() -> int:
+    try:
+        arguments = parse_args()
+    except UsageError as error:
+        emit_record("CONFIG_ERROR", [("kind", "usage"), ("message", str(error))])
+        emit_error_summary("usage", 1)
+        return 2
+
+    try:
+        root = repository_root()
+    except RuntimeGateError as error:
+        emit_record("RUNTIME_ERROR", [("kind", "repository"), ("message", str(error))])
+        emit_error_summary("runtime", 1)
+        return 2
+
+    rules, allowlist_errors = load_allowlist(root)
+    if allowlist_errors:
+        for line_number, message in allowlist_errors:
+            emit_record(
+                "CONFIG_ERROR",
+                [
+                    ("kind", "allowlist"),
+                    ("location", str(ALLOWLIST_PATH) + ":" + str(line_number)),
+                    ("message", message),
+                ],
+            )
+        emit_error_summary("allowlist", len(allowlist_errors))
+        return 2
+
+    try:
+        hits, stats, scan_errors = scan(root)
+    except RuntimeGateError as error:
+        emit_record("RUNTIME_ERROR", [("kind", "enumeration"), ("message", str(error))])
+        emit_error_summary("runtime", 1)
+        return 2
+
+    findings: list[tuple[tuple[object, ...], str, list[tuple[str, object]]]] = []
+    for error_kind, path, message in scan_errors:
+        findings.append(
+            (
+                ("scan-error", path, error_kind, message),
+                "SCAN_ERROR",
+                [
+                    ("kind", error_kind),
+                    ("path", path),
+                    ("message", message),
+                ],
+            )
+        )
+
+    rules_by_key = {rule.key: rule for rule in rules}
+    allowed_hits = 0
+    unapproved_hits = 0
+    for hit in hits:
+        matching_rule = rules_by_key.get(hit.key)
+        if matching_rule is not None:
+            matching_rule.match_count += 1
+            allowed_hits += 1
+            continue
+
+        unapproved_hits += 1
+        findings.append(
+            (
+                (
+                    "unapproved",
+                    hit.path,
+                    hit.line_number,
+                    hit.column_number,
+                    hit.token,
+                ),
+                "FINDING",
+                [
+                    ("kind", "unapproved"),
+                    (
+                        "location",
+                        f"{hit.path}:{hit.line_number}:{hit.column_number}",
+                    ),
+                    ("path", hit.path),
+                    ("line_number", hit.line_number),
+                    ("column_number", hit.column_number),
+                    ("token", hit.token),
+                    ("pattern", hit.kind),
+                    ("source_kind", hit.source_kind),
+                    ("line_sha256", hit.line_sha256),
+                    ("occurrence", hit.occurrence),
+                    ("suggested_category", suggested_category(hit)),
+                    ("line", hit.line),
+                ],
+            )
+        )
+
+    stale_rules = 0
+    for rule in rules:
+        if rule.match_count != 0:
+            continue
+        stale_rules += 1
+        findings.append(
+            (
+                ("stale", rule.allowlist_line, rule.path, rule.token, rule.occurrence),
+                "ALLOWLIST_ERROR",
+                [
+                    ("kind", "stale"),
+                    (
+                        "location",
+                        str(ALLOWLIST_PATH) + ":" + str(rule.allowlist_line),
+                    ),
+                    ("path", rule.path),
+                    ("token", rule.token),
+                    ("line_sha256", rule.line_sha256),
+                    ("occurrence", rule.occurrence),
+                    ("category", rule.category),
+                    ("reason", rule.reason),
+                ],
+            )
+        )
+
+    findings.sort(key=lambda finding: finding[0])
+    total_findings = len(findings)
+    shown_findings = findings
+    if arguments.max_findings is not None:
+        shown_findings = findings[: arguments.max_findings]
+
+    for _, record_type, fields in shown_findings:
+        emit_record(record_type, fields)
+    if len(shown_findings) < total_findings:
+        emit_record(
+            "NOTICE",
+            [
+                ("kind", "truncated"),
+                ("shown", len(shown_findings)),
+                ("total", total_findings),
+            ],
+        )
+
+    status = "PASS" if total_findings == 0 else "FAIL"
+    emit_record(
+        "SUMMARY",
+        [
+            ("status", status),
+            ("exit_code", 0 if total_findings == 0 else 1),
+            ("enumerated_files", stats.enumerated_files),
+            ("scanned_files", stats.scanned_files),
+            ("symlink_targets_scanned", stats.symlink_targets_scanned),
+            (
+                "binary_extension_files_skipped",
+                stats.binary_extension_files_skipped,
+            ),
+            ("nul_text_files", stats.nul_text_files),
+            ("invalid_utf8_files", stats.invalid_utf8_files),
+            ("invalid_utf8_paths", stats.invalid_utf8_paths),
+            ("oversized_files", stats.oversized_files),
+            ("read_errors", stats.read_errors),
+            ("brand_hits", len(hits)),
+            ("allowed_hits", allowed_hits),
+            ("unapproved_hits", unapproved_hits),
+            ("allowlist_rules", len(rules)),
+            ("stale_rules", stale_rules),
+            ("ambiguous_hits", 0),
+            ("scan_errors", len(scan_errors)),
+            ("errors", total_findings - unapproved_hits),
+        ],
+    )
+    return 0 if total_findings == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+PY

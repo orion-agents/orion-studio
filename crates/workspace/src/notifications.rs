@@ -1196,10 +1196,13 @@ pub mod simple_message_notification {
             });
 
             let with_primary_action = cx.new(|cx| {
-                MessageNotification::new("A new version of Zed is available for download.", cx)
-                    .with_title("Update Available")
-                    .primary_message("Restart Now")
-                    .primary_icon(IconName::ArrowCircle)
+                MessageNotification::new(
+                    "A new version of Orion Studio is available for download.",
+                    cx,
+                )
+                .with_title("Update Available")
+                .primary_message("Restart Now")
+                .primary_icon(IconName::ArrowCircle)
             });
 
             let with_end_icon_action = cx.new(|cx| {
@@ -1299,7 +1302,10 @@ pub mod simple_message_notification {
                     "Linux desktop portal initialization failed.".into()
                 }
                 fn secondary_message(&self) -> Option<SharedString> {
-                    Some("Zed needs an xdg-desktop-portal implementation to open files.".into())
+                    Some(
+                        "Orion Studio needs an xdg-desktop-portal implementation to open files."
+                            .into(),
+                    )
                 }
                 fn severity(&self) -> ErrorSeverity {
                     ErrorSeverity::Critical
@@ -1307,7 +1313,7 @@ pub mod simple_message_notification {
                 fn primary_action(&self) -> ErrorAction {
                     ErrorAction::link(
                         "See Docs",
-                        "https://zed.dev/docs/linux#i-cant-open-any-files",
+                        "https://orion.dev/docs/linux#i-cant-open-any-files",
                     )
                 }
             }
@@ -1317,13 +1323,13 @@ pub mod simple_message_notification {
             struct UpdateRequiredError;
             impl WorkspaceError for UpdateRequiredError {
                 fn primary_message(&self) -> SharedString {
-                    "An update is required to continue using Zed AI.".into()
+                    "An update is required to continue using Orion AI.".into()
                 }
                 fn severity(&self) -> ErrorSeverity {
                     ErrorSeverity::Critical
                 }
                 fn primary_action(&self) -> ErrorAction {
-                    ErrorAction::link("Update Zed", "https://zed.dev/releases")
+                    ErrorAction::link("Update Orion Studio", "https://orion.dev/releases")
                 }
                 fn secondary_action(&self) -> Option<ErrorAction> {
                     Some(ErrorAction::dismiss())

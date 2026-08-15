@@ -27,40 +27,40 @@
 
 记录：
 
-~~~text
+```text
 git branch --show-current
 git rev-parse HEAD
 git status --short --branch
 git log -1 --oneline
 rustc +stable --version
 cargo +stable --version
-~~~
+```
 
 ### 2. 运行跟踪文件扫描
 
 执行并保存命中数量：
 
-~~~text
+```text
 git grep -Il -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
 git grep -In -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
-~~~
+```
 
 再按下面区域分别统计：
 
-~~~text
+```text
 git grep -Il -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://' -- crates
 git grep -Il -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://' -- assets
 git grep -Il -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://' -- script .github legal docs/src
-~~~
+```
 
 ### 3. 运行工作树扫描
 
 扫描时排除 .git、target、.workbuddy 和构建输出：
 
-~~~text
+```text
 rg --hidden --glob '!.git/**' --glob '!target/**' --glob '!.workbuddy/**' \
   -n -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
-~~~
+```
 
 将 untracked 的 docs/research 和 docs/plan 单独列为“计划/研究材料”，
 不能把它们的命中混入源码残留结论。
@@ -118,4 +118,3 @@ rg --hidden --glob '!.git/**' --glob '!target/**' --glob '!.workbuddy/**' \
 - 最重要的 10 个 P0 命中。
 - 未决的命名/服务/许可证问题。
 - evidence 文件路径。
-

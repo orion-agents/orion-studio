@@ -3,6 +3,7 @@
 # Welcome
 
 - [Getting Started](./getting-started.md)
+- [Upstream Attribution and Compatibility](./orion-studio-upstream-and-compatibility.md)
 - [Installation](./installation.md)
   - [Update](./update.md)
   - [Uninstall](./uninstall.md)
@@ -47,7 +48,7 @@
 - [AI Quick Start](./ai/quick-start.md)
 - [AI by Company](./ai/by-company.md)
 - [Agents](./ai/agents.md)
-  - [Zed Agent](./ai/zed-agent.md)
+  - [Orion Studio Agent](./ai/zed-agent.md)
   - [External Agents](./ai/external-agents.md)
   - [Terminal Threads](./ai/terminal-threads.md)
 - [Agent Panel](./ai/agent-panel.md)
@@ -70,14 +71,14 @@
 - [AI Privacy](./ai/privacy-and-security.md)
   - [Feedback and Training Data](./ai/ai-improvement.md)
 
-# Account & Billing
+# Account & Billing (Deployment-dependent)
 
 - [Authenticate](./authentication.md)
 - [Plans & Pricing](./account/plans-and-pricing.md)
-- [Zed-Hosted Models](./account/zed-hosted-models.md)
+- [Orion-Hosted Models](./account/zed-hosted-models.md)
 - [Billing](./account/billing.md)
 
-# Zed Business
+# Deployment-dependent Business Services
 
 - [Overview](./business/overview.md)
 - [Organizations](./business/organizations.md)
@@ -214,9 +215,9 @@
 - [All Actions](./all-actions.md)
 - [CLI Reference](./reference/cli.md)
 
-# Developing Zed
+# Developing Orion Studio
 
-- [Developing Zed](./development.md)
+- [Developing Orion Studio](./development.md)
   - [macOS](./development/macos.md)
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)

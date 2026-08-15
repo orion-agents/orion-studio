@@ -8,16 +8,18 @@ use crate::{
     ThemeFamily, ThemeStyles, default_color_scales,
 };
 
-/// The default theme family for Zed.
+pub const ORION_STUDIO_DEFAULT_THEME_FAMILY_ID: &str = "orion-studio-default";
+
+/// The default theme family for Orion Studio.
 ///
 /// This is used to construct the default theme fallback values, as well as to
 /// have a theme available at compile time for tests.
-pub fn zed_default_themes() -> ThemeFamily {
+pub fn orion_studio_default_themes() -> ThemeFamily {
     ThemeFamily {
-        id: "zed-default".to_string(),
-        name: "Zed Default".into(),
+        id: ORION_STUDIO_DEFAULT_THEME_FAMILY_ID.to_string(),
+        name: "Orion Studio Default".into(),
         author: "".into(),
-        themes: vec![zed_default_dark()],
+        themes: vec![orion_studio_default_dark()],
         scales: default_color_scales(),
     }
 }
@@ -57,7 +59,7 @@ pub fn apply_theme_color_defaults(
     }
 }
 
-pub(crate) fn zed_default_dark() -> Theme {
+pub(crate) fn orion_studio_default_dark() -> Theme {
     let bg = hsla(215. / 360., 12. / 100., 15. / 100., 1.);
     let editor = hsla(220. / 360., 12. / 100., 18. / 100., 1.);
     let elevated_surface = hsla(225. / 360., 12. / 100., 17. / 100., 1.);
@@ -388,5 +390,18 @@ pub(crate) fn zed_default_dark() -> Theme {
                 ("diff.minus".into(), red.into()),
             ])),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_theme_family_uses_orion_studio_identity() {
+        let family = orion_studio_default_themes();
+
+        assert_eq!(family.id, ORION_STUDIO_DEFAULT_THEME_FAMILY_ID);
+        assert_eq!(family.name.as_ref(), "Orion Studio Default");
     }
 }

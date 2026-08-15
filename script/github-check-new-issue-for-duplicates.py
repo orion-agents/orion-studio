@@ -38,8 +38,8 @@ from datetime import datetime, timedelta
 import requests
 
 GITHUB_API = "https://api.github.com"
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "orion-agents"
+REPO_NAME = "orion-studio"
 TRACKING_ISSUE_NUMBER = 46355
 STAFF_TEAM_SLUG = "staff"
 CLAUDE_MODEL = "claude-sonnet-4-6"
@@ -51,7 +51,7 @@ PREFIXES_TO_COLLAPSE = ["languages", "parity", "tooling"]
 STOPWORDS = {
     "after", "all", "also", "and", "any", "but", "can't", "does", "doesn't",
     "don't", "for", "from", "have", "just", "not", "only", "some", "that",
-    "the", "this", "when", "while", "with", "won't", "work", "working", "zed",
+    "the", "this", "when", "while", "with", "won't", "work", "working", "orion", "studio",
 }
 
 # HTTP statuses we'll retry on for GET requests
@@ -178,7 +178,7 @@ No action needed. A maintainer will review this shortly.
 
 {match_list}
 
-Zed tracks feature requests and open-ended topics in Discussions rather than Issues. **If your report is covered there, please close this issue as a duplicate (select "Close as not planned" → "Duplicate") and continue in the discussion** so the conversation stays in one place.
+Orion Studio tracks feature requests and open-ended topics in Discussions rather than Issues. **If your report is covered there, please close this issue as a duplicate (select "Close as not planned" → "Duplicate") and continue in the discussion** so the conversation stays in one place.
 
 <details>
 <summary>Why were these selected?</summary>
@@ -429,7 +429,7 @@ def detect_areas(anthropic_key, issue, area_labels):
 
 Decide the area from the user's stated symptom and reproduction steps. Issue bodies routinely
 contain pasted log output, crash dumps, stack traces, settings files, and template headers like
-"Attach Zed log file" or "Relevant Zed settings" — these are evidence about the symptom and
+"Attach Orion Studio log file" or "Relevant Orion Studio settings" — these are evidence about the symptom and
 should not push you toward labels like "logging" or "settings" unless the bug itself is about
 how that subsystem works.
 
@@ -758,7 +758,7 @@ def search_discussions(issue, detected_areas, search_queries, max_searches=6):
     """Search Discussions for a topic/request the new issue may duplicate.
 
     Discussions are not in the REST search API, so this uses GraphQL search(type: DISCUSSION).
-    Zed tracks feature requests and open-ended topics as Discussions rather than Issues, so a
+    Orion Studio tracks feature requests and open-ended topics as Discussions rather than Issues, so a
     new issue that re-files an existing discussion should be closed by its author in favor of
     the discussion.
     """
@@ -896,9 +896,9 @@ Sort matches into two buckets:
   at a surface level.
 
 Examples of things that are NOT duplicates:
-- Two issues about "Copilot models not showing" — one caused by a Zed update breaking the model list,
+- Two issues about "Copilot models not showing" — one caused by an Orion Studio update breaking the model list,
   the other caused by the user's plan not including those models.
-- Two issues about "Zed hangs" — one triggered by network drives, the other by large projects.
+- Two issues about "Orion Studio hangs" — one triggered by network drives, the other by large projects.
 - Two issues about "can't sign in" — one caused by a missing system package, the other by a server-side error.
 
 For OPEN duplicates (either bucket), false positives are MUCH worse than false negatives — they
@@ -944,7 +944,7 @@ Omit a candidate if ANY of these apply (in observed practice, almost everything 
    - "Worktree path bug" alongside "worktree display label confusion" — same feature,
      unrelated.
 
-6. Vague catch-all candidate. A closed issue like "Zed is slow" / "performance" / "agent
+6. Vague catch-all candidate. A closed issue like "Orion Studio is slow" / "performance" / "agent
    panel UX" that could be cited next to almost any new bug is filler. If you'd reuse the
    same closed issue across many unrelated new issues, omit.
 
@@ -964,7 +964,7 @@ Count: typically 0 or 1. Never more than 2 unless there's an obvious cluster of 
 
 # (c) Duplicate of a discussion — OPEN discussion candidates only
 
-Zed tracks feature requests and open-ended proposals as Discussions, not Issues. If the
+Orion Studio tracks feature requests and open-ended proposals as Discussions, not Issues. If the
 new issue is essentially the SAME request or topic as a discussion candidate, its author
 should close the issue and continue in the discussion.
 
@@ -1093,7 +1093,7 @@ errors, configurations, or platforms without evidence tying them together. Judge
 causal mechanism rather than requiring every surface observation to be identical; any claimed
 bridge between differing observations must itself be supported by the provided text.
 
-Some reports framed as bugs are actually requests for behavior Zed does not support. Zed
+Some reports framed as bugs are actually requests for behavior Orion Studio does not support. Orion Studio
 tracks feature requests and open-ended proposals in Discussions. For a discussion candidate,
 keep the match when the report's desired behavior is substantially the SAME request or topic.
 A shared area or superficially similar wording is insufficient.
@@ -1228,7 +1228,7 @@ Return "omit" if ANY of the following apply (in observed practice, almost everyt
    was a recent fix in roughly the same area" is not enough.
 5. Same area / feature, different mechanism. Same area label but different bug, different
    code path, different trigger. Omit.
-6. Vague catch-all candidate. A closed issue like "Zed is slow" / "performance" / "agent
+6. Vague catch-all candidate. A closed issue like "Orion Studio is slow" / "performance" / "agent
    panel UX" that you could cite next to many unrelated new bugs. Omit.
 7. Label or single-keyword overlap. Only connection is a shared area:* label or one shared
    keyword. Omit.

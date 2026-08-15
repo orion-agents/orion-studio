@@ -1,16 +1,35 @@
 # Orion Studio 重构续作计划 v2
 
+## 2026-08-15 Finalization Update
+
+> **当前生效状态：** 本节是截至 2026-08-15 的最终本地验收结论，覆盖下方与之冲突的旧结论。下方旧状态、旧命令结果和旧阻塞记录仅作为历史证据保留，不得再将其中的 `PARTIAL`、`PENDING` 或 Metal/WebRTC 阻塞描述当作当前状态。
+
+**Init v1/v2 本地源码收口：`DONE / GO-WITH-CONDITIONS`；macOS Dev 产物：`VERIFIED`；Production release：`NO-GO`。**
+
+- **仓库与交付边界：** 验收基线为 `init@99023dd28964dc1ef729eca2e606b6194d0ace06`；仓库是仅含 2 个 commit 的 shallow checkout，共享工作树仍有大量既有 WorkBuddy/用户改动。本轮没有 stage、commit、push、tag、PR 或 release。
+- **品牌门禁：** `./script/check-orion-brand` 最终 **PASS**：扫描 4,217 个文件和 263 个符号链接目标，6,446 个命中全部被逐行 allowlist 解释，`unapproved=0`、`stale=0`、`ambiguous=0`、`errors=0`；allowlist SHA-256 为 `b67e5990a56bdf844acb8779df1ed46204943a55a7911225960d3f320c5dd538`。
+- **外部身份契约：** 主 CLI 为 `orion-studio`，短别名为 `orion`；新生成的 deep link、schema URI、provider identity、mention URI、凭据与服务地址均使用 Orion 命名。旧名称只保留在明确的输入兼容、迁移、ABI、上游来源、许可证和测试夹具边界。
+- **Workflow fail-closed：** 源文件与生成 YAML 已同步；`release`、`nightly`、`after_release`、`deploy_docs` 分别有 14、12、4、1 个生产副作用 job 绑定 `production` environment，并分别受稳定版、夜间版和 after-release 显式开关约束；相关 xtask 22 个测试 **PASS**。
+- **编译与回归：** main `cargo +stable check -p orion-studio --bin orion-studio`、完整 `./script/clippy`、format、workflow generation/check、`git diff --check`、todo/keymap/license 检查、Docker/AppX/XML/entitlements 静态门禁均 **PASS**；`paths` 51 个、`cli` 7 个、`deploy_collab` 7 个测试及约定聚焦测试均 **PASS**。
+- **macOS Dev 产物：** `target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg` 已生成并通过 `hdiutil verify`；大小 150,297,095 bytes（143 MiB），SHA-256 为 `3fa0c88c88fcc1d1c841adc6a6b338b7aed3815df229164616f33b2a00981f2d`。
+- **App 验收：** DMG 内为 `Orion Studio Dev.app`，`CFBundleIdentifier=dev.orion.OrionStudio-Dev`、`CFBundleExecutable=orion-studio`、版本 `1.16.0`，主程序为 arm64；Info.plist lint 与扩展键去重、`codesign --verify --deep --strict`、entitlements 检查均 **PASS**。
+- **开发包限制：** 当前仅有 ad-hoc 签名，`TeamIdentifier` 为空，不含 associated-domain entitlement，也未嵌入服务条款或执行 notarization；`spctl` 以状态 3 拒绝该包是预期结果，因此它不是可公开分发的 macOS release。
+- **打包稳定性：** `TERM=dumb` 下旧打包工具的彩色输出 panic 已在项目脚本中 fail-safe 规避；重复 plist 扩展会在签名前规范化；许可证内容未变化时保留文件 mtime，最终缓存复跑的 Rust 构建均在约 2 秒内完成。
+- **跨平台边界：** Windows canonical CLI、安装器、更新器、scheme 所有权与 workflow 已做源码/交叉检查，但本机不能执行真实 Windows/ISCC/Wine 安装升级卸载 E2E；Windows 更新在 `install/old` 非空的中断恢复仍建议后续增加 transaction journal（P2）。
+
+Production release 必须保持 **NO-GO**：Orion DNS、cloud/collab/OAuth、Cloudflare、Sentry、Apple/Windows 签名与公证凭据、publisher/store/Winget、真实 Windows/Linux packaging E2E、GitHub protected Environments/rulesets/reviewers，以及 trademark/privacy/terms 等法务审批均未完成。任何本地 PASS 或 Dev DMG 都不能替代这些生产、平台、治理与法务门禁。
+
 ## 1. 计划信息
 
-| 项目 | 内容 |
-|---|---|
-| 计划文件 | docs/plan/init-plan-v2.md |
-| 执行分支 | init |
-| 当前 HEAD | d2779c3 |
-| 复核日期 | 2026-08-11 |
-| 目标 | 将当前 Zed 派生项目收敛为 Orion Studio，并在保留必要兼容能力的前提下移除面向用户的 Zed 品牌标签 |
-| 执行方式 | HY3 腾讯 WorkBuddy 按顺序执行，每次只执行一个子计划 |
-| 当前状态 | IN_PROGRESS，不能据此宣称已完成改造、可发布或可安装 |
+| 项目      | 内容                                                                                            |
+| --------- | ----------------------------------------------------------------------------------------------- |
+| 计划文件  | docs/plan/init-plan-v2.md                                                                       |
+| 执行分支  | init                                                                                            |
+| 当前 HEAD | d2779c3                                                                                         |
+| 复核日期  | 2026-08-11                                                                                      |
+| 目标      | 将当前 Zed 派生项目收敛为 Orion Studio，并在保留必要兼容能力的前提下移除面向用户的 Zed 品牌标签 |
+| 执行方式  | HY3 腾讯 WorkBuddy 按顺序执行，每次只执行一个子计划                                             |
+| 当前状态  | IN_PROGRESS，不能据此宣称已完成改造、可发布或可安装                                             |
 
 本计划是对已有总计划和 S01–S06 子计划的进度复核与续作，不是新的全量重命名指令。已有工作树是用户正在进行的工作，后续执行必须基于当前状态继续。
 
@@ -28,19 +47,19 @@
 
 ### 2.2 已有子计划状态
 
-| 子计划 | WorkBuddy 报告 | 本次判断 | 证据 |
-|---|---|---|---|
-| S01 基线盘点 | DONE | 可接受为盘点完成 | docs/plan/evidence/S01-baseline-inventory.md |
-| S02 身份与兼容契约 | DONE | 已形成选择，但发布前仍需人工复核 | docs/plan/evidence/S02-identity-and-compatibility-contract.md |
-| S03 运行时身份与路径 | DONE | PARTIAL：局部路径和环境变量已改，完整运行时闭环未证明 | docs/plan/evidence/S03-runtime-identity-and-paths.md、当前源代码 |
-| S04 数据迁移与兼容 | DONE | PARTIAL/NO-GO：迁移模块有实现和测试，但尚未接入启动流程，且存在错误处理和边界问题 | docs/plan/evidence/S04-data-migration-and-compatibility.md、crates/paths/src/migration.rs |
-| S05 核心包和主二进制 | DONE | PARTIAL：主包和二进制配置已有改动，实际主二进制构建未通过 | docs/plan/evidence/S05-core-package-and-binary.md、主二进制构建记录 |
-| S06 CLI、API 和协议 | DONE | PARTIAL：CLI/API 做了第一轮兼容改动，内部 IPC、安装产物和全量协议未闭环 | docs/plan/evidence/S06-cli-api-and-protocol.md、当前源代码 |
-| S07 UI、资源和文档 | 未开始 | NOT STARTED | 尚无完整证据 |
-| S08 客户端服务端点 | 未开始 | NOT STARTED | 尚无完整证据 |
-| S09 协作、远程和部署 | 未开始 | NOT STARTED | 尚无完整证据 |
-| S10 平台打包和 CI | 未开始 | NOT STARTED | 尚无完整证据 |
-| S11 回归和发布门禁 | 未开始 | NOT STARTED | 尚无完整证据 |
+| 子计划               | WorkBuddy 报告 | 本次判断                                                                          | 证据                                                                                      |
+| -------------------- | -------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| S01 基线盘点         | DONE           | 可接受为盘点完成                                                                  | docs/plan/evidence/S01-baseline-inventory.md                                              |
+| S02 身份与兼容契约   | DONE           | 已形成选择，但发布前仍需人工复核                                                  | docs/plan/evidence/S02-identity-and-compatibility-contract.md                             |
+| S03 运行时身份与路径 | DONE           | PARTIAL：局部路径和环境变量已改，完整运行时闭环未证明                             | docs/plan/evidence/S03-runtime-identity-and-paths.md、当前源代码                          |
+| S04 数据迁移与兼容   | DONE           | PARTIAL/NO-GO：迁移模块有实现和测试，但尚未接入启动流程，且存在错误处理和边界问题 | docs/plan/evidence/S04-data-migration-and-compatibility.md、crates/paths/src/migration.rs |
+| S05 核心包和主二进制 | DONE           | PARTIAL：主包和二进制配置已有改动，实际主二进制构建未通过                         | docs/plan/evidence/S05-core-package-and-binary.md、主二进制构建记录                       |
+| S06 CLI、API 和协议  | DONE           | PARTIAL：CLI/API 做了第一轮兼容改动，内部 IPC、安装产物和全量协议未闭环           | docs/plan/evidence/S06-cli-api-and-protocol.md、当前源代码                                |
+| S07 UI、资源和文档   | 未开始         | NOT STARTED                                                                       | 尚无完整证据                                                                              |
+| S08 客户端服务端点   | 未开始         | NOT STARTED                                                                       | 尚无完整证据                                                                              |
+| S09 协作、远程和部署 | 未开始         | NOT STARTED                                                                       | 尚无完整证据                                                                              |
+| S10 平台打包和 CI    | 未开始         | NOT STARTED                                                                       | 尚无完整证据                                                                              |
+| S11 回归和发布门禁   | 未开始         | NOT STARTED                                                                       | 尚无完整证据                                                                              |
 
 结论：不能把 S01–S06 的统一 DONE 标签当成产品完成度。当前真正可继续推进的工作是先修正 P0 数据迁移链路，再处理运行时、构建产物和 IPC 契约。
 
@@ -48,18 +67,18 @@
 
 以下结果是本次在当前工作树上实际执行的结果：
 
-| 检查 | 结果 | 说明 |
-|---|---|---|
-| cargo +stable test -p paths | PASS | 13 个测试通过 |
-| cargo +stable test -p cli | PASS | 6 个测试通过 |
-| cargo +stable check -p client | PASS | 通过 |
-| cargo +stable check -p zed_extension_api | PASS | 通过 |
-| cargo +stable fmt --all -- --check | PASS | 通过 |
-| ./script/check-todos | PASS | 通过 |
-| ./script/check-keymaps | PASS | 通过 |
-| git diff --check | PASS | 通过 |
+| 检查                                          | 结果         | 说明                                                                                                          |
+| --------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- |
+| cargo +stable test -p paths                   | PASS         | 13 个测试通过                                                                                                 |
+| cargo +stable test -p cli                     | PASS         | 6 个测试通过                                                                                                  |
+| cargo +stable check -p client                 | PASS         | 通过                                                                                                          |
+| cargo +stable check -p zed_extension_api      | PASS         | 通过                                                                                                          |
+| cargo +stable fmt --all -- --check            | PASS         | 通过                                                                                                          |
+| ./script/check-todos                          | PASS         | 通过                                                                                                          |
+| ./script/check-keymaps                        | PASS         | 通过                                                                                                          |
+| git diff --check                              | PASS         | 通过                                                                                                          |
 | cargo +stable check -p zed --bin orion-studio | NOT VERIFIED | gpui_macos 报缺少 Metal Toolchain；随后重量级 webrtc-sys 构建等待过久，测试进程被停止，不能当作代码通过或失败 |
-| ./script/clippy | NOT RUN | 必须在后续门禁中执行，不能用 cargo clippy 替代 |
+| ./script/clippy                               | NOT RUN      | 必须在后续门禁中执行，不能用 cargo clippy 替代                                                                |
 
 主二进制当前没有可接受的成功构建证据。缺少 Metal Toolchain 是环境门禁问题；WorkBuddy 必须把它记录为 BLOCKED 或环境前置条件，不得把本次结果改写成代码错误，也不得跳过该门禁。
 
@@ -69,11 +88,11 @@ S02 已记录的目标值先作为当前工作契约使用，涉及发布、法�
 
 - 产品显示名：Orion Studio。
 - 小写 slug：orion-studio。
-- 新环境变量前缀：ORION_STUDIO_*。
+- 新环境变量前缀：ORION*STUDIO*\*。
 - 新文档域名族：orion.dev。
 - 新产品 URL scheme：orion://。
-- 新 macOS bundle 标识族：dev.orion.OrionStudio*。
-- 新 Windows app 标识族：OrionStudio-*。
+- 新 macOS bundle 标识族：dev.orion.OrionStudio\*。
+- 新 Windows app 标识族：OrionStudio-\*。
 - 新通用包标识：com.orion.OrionStudio。
 - 许可证选择：GPL-3.0-or-later，必须保留并核对上游许可证和归属说明。
 - 兼容策略：对已有 Zed 用户数据和旧入口提供有边界的兼容与迁移；兼容层不是继续向用户展示 Zed 品牌的理由。
@@ -81,7 +100,7 @@ S02 已记录的目标值先作为当前工作契约使用，涉及发布、法�
 以下内容在 S02 中没有足够明确的最终值时，不得由执行模型自行猜测：
 
 - 内部 CLI URL scheme，例如 orion-cli:// 是否正式取代 zed-cli://。
-- socket 文件命名是否从 zed-*.sock 改为 orion-*.sock，以及旧 socket 的过渡周期。
+- socket 文件命名是否从 zed-_.sock 改为 orion-_.sock，以及旧 socket 的过渡周期。
 - 生产服务域名、OAuth 回调域名、云端 API 域名。
 - 远程服务器 User-Agent 的精确格式。
 - 包管理器、签名、notarization、发布频道的最终标识。
@@ -105,7 +124,7 @@ crates/paths/src/migration.rs 已有迁移状态、临时目录、原目录备�
 
 ### P0：迁移模块不符合当前 Rust 规则，且有失败安全问题
 
-当前 migration.rs 中存在对 remove_dir_all 结果使用 let _ = 的处理，这违反 AGENTS.md 的错误处理规则。迁移标记解析对格式异常的处理也可能把异常状态当成没有迁移状态，进而继续合并或覆盖目录。测试中也有新引入的 unwrap/expect，后续修改不得继续增加这类脆弱路径。
+当前 migration.rs 中存在对 remove*dir_all 结果使用 let * = 的处理，这违反 AGENTS.md 的错误处理规则。迁移标记解析对格式异常的处理也可能把异常状态当成没有迁移状态，进而继续合并或覆盖目录。测试中也有新引入的 unwrap/expect，后续修改不得继续增加这类脆弱路径。
 
 至少要解决：
 
@@ -138,7 +157,7 @@ crates/cli/src/main.rs 的 clap 名称已是 orion-studio，但 crates/cli/Cargo
 当前仍能发现：
 
 - zed-cli:// 内部 URL。
-- zed-*.sock socket 命名。
+- zed-\*.sock socket 命名。
 - ZED_CHANNEL、ZED_ASKPASS_SOCKET 等运行时协议变量。
 - install_cli 中的 register_zed_scheme。
 - Windows 单实例和 open_listener 中的旧 scheme。
@@ -181,7 +200,7 @@ crates/client/src/zed_urls.rs、cloud API、context OAuth、HTTP host、collab/r
 
 1. 记录分支、HEAD、是否 shallow/grafted、dirty 文件清单和已有未跟踪目录。
 2. 阅读 S01–S06 evidence，逐项抽查其声称修改的源码。
-3. 搜索当前用户可见和运行时关键残留，包括 Zed、zed.dev、cloud.zed.dev、ZED_、zed-cli://、zed-*.sock、dev.zed、Zed-Server。
+3. 搜索当前用户可见和运行时关键残留，包括 Zed、zed.dev、cloud.zed.dev、ZED\_、zed-cli://、zed-\*.sock、dev.zed、Zed-Server。
 4. 记录本计划中已经实际验证的命令，不要把 WorkBuddy 报告的命令当成本次验证。
 5. 标注每个结论为 VERIFIED、PARTIAL、NOT VERIFIED、BLOCKED 或 NOT STARTED。
 6. 不修改源代码，不修复问题，不重跑重量级构建。
@@ -215,7 +234,7 @@ crates/client/src/zed_urls.rs、cloud API、context OAuth、HTTP host、collab/r
 
 必须完成：
 
-1. 清点 migration.rs 的所有 fallible operation；移除 let _ = 对错误的静默丢弃。
+1. 清点 migration.rs 的所有 fallible operation；移除 let \_ = 对错误的静默丢弃。
 2. 为复制、重命名、临时目录、标记文件写入和清理建立一致的错误语义，错误中包含来源、目标和阶段。
 3. 对损坏、空文件、未知版本、重复字段、来源目录变化的 marker 采取 fail closed 行为。
 4. 证明目标目录已有内容时的合并策略不会无条件覆盖用户文件，并为冲突补测试。
@@ -284,7 +303,7 @@ crates/client/src/zed_urls.rs、cloud API、context OAuth、HTTP host、collab/r
 
 必须完成：
 
-1. 建立 canonical ORION_STUDIO_* 与 legacy ZED_* 的来源、优先级、回退和 deprecation 矩阵。
+1. 建立 canonical ORION*STUDIO*_ 与 legacy ZED\__ 的来源、优先级、回退和 deprecation 矩阵。
 2. build.rs 必须同时处理契约中确认的 Orion 构建变量和旧变量回退，输出 cfg、rerun-if-env-changed 以及版本/提交信息行为。
 3. 统一 app_id、Windows app identifier、bundle 相关值、诊断标签、User-Agent 和 release channel 派生值。
 4. 对有意保留的旧兼容值增加说明和测试，确保不会意外生成面向用户的 Zed 新身份。
@@ -321,7 +340,7 @@ crates/client/src/zed_urls.rs、cloud API、context OAuth、HTTP host、collab/r
 1. 证明 Cargo package、bin target、default-run、实际生成文件名和安装脚本一致。
 2. 明确 CLI 是否需要 package 兼容别名；若无法由现有契约决定，先 BLOCKED，不要自行改 package 名称。
 3. 为产品 scheme、旧 scheme、内部 CLI scheme、socket 名称建立协议矩阵。
-4. 对 zed-cli://、zed-*.sock、ZED_CHANNEL、ZED_ASKPASS_SOCKET 等命中逐一判定 canonical 或 legacy。
+4. 对 zed-cli://、zed-\*.sock、ZED_CHANNEL、ZED_ASKPASS_SOCKET 等命中逐一判定 canonical 或 legacy。
 5. 若改内部协议，发送方、接收方、单实例、安装注册、Windows/macOS/Linux 路径必须同一阶段成套验证。
 6. 保持旧入口的兼容窗口和错误提示，不能直接删除升级所需的旧入口。
 7. 不以 clap --help 代替实际二进制构建和安装产物验证。
@@ -340,11 +359,11 @@ crates/client/src/zed_urls.rs、cloud API、context OAuth、HTTP host、collab/r
 
 允许修改：
 
-- crates/extension_api/**
-- extensions/test-extension/**
-- crates/zed/src/**
-- assets/**
-- docs/**
+- crates/extension_api/\*\*
+- extensions/test-extension/\*\*
+- crates/zed/src/\*\*
+- assets/\*\*
+- docs/\*\*
 - 对应 Cargo/build/test 文件
 
 必须完成：
@@ -370,10 +389,10 @@ crates/client/src/zed_urls.rs、cloud API、context OAuth、HTTP host、collab/r
 
 允许修改：
 
-- crates/client/**
-- crates/context_server/**
-- crates/collab/**
-- crates/remote_server/**
+- crates/client/\*\*
+- crates/context_server/\*\*
+- crates/collab/\*\*
+- crates/remote_server/\*\*
 - 相关配置、测试、文档
 
 必须完成：
@@ -473,4 +492,3 @@ DONE 的最低条件是：允许路径内的改动完成、指定门禁通过、
 5. 最后处理服务端点、UI、打包和全量回归。
 
 首要判断标准是“已有用户升级时数据不会丢、迁移失败不会静默启动到空目录、CLI/主二进制真实产物与 Orion Studio 契约一致”。在这三个条件有证据之前，不进入发布或大规模清理旧兼容标签。
-

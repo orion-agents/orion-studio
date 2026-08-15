@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 
-channel="$1"
+set -euo pipefail
 
-query=""
+channel="${1:-}"
 case $channel in
   stable)
     ;;
   preview)
-    query="&preview=1"
     ;;
   nightly)
-    query="&nightly=1"
     ;;
   *)
     echo "this must be run on either of stable|preview|nightly release branches" >&2
@@ -18,4 +16,7 @@ case $channel in
     ;;
 esac
 
-curl -s "https://cloud.zed.dev/releases/$channel/latest/asset?asset=zed&os=macos&arch=aarch64" | jq -r .version
+release_api_url="${ORION_STUDIO_RELEASE_API_URL:-https://cloud.orion.dev}"
+curl --fail --silent --show-error \
+  "${release_api_url%/}/releases/$channel/latest/asset?asset=orion-studio&os=macos&arch=aarch64" \
+  | jq --exit-status --raw-output '.version'

@@ -49,11 +49,11 @@ impl ZedEditPredictionDelegate {
 
 impl EditPredictionDelegate for ZedEditPredictionDelegate {
     fn name() -> &'static str {
-        "zed-predict"
+        "orion-predict"
     }
 
     fn display_name() -> &'static str {
-        "Zed's Edit Predictions"
+        "Orion Studio Edit Predictions"
     }
 
     fn show_predictions_in_menu() -> bool {

@@ -61,14 +61,14 @@ const BWRAP_UNUSABLE_EXIT_CODE: i32 = 42;
 
 /// Prefix of the probe script's single result line, so it can be picked out
 /// of any stdout noise printed by the login shell's profile scripts.
-const PROBE_RESULT_PREFIX: &str = "zed-wsl-probe:";
+const PROBE_RESULT_PREFIX: &str = "orion-studio-wsl-probe:";
 
 /// Prefix of the helper-provisioning script's single result line (the absolute
-/// in-WSL path of the Linux `zed` to run as the sandbox helper), picked out of
+/// in-WSL path of the Linux `orion-studio` to run as the sandbox helper), picked out of
 /// login-shell stdout noise just like [`PROBE_RESULT_PREFIX`].
-const HELPER_RESULT_PREFIX: &str = "zed-wsl-helper:";
+const HELPER_RESULT_PREFIX: &str = "orion-studio-wsl-helper:";
 
-/// Ensures a Linux `zed` matching the running release is available inside WSL to
+/// Ensures a Linux `orion-studio` matching the running release is available inside WSL to
 /// act as the sandbox helper (`--wsl-sandbox-helper`), and prints its absolute
 /// in-WSL path on a [`HELPER_RESULT_PREFIX`] line. `$1` is the release channel,
 /// `$2` the version (`latest` for dev builds, which have no matching release and
@@ -76,38 +76,38 @@ const HELPER_RESULT_PREFIX: &str = "zed-wsl-helper:";
 /// a version/channel string can't inject shell.
 ///
 /// Unlike a normal Linux install, this deliberately does **not** consult the WSL
-/// `PATH`: inside WSL `zed` typically resolves to the *Windows* `zed.exe` via
+/// `PATH`: inside WSL `orion-studio` may resolve to the *Windows* executable via
 /// interop, which is not a Linux binary and so can't be the helper. It also does
-/// not use the public install script (`install.sh`), which puts `zed` on the
+/// not use the public install script (`install.sh`), which puts the CLI on the
 /// user's `PATH` and writes desktop entries we don't want. Instead the Windows
-/// side resolves the exact channel+version (see `wsl_zed_release`) and this
+/// side resolves the exact channel+version (see `wsl_orion_release`) and this
 /// script downloads that release's Linux tarball straight from
-/// `cloud.zed.dev/releases` and unpacks it into a private, off-`PATH` location
-/// (`~/.local/libexec/zed/<channel>`, the conventional spot for executables run
+/// `cloud.orion.dev/releases` and unpacks it into a private, off-`PATH` location
+/// (`~/.local/libexec/orion-studio/<channel>`, the conventional spot for executables run
 /// by other programs rather than directly by the user). One managed copy per
 /// channel is kept, tracked by a marker file so an exact channel+version match
 /// is reused rather than re-downloaded. The floating `latest` version (dev
 /// builds) is the exception: it always re-downloads so it tracks the newest
 /// nightly rather than pinning to the first copy fetched.
 ///
-/// We ship no `zed` (nor `bwrap`) into WSL ourselves; this downloads `zed` on
+/// We ship no `orion-studio` (nor `bwrap`) into WSL ourselves; this downloads it on
 /// demand. A missing `curl`/`wget` (or a failed download) is a hard error the
 /// caller surfaces to the user, exactly like a missing `bwrap`.
 const HELPER_PROVISION_SCRIPT: &str = r#"
 set -eu
 channel="$1"
 version="$2"
-dest="$HOME/.local/libexec/zed/$channel"
-marker="$dest/.zed-wsl-helper-version"
+dest="$HOME/.local/libexec/orion-studio/$channel"
+marker="$dest/.orion-studio-wsl-helper-version"
 want="$channel $version"
 
 # Reuse an exact, already-installed channel+version — but never for the floating
 # "latest" tag (dev builds), which must always re-fetch so they track the most
 # recent nightly instead of pinning to whatever was downloaded first.
 if [ "$version" != "latest" ] && [ "$(cat "$marker" 2>/dev/null || true)" = "$want" ]; then
-    helper=$(find "$dest" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
+    helper=$(find "$dest" -type f -path '*/libexec/orion-studio' -print 2>/dev/null | head -n 1 || true)
     if [ -n "$helper" ] && [ -x "$helper" ]; then
-        printf 'zed-wsl-helper: %s\n' "$helper"
+        printf 'orion-studio-wsl-helper: %s\n' "$helper"
         exit 0
     fi
 fi
@@ -116,27 +116,27 @@ arch=$(uname -m)
 case "$arch" in
     x86_64 | amd64) arch="x86_64" ;;
     aarch64 | arm64) arch="aarch64" ;;
-    *) echo "unsupported WSL architecture for the zed sandbox helper: $arch" >&2; exit 1 ;;
+    *) echo "unsupported WSL architecture for the Orion Studio sandbox helper: $arch" >&2; exit 1 ;;
 esac
-url="https://cloud.zed.dev/releases/$channel/$version/download?asset=zed&arch=$arch&os=linux&source=zed-wsl-sandbox"
+url="https://cloud.orion.dev/releases/$channel/$version/download?asset=orion-studio&arch=$arch&os=linux&source=orion-studio-wsl-sandbox"
 
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/zed-wsl-helper-XXXXXX")
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/orion-studio-wsl-helper-XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-tarball="$tmp/zed.tar.gz"
+tarball="$tmp/orion-studio.tar.gz"
 if command -v curl >/dev/null 2>&1; then
     curl -fL "$url" -o "$tarball"
 elif command -v wget >/dev/null 2>&1; then
     wget -O "$tarball" "$url"
 else
-    echo 'neither curl nor wget is available in WSL to download zed' >&2
+    echo 'neither curl nor wget is available in WSL to download Orion Studio' >&2
     exit 1
 fi
 
 mkdir -p "$tmp/unpacked"
 tar -xzf "$tarball" -C "$tmp/unpacked"
-helper_src=$(find "$tmp/unpacked" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
+helper_src=$(find "$tmp/unpacked" -type f -path '*/libexec/orion-studio' -print 2>/dev/null | head -n 1 || true)
 if [ -z "$helper_src" ]; then
-    echo 'the downloaded zed tarball did not contain a libexec/zed-editor binary' >&2
+    echo 'the downloaded Orion Studio tarball did not contain a libexec/orion-studio binary' >&2
     exit 1
 fi
 app=$(dirname "$(dirname "$helper_src")")
@@ -153,12 +153,12 @@ mv "$dest.new" "$dest"
 rm -rf "$dest.old"
 printf '%s' "$want" > "$marker"
 
-helper=$(find "$dest" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
+helper=$(find "$dest" -type f -path '*/libexec/orion-studio' -print 2>/dev/null | head -n 1 || true)
 if [ -z "$helper" ] || [ ! -x "$helper" ]; then
-    echo "the installed zed sandbox helper is missing or not executable under $dest" >&2
+    echo "the installed Orion Studio sandbox helper is missing or not executable under $dest" >&2
     exit 1
 fi
-printf 'zed-wsl-helper: %s\n' "$helper"
+printf 'orion-studio-wsl-helper: %s\n' "$helper"
 exit 0
 "#;
 
@@ -316,7 +316,7 @@ pub fn wsl_distro_registered() -> bool {
 /// or WSL's default), so a bare Linux path is unambiguous.
 pub async fn resolve_canonical_for_grant(
     requested: PathBuf,
-    wsl_zed_release: (String, String),
+    wsl_orion_release: (String, String),
 ) -> Result<ResolvedGrant> {
     let path_string = requested.to_string_lossy();
 
@@ -377,8 +377,8 @@ pub async fn resolve_canonical_for_grant(
         .next()
         .context("bug: missing resolved writable path")?
         .context("bug: required writable path resolved as missing")?;
-    let (channel, version) = wsl_zed_release;
-    let helper = ensure_wsl_zed_helper(&wsl_exe, None, &channel, &version).await?;
+    let (channel, version) = wsl_orion_release;
+    let helper = ensure_wsl_orion_helper(&wsl_exe, None, &channel, &version).await?;
     let output = run_wsl_command(
         &wsl_exe,
         None,
@@ -464,13 +464,13 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     permissions: SandboxPermissions,
     cwd: Option<PathBuf>,
     env: HashMap<String, String, S>,
-    // `(release channel, version)` of the Linux `zed` to provision inside WSL as
+    // `(release channel, version)` of Linux Orion Studio to provision inside WSL as
     // the `--wsl-sandbox-helper` (the version is `latest` for dev builds). When
     // `None`, no helper is used and bwrap is exec'd directly — the legacy path,
     // which binds writable paths by string and so carries the bind-source TOCTOU
     // the helper closes. Callers that can determine the running release should
     // always pass `Some`.
-    wsl_zed_release: Option<(String, String)>,
+    wsl_orion_release: Option<(String, String)>,
 ) -> Result<(String, Vec<String>)> {
     // Mapping failures are bad requests (a path that doesn't exist or has a
     // shape WSL can't address), not environment problems, so no
@@ -574,13 +574,13 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
         &env,
     );
 
-    match wsl_zed_release {
-        // Preferred path: run the in-WSL `zed` as the sandbox helper, which
+    match wsl_orion_release {
+        // Preferred path: run the in-WSL Orion Studio binary as the sandbox helper, which
         // verifies and pins the persisted canonical writable paths WSL-side,
         // then validates them again after bwrap's mounts.
         Some((channel, version)) => {
             let helper =
-                ensure_wsl_zed_helper(&wsl_exe, distro.as_deref(), &channel, &version).await?;
+                ensure_wsl_orion_helper(&wsl_exe, distro.as_deref(), &channel, &version).await?;
             wsl_args.extend(["--exec".to_string(), helper]);
             // Protocol (decoded by `linux_bubblewrap::decode_wsl_helper_args`):
             //   <flag> <bwrap_path> <n_base> <base...> <n_writable> <writable...> -- <prog> <args>
@@ -747,9 +747,9 @@ fn probe_script() -> String {
 ///
 /// Successful results are cached per distro for the life of the process —
 /// like `linux_bubblewrap::is_available`, the answers can't realistically
-/// change while Zed runs. Failures are deliberately *not* cached so a user
+/// change while Orion Studio runs. Failures are deliberately *not* cached so a user
 /// who installs `bwrap` (or lifts a user-namespace restriction) after seeing
-/// the error can retry the command without restarting Zed.
+/// the error can retry the command without restarting Orion Studio.
 async fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<EnvironmentProbe> {
     static CACHE: OnceLock<Mutex<HashMap<Option<String>, EnvironmentProbe>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -846,7 +846,7 @@ fn parse_probe_output(stdout: &str) -> Result<EnvironmentProbe> {
     })
 }
 
-/// Ensure a Linux `zed` of the given release `channel`/`version` is available
+/// Ensure a Linux `orion-studio` of the given release `channel`/`version` is available
 /// inside WSL and return its absolute in-WSL path, to be `--exec`'d as the
 /// `--wsl-sandbox-helper`. Runs [`HELPER_PROVISION_SCRIPT`] (which downloads the
 /// matching release tarball into an off-`PATH` location on first use).
@@ -854,21 +854,32 @@ fn parse_probe_output(stdout: &str) -> Result<EnvironmentProbe> {
 /// Successful resolutions are cached per `(distro, channel, version)` for the
 /// life of the process — once provisioned, the path won't change. Failures are
 /// not cached, so a user who installs `curl` (or fixes networking) after an
-/// error can retry without restarting Zed.
-async fn ensure_wsl_zed_helper(
+/// error can retry without restarting Orion Studio.
+async fn ensure_wsl_orion_helper(
     wsl_exe: &Path,
     distro: Option<&str>,
     channel: &str,
     version: &str,
 ) -> Result<String> {
     // TODO: Remove this development override once WSL canonical-path handling is released.
-    if let Some(helper) = std::env::var_os("ZED_WSL_SANDBOX_HELPER") {
+    let helper_override = if let Some(helper) = std::env::var_os("ORION_STUDIO_WSL_SANDBOX_HELPER")
+    {
+        Some(("ORION_STUDIO_WSL_SANDBOX_HELPER", helper))
+    } else if let Some(helper) = std::env::var_os("ZED_WSL_SANDBOX_HELPER") {
+        // Read the old variable only so existing development environments can
+        // migrate without making it a canonical output or default.
+        log::warn!("ZED_WSL_SANDBOX_HELPER is deprecated; use ORION_STUDIO_WSL_SANDBOX_HELPER");
+        Some(("ZED_WSL_SANDBOX_HELPER", helper))
+    } else {
+        None
+    };
+    if let Some((variable_name, helper)) = helper_override {
         let helper = helper
             .into_string()
-            .map_err(|_| anyhow::anyhow!("ZED_WSL_SANDBOX_HELPER is not valid UTF-8"))?;
+            .map_err(|_| anyhow::anyhow!("{variable_name} is not valid UTF-8"))?;
         ensure!(
             helper.starts_with('/'),
-            "ZED_WSL_SANDBOX_HELPER must be an absolute path inside WSL"
+            "{variable_name} must be an absolute path inside WSL"
         );
         return Ok(helper);
     }
@@ -890,7 +901,7 @@ async fn ensure_wsl_zed_helper(
         return Ok(path.clone());
     }
 
-    // A login shell (`-lc`) is used so a profile-managed PATH (where `zed` or
+    // A login shell (`-lc`) is used so a profile-managed PATH (where `orion-studio` or
     // `curl` may live) is honored. `channel`/`version` are passed as positional
     // args (`$1`/`$2`), never interpolated into the script body.
     let output = run_wsl_command(
@@ -901,18 +912,18 @@ async fn ensure_wsl_zed_helper(
             "sh",
             "-lc",
             HELPER_PROVISION_SCRIPT,
-            "zed-wsl-sandbox-helper",
+            "orion-studio-wsl-sandbox-helper",
             channel,
             version,
         ],
-        "provision the Linux `zed` sandbox helper",
+        "provision the Linux Orion Studio sandbox helper",
     )
     .await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
         return Err(unavailable(format!(
-            "failed to provision a Linux `zed` sandbox helper in {}{}",
+            "failed to provision a Linux Orion Studio sandbox helper in {}{}",
             wsl_distro_label(distro),
             if stderr.is_empty() {
                 String::new()
@@ -936,7 +947,7 @@ async fn ensure_wsl_zed_helper(
         })?;
     ensure!(
         path.starts_with('/'),
-        "the WSL `zed` sandbox helper resolved to {path:?} rather than an absolute path"
+        "the WSL Orion Studio sandbox helper resolved to {path:?} rather than an absolute path"
     );
 
     cache
@@ -1057,7 +1068,7 @@ async fn resolve_uncached_paths(
         "-c".to_string(),
         PATH_RESOLUTION_SCRIPT.to_string(),
         // argv[0] for the script; the path triples follow as "$@".
-        "zed-resolve-paths".to_string(),
+        "orion-studio-resolve-paths".to_string(),
     ];
     args.extend(path_resolution_args(
         mappings.iter().map(|mapping| &mapping.0),
@@ -1592,7 +1603,7 @@ mod tests {
 
     #[test]
     fn probe_output_reports_interop_and_bwrap_path() {
-        let probe = parse_probe_output("zed-wsl-probe: interop /usr/bin/bwrap\n").unwrap();
+        let probe = parse_probe_output("orion-studio-wsl-probe: interop /usr/bin/bwrap\n").unwrap();
         assert_eq!(
             probe,
             EnvironmentProbe {
@@ -1601,9 +1612,10 @@ mod tests {
             }
         );
 
-        let probe =
-            parse_probe_output("zed-wsl-probe: no-interop /home/me/.nix-profile/bin/bwrap\n")
-                .unwrap();
+        let probe = parse_probe_output(
+            "orion-studio-wsl-probe: no-interop /home/me/.nix-profile/bin/bwrap\n",
+        )
+        .unwrap();
         assert_eq!(
             probe,
             EnvironmentProbe {
@@ -1618,7 +1630,7 @@ mod tests {
         // Login-shell profile scripts run before the probe body and may print
         // arbitrary text; only the marked result line counts.
         let probe = parse_probe_output(
-            "welcome to my shell, interop fans\nzed-wsl-probe: no-interop /usr/bin/bwrap\n",
+            "welcome to my shell, interop fans\norion-studio-wsl-probe: no-interop /usr/bin/bwrap\n",
         )
         .unwrap();
         assert!(!probe.mask_interop_dir);
@@ -1628,15 +1640,25 @@ mod tests {
     fn probe_output_rejects_missing_or_malformed_result_line() {
         assert!(parse_probe_output("").is_err());
         assert!(parse_probe_output("profile noise only\n").is_err());
-        assert!(parse_probe_output("zed-wsl-probe: interop\n").is_err());
-        assert!(parse_probe_output("zed-wsl-probe: maybe /usr/bin/bwrap\n").is_err());
+        assert!(parse_probe_output("orion-studio-wsl-probe: interop\n").is_err());
+        assert!(parse_probe_output("orion-studio-wsl-probe: maybe /usr/bin/bwrap\n").is_err());
     }
 
     #[test]
     fn probe_output_rejects_non_absolute_bwrap_path() {
         // `command -v` reports a bare name for shell functions and aliases,
         // which `wsl --exec` could never run.
-        assert!(parse_probe_output("zed-wsl-probe: interop bwrap\n").is_err());
+        assert!(parse_probe_output("orion-studio-wsl-probe: interop bwrap\n").is_err());
+    }
+
+    #[test]
+    fn helper_provisioning_uses_canonical_orion_contract() {
+        assert!(HELPER_PROVISION_SCRIPT.contains("https://cloud.orion.dev/releases/"));
+        assert!(HELPER_PROVISION_SCRIPT.contains("asset=orion-studio"));
+        assert!(HELPER_PROVISION_SCRIPT.contains("source=orion-studio-wsl-sandbox"));
+        assert!(HELPER_PROVISION_SCRIPT.contains(".local/libexec/orion-studio/"));
+        assert!(HELPER_PROVISION_SCRIPT.contains("libexec/orion-studio"));
+        assert!(!HELPER_PROVISION_SCRIPT.contains("zed.dev"));
     }
 
     #[test]
@@ -1775,7 +1797,7 @@ mod tests {
     #[test]
     fn bwrap_binds_explicit_writable_file_paths() {
         let args = build_bwrap_args(
-            &["/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md".to_string()],
+            &["/mnt/c/Users/me/AppData/Roaming/Orion Studio/AGENTS.md".to_string()],
             &[],
             SandboxPermissions::default(),
             None,
@@ -1785,8 +1807,8 @@ mod tests {
         assert!(args.windows(3).any(|window| window
             == [
                 "--bind",
-                "/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md",
-                "/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md"
+                "/mnt/c/Users/me/AppData/Roaming/Orion Studio/AGENTS.md",
+                "/mnt/c/Users/me/AppData/Roaming/Orion Studio/AGENTS.md"
             ]));
     }
 
@@ -2109,7 +2131,7 @@ mod tests {
         assert!(!format!("{mixed_distros:#}").contains(WSL_SANDBOX_UNAVAILABLE_PREFIX));
 
         let missing_path =
-            path_to_wsl(Path::new(r"C:\zed-test\definitely\does\not\exist-2769")).unwrap_err();
+            path_to_wsl(Path::new(r"C:\orion-test\definitely\does\not\exist-2769")).unwrap_err();
         assert!(
             missing_path
                 .downcast_ref::<WslSandboxUnavailable>()

@@ -47,7 +47,7 @@ docs/plan/evidence/S01-baseline-inventory.md
 
 先在仓库根目录运行：
 
-~~~text
+```text
 pwd
 git branch --show-current
 git rev-parse --short HEAD
@@ -57,7 +57,7 @@ git diff --cached --name-only
 git ls-files --others --exclude-standard
 rustc +stable --version
 cargo +stable --version
-~~~
+```
 
 必须满足：
 
@@ -73,20 +73,20 @@ cargo +stable --version
 
 严格按照 S01 执行以下检查：
 
-~~~text
+```text
 git grep -Il -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
 git grep -In -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
 git grep -Il -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://' -- crates
 git grep -Il -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://' -- assets
 git grep -Il -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://' -- script .github legal docs/src
-~~~
+```
 
 再执行工作树扫描：
 
-~~~text
+```text
 rg --hidden --glob '!.git/**' --glob '!target/**' --glob '!.workbuddy/**' \
   -n -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
-~~~
+```
 
 分别检查这些区域：
 
@@ -140,11 +140,11 @@ docs/plan/evidence/S01-baseline-inventory.md
 
 运行：
 
-~~~text
+```text
 git diff --check
 git status --short --branch
 git diff --name-only
-~~~
+```
 
 确认唯一新增/修改文件是：
 
@@ -156,7 +156,7 @@ docs/plan/evidence/S01-baseline-inventory.md
 
 严格按以下格式返回：
 
-~~~text
+```text
 子计划：S01 品牌、运行时和发布基线盘点
 状态：DONE | BLOCKED | PARTIAL
 执行分支：
@@ -171,8 +171,7 @@ docs/plan/evidence/S01-baseline-inventory.md
 失败或未决问题：
 回滚方式：
 建议下一步：
-~~~
+```
 
 只有 S01 报告完整且状态为 DONE，才可以等待人工确认后执行 S02。
 不要自动进入 S02。
-

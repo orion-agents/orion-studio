@@ -2,8 +2,8 @@
 
 // ./script/cargo is a transparent wrapper around cargo that:
 // - When running in a clone of `./orion-agents/orion-studio`
-// - outputs build timings to the ZED_DATA_DIR/build_timings
-// When Zed starts for staff-members it uploads the build timings to Snowflake
+// - outputs build timings to Orion Studio's canonical data directory
+// Orion Studio can then process the build timings for developer diagnostics.
 // To use it:
 //  ./script/cargo --init
 // This will add a wrapper to your shell configuration files.
@@ -30,6 +30,9 @@ const CARGO_ALIASES = {
   r: "run",
   d: "doc",
 };
+
+const ALIAS_MARKER = "Orion Studio cargo timing wrapper";
+const LEGACY_ALIAS_MARKER = "Zed cargo timing wrapper";
 
 function expandAlias(subcommand) {
   return CARGO_ALIASES[subcommand] || subcommand;
@@ -86,34 +89,50 @@ function getShellConfigPath(shell) {
   }
 }
 
+function quotePosixShell(value) {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function quoteFishShell(value) {
+  return `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
+}
+
+function quotePowerShell(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 function generateAlias(shell, scriptDir) {
   const cargoWrapper = path.join(scriptDir, "cargo");
+  const posixWrapper = quotePosixShell(cargoWrapper);
+  const fishWrapper = quoteFishShell(cargoWrapper);
+  const powershellWrapper = quotePowerShell(cargoWrapper);
 
   switch (shell) {
     case "zsh":
     case "bash":
-      return `\n# Zed cargo timing wrapper\ncargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }\n`;
+      return `\n# Orion Studio cargo timing wrapper\ncargo() { local w=${posixWrapper}; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }\n`;
     case "fish":
-      return `\n# Zed cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n        return $status\n    else\n        command cargo $argv\n    end\nend\n`;
+      return `\n# Orion Studio cargo timing wrapper\nfunction cargo\n    set -l w ${fishWrapper}\n    if test -x "$w"\n        "$w" $argv\n        return $status\n    else\n        command cargo $argv\n    end\nend\n`;
     case "powershell":
-      return `\n# Zed cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        node \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
+      return `\n# Orion Studio cargo timing wrapper\nfunction cargo {\n    \$wrapper = ${powershellWrapper}\n    if (Test-Path \$wrapper) {\n        node \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
     default:
-      return `cargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }`;
+      return `cargo() { local w=${posixWrapper}; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }`;
   }
 }
 
 function aliasBlockRegex(shell) {
+  // The legacy marker is matched only so --init can remove wrappers written before the rename.
   switch (shell) {
     case "zsh":
     case "bash":
       // Comment line + single-line cargo() { ... } function
-      return /\n?# Zed cargo timing wrapper\ncargo\(\) \{[^\n]*\}\n/;
+      return /\n?# (?:Orion Studio|Zed) cargo timing wrapper\ncargo\(\) \{[^\n]*\}\n/g;
     case "fish":
       // Comment line + multi-line function cargo...end block
-      return /\n?# Zed cargo timing wrapper\nfunction cargo\n[\s\S]*?\nend\n/;
+      return /\n?# (?:Orion Studio|Zed) cargo timing wrapper\nfunction cargo\n[\s\S]*?\nend\n/g;
     case "powershell":
       // Comment line + multi-line function cargo {...} block
-      return /\n?# Zed cargo timing wrapper\nfunction cargo \{[\s\S]*?\n\}\n/;
+      return /\n?# (?:Orion Studio|Zed) cargo timing wrapper\nfunction cargo \{[\s\S]*?\n\}\n/g;
     default:
       return null;
   }
@@ -132,18 +151,22 @@ function initShellAlias() {
     return;
   }
 
+  const reloadCommand = shell === "powershell"
+    ? `. ${quotePowerShell(configPath)}`
+    : `source ${shell === "fish" ? quoteFishShell(configPath) : quotePosixShell(configPath)}`;
+
   // Check if alias already exists; if so, replace it in-place
   if (fs.existsSync(configPath)) {
     const content = fs.readFileSync(configPath, "utf-8");
-    if (content.includes("Zed cargo timing wrapper")) {
+    if (content.includes(ALIAS_MARKER) || content.includes(LEGACY_ALIAS_MARKER)) {
       const blockRegex = aliasBlockRegex(shell);
       const updated = blockRegex ? content.replace(blockRegex, "") : content;
       fs.writeFileSync(configPath, updated + alias);
       console.log(`Updated cargo timing alias in ${configPath}`);
       if (shell === "powershell") {
-        console.log(`\nRestart PowerShell or run: . "${configPath}"`);
+        console.log(`\nRestart PowerShell or run: ${reloadCommand}`);
       } else {
-        console.log(`\nRestart your shell or run: source ${configPath}`);
+        console.log(`\nRestart your shell or run: ${reloadCommand}`);
       }
       return;
     }
@@ -160,13 +183,13 @@ function initShellAlias() {
   console.log(`Added cargo timing alias to ${configPath}`);
 
   if (shell === "powershell") {
-    console.log(`\nRestart PowerShell or run: . "${configPath}"`);
+    console.log(`\nRestart PowerShell or run: ${reloadCommand}`);
   } else {
-    console.log(`\nRestart your shell or run: source ${configPath}`);
+    console.log(`\nRestart your shell or run: ${reloadCommand}`);
   }
 }
 
-function isZedRepo() {
+function isOrionStudioRepo() {
   try {
     const result = spawnSync("git", ["remote", "-v"], {
       encoding: "utf-8",
@@ -254,8 +277,8 @@ async function main() {
     return;
   }
 
-  // If not in zed repo, just pass through to cargo
-  if (!isZedRepo()) {
+  // If this is not the Orion Studio repository, pass through to cargo.
+  if (!isOrionStudioRepo()) {
     runCargoPassthrough(args);
     return;
   }

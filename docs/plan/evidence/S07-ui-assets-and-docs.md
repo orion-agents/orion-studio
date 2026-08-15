@@ -14,20 +14,20 @@
 
 ## 1. 已完成的迁移（用户可见 + 链接 + 仓库引用）
 
-| 文件 | 改动 |
-| --- | --- |
-| `README.md` | 标题/欢迎语改为 Orion Studio；badge 与 CI 指向 `orion-agents/orion-studio`；下载/文档/jobs 链接 → `orion.dev`；明确标注 “fork of Zed / derived from Zed Industries”；许可证文案保留 GPL 归属 |
-| `CONTRIBUTING.md` | 标题/导语改为 Orion Studio；`zed.dev` → `orion.dev`；`zed-industries/zed` → `orion-agents/orion-studio`；`orgs/zed-industries` → `orgs/orion-agents` |
-| `docs/src/**`（72 文件含 `zed.dev`/`zed-industries/zed` 链接） | 批量迁移 `zed.dev`→`orion.dev`、`zed-industries/zed`→`orion-agents/orion-studio`、`orgs/zed-industries`→`orgs/orion-agents`（191 个 md 文件中一次性完成） |
+| 文件                                                           | 改动                                                                                                                                                                                         |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `README.md`                                                    | 标题/欢迎语改为 Orion Studio；badge 与 CI 指向 `orion-agents/orion-studio`；下载/文档/jobs 链接 → `orion.dev`；明确标注 “fork of Zed / derived from Zed Industries”；许可证文案保留 GPL 归属 |
+| `CONTRIBUTING.md`                                              | 标题/导语改为 Orion Studio；`zed.dev` → `orion.dev`；`zed-industries/zed` → `orion-agents/orion-studio`；`orgs/zed-industries` → `orgs/orion-agents`                                         |
+| `docs/src/**`（72 文件含 `zed.dev`/`zed-industries/zed` 链接） | 批量迁移 `zed.dev`→`orion.dev`、`zed-industries/zed`→`orion-agents/orion-studio`、`orgs/zed-industries`→`orgs/orion-agents`（191 个 md 文件中一次性完成）                                    |
 
 ## 2. 故意保留（分类与理由）
 
-| 类别 | 命中示例 | 理由 |
-| --- | --- | --- |
-| KEEP-EXTERNAL（外部 CDN/依赖） | `images.zed.dev`、`cloud.zed.dev`（linux.md 二进制下载、project-panel 截图）、`zed-industries/tree-sitter-*`、`zed-industries/tracy.git`、`zed-industries/extensions`、`hi@zed.dev`/`sales@zed.dev` 联系邮箱 | 镜像/CDN 子域与上游依赖仓库改为 `orion.*` 会指向不存在的资源；联系邮箱非可猜测项。均为外部资源，不得伪造 Orion 等价物 |
-| KEEP-ASSET（捆绑资源名） | `assets/settings/default.json` 中 `icon_theme:"Zed (Default)"`、`base_keymap:"Zed"`、`.ZedMono`/`.ZedSans` 字体、`$schema:"zed://schemas/settings"` | 这些引用的是实际捆绑资产（图标主题/keymap/字体/ schema 服务）。改名需同步重命名资产文件与 schema 服务，超出纯品牌字符串迁移范围；`zed://` schema 在 S06 已保留兼容 |
-| KEEP-ATTRIBUTION（法律/上游） | `legal/terms.md`、`legal/privacy-policy.md` 中的 “Zed Industries, Inc.”、`zed.dev` 法律联系邮箱、版权头 | 法律文本须经法务单独审批，禁止用普通搜索替换处理；版权/上游归属不得删除 |
-| KEEP-HISTORY（测试/迁移数据） | `crates/migrator` 中 `"provider":"zed.dev"` 历史迁移数据、`docs/src` 正文中的产品名词（开发者参考文档） | 迁移数据不可改写历史行；开发者文档中的 “Zed” 多为描述上游衍生代码库（保留为归属） |
+| 类别                           | 命中示例                                                                                                                                                                                                     | 理由                                                                                                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| KEEP-EXTERNAL（外部 CDN/依赖） | `images.zed.dev`、`cloud.zed.dev`（linux.md 二进制下载、project-panel 截图）、`zed-industries/tree-sitter-*`、`zed-industries/tracy.git`、`zed-industries/extensions`、`hi@zed.dev`/`sales@zed.dev` 联系邮箱 | 镜像/CDN 子域与上游依赖仓库改为 `orion.*` 会指向不存在的资源；联系邮箱非可猜测项。均为外部资源，不得伪造 Orion 等价物                                              |
+| KEEP-ASSET（捆绑资源名）       | `assets/settings/default.json` 中 `icon_theme:"Zed (Default)"`、`base_keymap:"Zed"`、`.ZedMono`/`.ZedSans` 字体、`$schema:"zed://schemas/settings"`                                                          | 这些引用的是实际捆绑资产（图标主题/keymap/字体/ schema 服务）。改名需同步重命名资产文件与 schema 服务，超出纯品牌字符串迁移范围；`zed://` schema 在 S06 已保留兼容 |
+| KEEP-ATTRIBUTION（法律/上游）  | `legal/terms.md`、`legal/privacy-policy.md` 中的 “Zed Industries, Inc.”、`zed.dev` 法律联系邮箱、版权头                                                                                                      | 法律文本须经法务单独审批，禁止用普通搜索替换处理；版权/上游归属不得删除                                                                                            |
+| KEEP-HISTORY（测试/迁移数据）  | `crates/migrator` 中 `"provider":"zed.dev"` 历史迁移数据、`docs/src` 正文中的产品名词（开发者参考文档）                                                                                                      | 迁移数据不可改写历史行；开发者文档中的 “Zed” 多为描述上游衍生代码库（保留为归属）                                                                                  |
 
 ## 3. 验证
 

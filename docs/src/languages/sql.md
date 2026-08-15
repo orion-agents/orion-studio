@@ -1,17 +1,17 @@
 ---
 title: SQL
-description: "Configure SQL language support in Zed, including language servers, formatting, and debugging."
+description: "Configure SQL language support in Orion Studio, including language servers, formatting, and debugging."
 ---
 
 # SQL
 
-SQL files are handled by the [SQL Extension](https://github.com/zed-extensions/sql).
+SQL files are handled by the upstream-Zed [SQL extension](https://github.com/zed-extensions/sql) through Orion Studio's extension compatibility layer.
 
 - Tree-sitter: [nervenes/tree-sitter-sql](https://github.com/nervenes/tree-sitter-sql)
 
 ### Formatting
 
-Zed supports auto-formatting SQL using external tools like [`sql-formatter`](https://github.com/sql-formatter-org/sql-formatter).
+Orion Studio supports auto-formatting SQL using external tools like [`sql-formatter`](https://github.com/sql-formatter-org/sql-formatter).
 
 1. Install `sql-formatter`:
 
@@ -43,7 +43,7 @@ sql-formatter --version
 
 Substitute your preferred [SQL Dialect] for `mysql` above (`duckdb`, `hive`, `mariadb`, `postgresql`, `redshift`, `snowflake`, `sqlite`, `spark`, etc).
 
-You can add this to Zed project settings (`.zed/settings.json`) or via your Zed user settings (`~/.config/zed/settings.json`).
+You can add this to Orion Studio project settings (the retained compatibility path `.zed/settings.json`) or to your Orion Studio user settings (`~/.config/orion-studio/settings.json`).
 
 ### Advanced Formatting
 
@@ -58,7 +58,7 @@ Sql-formatter also allows more precise control by providing [sql-formatter confi
 }
 ```
 
-When using a `.sql-formatter.json` file you can use a simplified Zed settings configuration:
+When using a `.sql-formatter.json` file you can use a simplified Orion Studio settings configuration:
 
 ```json [settings]
 {

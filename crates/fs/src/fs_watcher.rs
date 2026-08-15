@@ -184,12 +184,20 @@ fn path_covered_by_recursive_registration(
 /// Returns `true` for filesystem types where inotify/FSEvents/ReadDirectoryChanges
 /// silently fail to deliver events: 9P (WSL drvfs), NFS, CIFS/SMB, FUSE (sshfs), etc.
 ///
-/// Can be overridden with the `ZED_FILE_WATCHER_MODE` environment variable:
+/// Can be overridden with the `ORION_STUDIO_FILE_WATCHER_MODE` environment variable
+/// (`ZED_FILE_WATCHER_MODE` remains a compatibility fallback):
 /// - `native` — always use native OS watcher
 /// - `poll` — always use polling
 /// - `auto` (default) — auto-detect based on filesystem type
 pub fn requires_poll_watcher(path: &Path) -> bool {
-    match std::env::var("ZED_FILE_WATCHER_MODE")
+    match std::env::var("ORION_STUDIO_FILE_WATCHER_MODE")
+        .or_else(|error| {
+            if matches!(error, std::env::VarError::NotPresent) {
+                std::env::var("ZED_FILE_WATCHER_MODE")
+            } else {
+                Err(error)
+            }
+        })
         .as_deref()
         .unwrap_or("auto")
     {
@@ -1088,7 +1096,14 @@ fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
 }
 
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
-    let poll_ms: u64 = std::env::var("ZED_FILE_WATCHER_POLL_MS")
+    let poll_ms: u64 = std::env::var("ORION_STUDIO_FILE_WATCHER_POLL_MS")
+        .or_else(|error| {
+            if matches!(error, std::env::VarError::NotPresent) {
+                std::env::var("ZED_FILE_WATCHER_POLL_MS")
+            } else {
+                Err(error)
+            }
+        })
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(2000)
@@ -1097,7 +1112,14 @@ static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
 });
 
 static NATIVE_WATCH_LIMIT_COOLDOWN: LazyLock<Duration> = LazyLock::new(|| {
-    let cooldown_seconds: u64 = std::env::var("ZED_NATIVE_WATCH_LIMIT_COOLDOWN_SECONDS")
+    let cooldown_seconds: u64 = std::env::var("ORION_STUDIO_NATIVE_WATCH_LIMIT_COOLDOWN_SECONDS")
+        .or_else(|error| {
+            if matches!(error, std::env::VarError::NotPresent) {
+                std::env::var("ZED_NATIVE_WATCH_LIMIT_COOLDOWN_SECONDS")
+            } else {
+                Err(error)
+            }
+        })
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(5)

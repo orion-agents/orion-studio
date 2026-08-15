@@ -108,7 +108,7 @@ impl Display for SystemSpecs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let os_information = format!("OS: {} {}", self.os_name, self.os_version);
         let app_version_information = format!(
-            "Zed: v{} ({}) {}{}",
+            "Orion Studio: v{} ({}) {}{}",
             self.app_version,
             match &self.commit_sha {
                 Some(commit_sha) => format!("{} {}", self.release_channel, commit_sha),
@@ -283,7 +283,8 @@ fn read_pci_id_from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<u1
     u16::from_str_radix(id, 16).context("Failed to parse device ID")
 }
 
-/// Returns value of `ZED_BUNDLE_TYPE` set at compiletime or else at runtime.
+/// Returns `ORION_STUDIO_BUNDLE_TYPE` set at compile time or runtime, with
+/// `ZED_BUNDLE_TYPE` retained as a compatibility fallback.
 ///
 /// The compiletime value is used by flatpak since it doesn't seem to have a way to provide a
 /// runtime environment variable.
@@ -291,7 +292,13 @@ fn read_pci_id_from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<u1
 /// The runtime value is used by snap since the Zed snaps use release binaries directly, and so
 /// cannot have this baked in.
 fn bundle_type() -> Option<String> {
-    option_env!("ZED_BUNDLE_TYPE")
+    option_env!("ORION_STUDIO_BUNDLE_TYPE")
         .map(|bundle_type| bundle_type.to_string())
-        .or_else(|| env::var("ZED_BUNDLE_TYPE").ok())
+        .or_else(|| match env::var("ORION_STUDIO_BUNDLE_TYPE") {
+            Ok(bundle_type) => Some(bundle_type),
+            Err(env::VarError::NotPresent) => option_env!("ZED_BUNDLE_TYPE")
+                .map(str::to_owned)
+                .or_else(|| env::var("ZED_BUNDLE_TYPE").ok()),
+            Err(env::VarError::NotUnicode(_)) => None,
+        })
 }

@@ -1,15 +1,13 @@
 ---
 title: Tab Switcher
-description: "The Tab Switcher provides a quick way to navigate between open tabs in Zed. It displays a list of your open tabs sorted by recent usage, making it easy to ju..."
+description: "The Tab Switcher provides a quick way to navigate between open tabs in Orion Studio. It displays a list of your open tabs sorted by recent usage, making it easy to ju..."
 ---
 
 # Tab Switcher
 
-The Tab Switcher provides a quick way to navigate between open tabs in Zed. It
+The Tab Switcher provides a quick way to navigate between open tabs in Orion Studio. It
 displays a list of your open tabs sorted by recent usage, making it easy to jump
 back to whatever you were just working on.
-
-![Tab Switcher with multiple panes](https://orion.dev/img/features/tab-switcher.png)
 
 ## Quick Switching
 
@@ -37,7 +35,7 @@ While the Tab Switcher is open, you can:
   the switcher was opened
 - Press {#kb tab_switcher::CloseSelectedItem} to close the currently selected tab
 
-As you navigate through the list, Zed will update the pane's active item to
+As you navigate through the list, Orion Studio will update the pane's active item to
 match the selected tab.
 
 ## Action Reference

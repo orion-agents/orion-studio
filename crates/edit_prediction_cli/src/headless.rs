@@ -26,11 +26,15 @@ pub struct EpAppState {
 }
 
 pub fn init(cx: &mut App) -> EpAppState {
-    let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
+    let app_commit_sha = option_env!("ORION_STUDIO_COMMIT_SHA")
+        .or(option_env!("ZED_COMMIT_SHA"))
+        .map(|s| AppCommitSha::new(s.to_owned()));
 
     let app_version = AppVersion::load(
-        env!("ZED_PKG_VERSION"),
-        option_env!("ZED_BUILD_ID"),
+        option_env!("ORION_STUDIO_PKG_VERSION")
+            .or(option_env!("ZED_PKG_VERSION"))
+            .unwrap_or(env!("CARGO_PKG_VERSION")),
+        option_env!("ORION_STUDIO_BUILD_ID").or(option_env!("ZED_BUILD_ID")),
         app_commit_sha,
     );
     release_channel::init(app_version.clone(), cx);

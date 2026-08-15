@@ -1,39 +1,23 @@
 ---
-title: Acceptable Use Policies
+title: Third-Party Provider Applicability Notice
 slug: acceptable-use-policies
 ---
 
-**Last Updated:** March 2, 2026
+# Orion Studio Preview Third-Party Provider Notice
 
-Some third-party services accessible through Zed have their own acceptable use policies. These apply whether Zed hosts the service on your behalf or you connect your own account. The applicable policies are listed below and apply alongside the [Zed End User Terms](/terms) and [Zed Privacy Policy](/privacy-policy).
+The Orion Studio Preview does not operate an AI proxy, account service, or
+hosted model service. If a user independently configures an agent, model
+provider, source-control host, or other integration, the user interacts with
+that provider directly and is responsible for reviewing the provider's current
+terms, privacy practices, and acceptable-use policies.
 
-These policies may be updated from time to time by the applicable provider.
+Provider names or integration code in this repository do not mean that the
+provider endorses Orion Studio, that the integration is available in the
+Preview, or that the provider acts for an Orion legal entity.
 
-## Anthropic
+The Zed acceptable-use page previously reproduced here applied to Zed's own
+products and services. It is not an Orion Studio policy. Users who separately
+use a Zed product or hosted service should consult Zed's official policies.
 
-- [Anthropic Usage Policy](https://www.anthropic.com/legal/aup)
-
-## GitHub
-
-- [GitHub Acceptable Use Policies](https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies)
-- [GitHub Copilot Product Specific Terms](https://github.com/customer-terms/github-copilot-product-specific-terms)
-
-## Google
-
-- [Google Generative AI Prohibited Use Policy](https://policies.google.com/terms/generative-ai/use-policy)
-
-## OpenAI
-
-- [OpenAI Usage Policies](https://openai.com/policies/usage-policies/)
-
-## OpenRouter
-
-- [OpenRouter Terms of Service](https://openrouter.ai/terms)
-
-## Vercel
-
-- [Vercel Acceptable Use Policy](https://vercel.com/legal/acceptable-use-policy)
-
-## xAI
-
-- [xAI Acceptable Use Policy](https://x.ai/legal/acceptable-use-policy)
+For the Preview's legal and privacy boundaries, see [terms.md](./terms.md) and
+[privacy-policy.md](./privacy-policy.md).

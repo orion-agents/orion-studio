@@ -1,50 +1,70 @@
 # Orion Studio
 
-[![Orion Studio](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/orion-agents/orion-studio/main/assets/badge/v0.json)](https://orion.dev)
 [![CI](https://github.com/orion-agents/orion-studio/actions/workflows/run_tests.yml/badge.svg)](https://github.com/orion-agents/orion-studio/actions/workflows/run_tests.yml)
 
-Welcome to Orion Studio, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+> [!IMPORTANT]
+> Orion Studio is currently a **Preview**. The supported downloadable build is
+> limited to **macOS 11.0 or later on Apple Silicon (arm64)** and is not a
+> Stable release.
 
-Orion Studio is a fork of [Zed](https://zed.dev), built on the open-source GPUI framework and the work of Zed Industries, Inc.
+Orion Studio is an open-source code editor derived from
+[Zed](https://github.com/zed-industries/zed) and its GPUI foundation. Zed and
+Zed Industries are referenced for upstream code and attribution; Zed's hosted
+services and legal policies are not Orion Studio services or policies.
 
----
+## Download the Preview
 
-### Installation
+Download Orion Studio only from
+[GitHub Releases](https://github.com/orion-agents/orion-studio/releases). Select
+a release marked **Pre-release** and download `Orion-Studio-aarch64.dmg`.
 
-On macOS, Linux, and Windows you can [download Orion Studio directly](https://orion.dev/download) or install Orion Studio via your local package manager ([macOS](https://orion.dev/docs/installation#macos)/[Linux](https://orion.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://orion.dev/docs/windows#package-managers)).
+GitHub Releases is the only supported download channel. There is currently no
+package manager installation, Intel Mac build, Linux build, or Windows build.
+Do not install an artifact if its GitHub release does not publish a SHA-256
+digest or if macOS Gatekeeper rejects the installed app.
 
-Other platforms are not yet available:
+Before installing, read:
 
-- Web ([tracking discussion](https://github.com/orion-agents/orion-studio/discussions/26195))
+- [macOS Apple Silicon installation](./docs/installation.md)
+- [Preview scope, migration notes, and known limitations](./docs/releases/preview-macos-arm64.md)
 
-### Developing Orion Studio
+## Preview Boundaries
 
-- [Building Orion Studio for macOS](./docs/src/development/macos.md)
-- [Building Orion Studio for Linux](./docs/src/development/linux.md)
-- [Building Orion Studio for Windows](./docs/src/development/windows.md)
+- Orion Studio does not offer an Orion-operated account, subscription, or
+  hosted online service as part of this Preview.
+- An Orion extension marketplace is not in the supported Preview scope.
+- Automatic updates are not supported; install later Preview versions manually
+  from GitHub Releases and verify each new artifact.
+- Inherited or user-configured third-party integrations may have their own
+  availability, data handling, and terms. Do not assume they are operated or
+  supported by Orion Studio.
+- After the first workspace frame appears, Orion Studio may copy legacy Zed
+  configuration and application data in the background. Quit Zed and make a
+  backup before launching; restart Orion Studio after a successful import.
 
-### Contributing
+## Developing Orion Studio
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Orion Studio.
+- [Build on macOS](./docs/src/development/macos.md)
+- [Build on Linux](./docs/src/development/linux.md)
+- [Build on Windows](./docs/src/development/windows.md)
 
-Also... we're hiring! Check out our [jobs](https://orion.dev/jobs) page for open roles.
+These are source-development guides. They do not mean downloadable Preview
+packages are available for every development platform.
 
-### Licensing
+## Contributing and Support
 
-Orion Studio source code is licensed primarily under GPL-3.0-or-later, with Apache-2.0 components where marked. This preserves the upstream licensing of the Zed project from which this fork derives.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) before proposing a change. For Preview
+help or reproducible bugs, use [SUPPORT.md](./SUPPORT.md). Report security
+vulnerabilities privately as described in [SECURITY.md](./SECURITY.md).
 
-License information for third party dependencies must be correctly provided for CI to pass.
+## Licensing and Upstream Attribution
 
-We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automatically comply with open source licenses. If CI is failing, check the following:
+Orion Studio source code is licensed primarily under
+[GPL-3.0-or-later](./LICENSE-GPL), with
+[Apache-2.0](./LICENSE-APACHE) components where marked. Third-party notices are
+generated during packaging and included in the application bundle.
 
-- Is it showing a `no license specified` error for a crate you've created? If so, add `publish = false` under `[package]` in your crate's Cargo.toml.
-- Is the error `failed to satisfy license requirements` for a dependency? If so, first determine what license the project has and whether this system is sufficient to comply with this license's requirements. If you're unsure, ask a lawyer. Once you've verified that this system is acceptable add the license's SPDX identifier to the `accepted` array in `script/licenses/zed-licenses.toml`.
-- Is `cargo-about` unable to find the license for a dependency? If so, add a clarification field at the end of `script/licenses/zed-licenses.toml`, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
-
-## Sponsorship
-
-Orion Studio is derived from the work of **Zed Industries, Inc.**, a for-profit company, and is released under the same open-source licenses.
-
-If you'd like to financially support the upstream project, you can do so via GitHub Sponsors.
-Sponsorships go directly to Zed Industries and are used as general company revenue.
-There are no perks or entitlements associated with sponsorship.
+This fork preserves attribution to Zed Industries, Inc. and other upstream
+contributors. The presence of upstream code or names does not make Zed's
+privacy policy, terms of service, subprocessor list, sponsorship program, or
+support channels applicable to the Orion Studio Preview.

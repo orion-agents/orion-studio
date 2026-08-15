@@ -17,17 +17,17 @@
 
 - README.md
 - CONTRIBUTING.md
-- docs/src/**
-- assets/**
+- docs/src/\*\*
+- assets/\*\*
 - S01 明确列出的用户可见 Rust/UI 文件中的字符串、标题或链接。
 - 这些文件对应的 snapshot、JSON fixture 和文档测试。
 
 禁止修改：
 
-- docs/research/**
-- docs/plan/**
-- crates/client/**、crates/collab/**、crates/cli/**
-- crates/zed/resources/**、安装器和 workflow。
+- docs/research/\*\*
+- docs/plan/\*\*
+- crates/client/**、crates/collab/**、crates/cli/\*\*
+- crates/zed/resources/\*\*、安装器和 workflow。
 - 任何业务逻辑、布局、性能或交互重构。
 
 ## 执行步骤
@@ -44,10 +44,10 @@
 
 使用：
 
-~~~text
+```text
 rg -n -i 'Zed|zed\.dev|zed://|ZED_|zed-industries' \
   README.md CONTRIBUTING.md docs/src assets
-~~~
+```
 
 把结果分成 REPLACE、COMPAT、KEEP-ATTRIBUTION、KEEP-EXTERNAL 或 OPEN。
 不要因为匹配包含 Zed 就全部替换。
@@ -92,27 +92,27 @@ docs/src 变更遵守 docs/AGENTS.md：
 
 ## 验收命令
 
-~~~text
+```text
 git diff --check
 cargo +stable fmt --all -- --check
 ./script/check-keymaps
-~~~
+```
 
 对 JSON/YAML/TOML/XML 使用仓库已有校验方式；文档使用：
 
-~~~text
+```text
 cd docs && npx prettier --check src/<实际修改的文件>
-~~~
+```
 
 如果修改了可运行 UI，运行对应的 GPUI/visual test；没有可用图形环境时标记
 SKIP 并记录环境，不得伪造截图。
 
 最终扫描：
 
-~~~text
+```text
 rg -n -i 'Zed|zed\.dev|zed://|ZED_|zed-industries' \
   README.md CONTRIBUTING.md docs/src assets
-~~~
+```
 
 每一个剩余命中都必须在交接中列出理由。
 
@@ -146,4 +146,3 @@ settings。回滚后重新运行 JSON/keymap/Prettier 检查。
 - 保留的法律/上游/兼容命中及理由。
 - 文档、资源和视觉检查结果。
 - 仍需 S08/S10 处理的 endpoint、资源和平台注册项。
-

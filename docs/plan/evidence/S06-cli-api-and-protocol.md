@@ -15,11 +15,13 @@
 S06 的 **允许修改** 文件：`crates/cli/**`、`crates/extension_api/**`、`extensions/test-extension/**`。
 
 本子在 S06 内完成：
+
 - `crates/cli/src/main.rs`：命令名、help/展示文案、URL scheme 前缀、启动探测路径、Flatpak 路径与 ID 兼容。
 - `crates/extension_api/src/extension_api.rs` + `README.md`：新增规范 `orion` namespace 别名，WIT `package zed:extension` ABI **保持不变**。
 - `extensions/test-extension/src/test_extension.rs`：改用规范 `orion` 别名（覆盖规范入口）。
 
 **一处超出 S06 声明文件范围的改动（已记录并据理扩展）**：
+
 - `crates/client/src/client.rs` 的 `parse_zed_link` —— 仅识别 `zed://`（`ZED_URL_SCHEME`）。
   理由：① S02 的 P0 命中表（§2）已把 `client.rs:1942 ZED_URL_SCHEME="zed"` 与 `:1946-1993 ZedLink` 明确指派给「URL scheme → MIGRATE」；② 若不在此接受 `orion://`，CLI 转发 `orion://` 后在主程序侧会被 `parse_zed_link` 拒收，`orion://` 即“死链”，违背 S02「新 scheme 为规范」的核心交付。
   该改动为**兼容性保留**（同时接受 `orion://` 与 `zed://`），非破坏性，且不触及任何 S05 文件。验证：`cargo check -p client` 通过，并新增 `test_parse_zed_link_accepts_orion_and_zed_schemes` 单测。
@@ -29,28 +31,34 @@ S06 的 **允许修改** 文件：`crates/cli/**`、`crates/extension_api/**`、
 ## 1. CLI（`crates/cli/src/main.rs`）
 
 ### 1.1 命令名与 help（规范值来自 S02）
+
 - clap `#[command(name = "orion-studio")]`（原 `"zed"`）。
 - `before_help` / `after_help` 文案：`Zed` → `Orion Studio`，示例 `zed` → `orion-studio`。
 - 全部用户可见 `--help` 文档串改规范值：展示名、配置目录路径（macOS `~/Library/Application Support/Orion Studio`、Win `%LOCALAPPDATA%\OrionStudio`、Linux `$XDG_DATA_HOME/orion-studio`）、`--version` 文案、`--zed` 字段说明、completions/uninstall/askpass 文案、`--system-specs` 报错串、交互式 open-behavior 提示（`zed --existing/classic/<path>` → `orion-studio ...`，“Zed settings” → “Orion Studio settings”）。
 - `--version` 展示串：`"Zed {…} – {path}"` → `"Orion Studio {…} – {path}"`（Linux/Windows `App` 实现与 macOS `Bundle` 实现三处统一）。
 
 ### 1.2 URL scheme 前缀
+
 - `URL_PREFIX` 由 `["zed://", "http://", …]` 改为 `["orion://", "zed://", "http://", "https://", "file://", "ssh://"]`。
   `orion://` 为规范且排在前（优先），`zed://` 作为兼容保留，过渡期后可移除。
 - 新增单测 `url_prefix_includes_canonical_orion_and_legacy_zed_schemes`：断言两者都在、且 `orion://` 位置在 `zed://` 之前。
 
 ### 1.3 `--zed` 标志 → `--orion-studio`（兼容别名）
+
 - 字段 `zed: Option<PathBuf>` → `orion_studio: Option<PathBuf>`，并加 `#[arg(long, alias = "zed")]`（旧 `--zed` 仍可用，限期兼容）。
 - 内部引用同步：`Detect::detect(args.zed…)` → `args.orion_studio…`；Flatpak 重启逻辑 `set_bin_if_no_escape` / `try_restart_to_host` 中推送 `--orion-studio` 并兼容识别 `--zed`。
 
 ### 1.4 启动探测路径（规范优先 + 旧路径兼容）
+
 GUI binary 探测位置按「规范在前、旧 `zed` 路径兜底」重写，避免过渡期任何一侧安装布局下 CLI 找不到主程序：
+
 - Linux：`["../libexec/orion-studio", "../libexec/zed-editor", "../lib/orion-studio/orion-studio", "../lib/zed/zed-editor", "./orion-studio", "./zed"]`。
 - Windows：`["../orion-studio.exe", "../Zed.exe", "../lib/orion-studio/orion-studio.exe", "../lib/zed/zed-editor.exe", "./orion-studio.exe", "./zed.exe"]`。
 - macOS：`Contents/MacOS/zed` → `Contents/MacOS/orion-studio`；`zed_dev.log` → `orion-studio_dev.log`。
 - Flatpak：`bin/zed` → `bin/orion-studio`；`libexec/zed-editor` → `libexec/orion-studio`；`/app/libexec/zed-editor` → `/app/libexec/orion-studio`。
 
 ### 1.5 Flatpak Bundle ID 兼容
+
 - `dev.zed.Zed` 判定改为同时接受 `dev.orion.OrionStudio`（`get_flatpak_dir`、`set_bin_if_no_escape` 中 `starts_with` 条件 `||` 扩展）。旧 `dev.zed.Zed` 安装仍可被发现，新 ID 安装亦可。
 
 ---
@@ -58,6 +66,7 @@ GUI binary 探测位置按「规范在前、旧 `zed` 路径兜底」重写，�
 ## 2. 扩展 API namespace（`crates/extension_api`）
 
 ### 2.1 策略（双版本，不动 ABI）
+
 - **WIT `package zed:extension;` 全部 10 个版本化文件保持不变** —— 这是扩展 wasm 的导入/导出接口名，改名即破坏现有扩展加载。旧扩展过渡期仍可加载（满足 S02）。
 - 新增规范命名空间别名：
   ```rust
@@ -70,18 +79,19 @@ GUI binary 探测位置按「规范在前、旧 `zed` 路径兜底」重写，�
 - `README.md`：示例改为 `use zed_extension_api as orion;`，并加兼容性说明；标题/动作名/`zed: extensions`/`Compatible Zed versions` 表头同步为 Orion Studio。
 
 ### 2.2 test-extension
+
 - `src/test_extension.rs` 全部 `zed::` 别名用法改为 `orion::`（crate 名 `zed_extension_api` 保留），覆盖“规范入口”。
 
 ---
 
 ## 3. 兼容性行为小结
 
-| 入口 | 规范 | 兼容保留 | 移除时机 |
-| --- | --- | --- | --- |
-| CLI 命令名 | `orion-studio` | `zed`（clap alias，限期） | 兼容窗口到期后独立变更 |
-| URL scheme | `orion://` | `zed://`（URL_PREFIX，限期） | 同上 |
-| 扩展 namespace | `orion::` | `zed::`（crate 别名 / WIT `zed:extension`） | 同上 |
-| `parse_zed_link` | 接受 `orion://` | 接受 `zed://` | 同上 |
+| 入口             | 规范            | 兼容保留                                    | 移除时机               |
+| ---------------- | --------------- | ------------------------------------------- | ---------------------- |
+| CLI 命令名       | `orion-studio`  | `zed`（clap alias，限期）                   | 兼容窗口到期后独立变更 |
+| URL scheme       | `orion://`      | `zed://`（URL_PREFIX，限期）                | 同上                   |
+| 扩展 namespace   | `orion::`       | `zed::`（crate 别名 / WIT `zed:extension`） | 同上                   |
+| `parse_zed_link` | 接受 `orion://` | 接受 `zed://`                               | 同上                   |
 
 ---
 

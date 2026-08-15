@@ -1,0 +1,260 @@
+name: Release macOS Apple Silicon Preview (Bootstrap)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable tag in the form vMAJOR.MINOR.PATCH-pre
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-preview-macos-bootstrap
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  validate_release:
+    name: Validate preview tag and source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      tag_commit: ${{ steps.release.outputs.tag_commit }}
+      version: ${{ steps.release.outputs.version }}
+      dmg_name: ${{ steps.release.outputs.dmg_name }}
+    steps:
+      - name: Check release execution context
+        env:
+          EXPECTED_REPOSITORY: orion-agents/orion-studio
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "${EXPECTED_REPOSITORY}" ]] || { echo "::error::bootstrap releases may only run in ${EXPECTED_REPOSITORY}"; exit 1; }
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || { echo "::error::dispatch this workflow from the main branch"; exit 1; }
+      - name: Check out main with release refs
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Lint and test bootstrap release scripts
+        run: |
+          bash -n script/validate-preview-release script/test-preview-release
+          ./script/test-preview-release
+      - id: release
+        name: Validate tag, main ancestry, channel, and version
+        env:
+          PREVIEW_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          ./script/validate-preview-release tag-format "${PREVIEW_TAG}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --no-tags origin "refs/tags/${PREVIEW_TAG}:refs/tags/${PREVIEW_TAG}"
+          ./script/validate-preview-release source "${PREVIEW_TAG}"
+
+  build_preview:
+    name: Build, sign, notarize, and verify macOS arm64
+    needs: validate_release
+    runs-on: macos-15
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    environment:
+      name: preview
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
+      ORION_STUDIO_REQUIRE_SENTRY: '0'
+    steps:
+      - name: Verify Apple Silicon runner and raw disk capacity
+        env:
+          MINIMUM_FREE_GIB: '12'
+        run: |
+          set -euo pipefail
+          [[ "$(uname -m)" == arm64 ]] || { echo "::error::macos-15 runner must report arm64"; exit 1; }
+          available_kib=$(LC_ALL=C df -Pk "${GITHUB_WORKSPACE}" | awk 'NR == 2 { print $4 }')
+          required_kib=$((MINIMUM_FREE_GIB * 1024 * 1024))
+          [[ "${available_kib}" =~ ^[0-9]+$ ]] || { echo "::error::could not parse runner disk capacity"; exit 1; }
+          (( available_kib >= required_kib )) || { echo "::error::runner has ${available_kib} KiB free; bootstrap build requires at least ${MINIMUM_FREE_GIB} GiB before checkout"; exit 1; }
+          df -h "${GITHUB_WORKSPACE}"
+          echo "::notice::the standard 14 GB runner is capacity-experimental; the observed local release target was about 18 GB, so any capacity failure blocks the draft release"
+      - name: Check out immutable preview commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ needs.validate_release.outputs.tag_commit }}
+          fetch-depth: 1
+          fetch-tags: false
+          persist-credentials: false
+      - name: Verify post-checkout disk capacity
+        run: ./script/validate-preview-release disk-space 10 .
+      - name: Revalidate checked-out source
+        env:
+          EXPECTED_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          PREVIEW_TAG: ${{ needs.validate_release.outputs.tag }}
+        run: ./script/validate-preview-release checkout "${PREVIEW_TAG}" "${EXPECTED_COMMIT}"
+      - name: Validate signing and notarization inputs before compiling
+        env:
+          APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+          APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+          APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64 }}
+          ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
+          ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
+        run: ./script/validate-preview-release signing-inputs
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          check-latest: true
+          package-manager-cache: false
+      - name: Install the macOS arm64 Rust target
+        run: rustup target add aarch64-apple-darwin
+      - name: Build through the formal signed and notarized bundle path
+        env:
+          APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+          APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+          APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64 }}
+          ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
+          ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
+          PREVIEW_TAG: ${{ needs.validate_release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          env GITHUB_REF_TYPE=tag GITHUB_REF_NAME="${PREVIEW_TAG}" \
+            ./script/bundle-mac aarch64-apple-darwin
+      - name: Verify capacity for artifact validation and upload
+        run: ./script/validate-preview-release disk-space 1 target/aarch64-apple-darwin/release
+      - name: Verify Developer ID, notarization, DMG, identity, version, and architecture
+        env:
+          DMG_PATH: target/aarch64-apple-darwin/release/${{ needs.validate_release.outputs.dmg_name }}
+          ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
+          ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
+          PREVIEW_TAG: ${{ needs.validate_release.outputs.tag }}
+        run: ./script/validate-preview-release artifact "${PREVIEW_TAG}" "${DMG_PATH}"
+      - name: Generate and verify SHA256SUMS
+        working-directory: target/aarch64-apple-darwin/release
+        env:
+          DMG_NAME: ${{ needs.validate_release.outputs.dmg_name }}
+        run: |
+          set -euo pipefail
+          /usr/bin/shasum -a 256 "${DMG_NAME}" > SHA256SUMS
+          /usr/bin/shasum -a 256 -c SHA256SUMS
+      - name: Store verified release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: preview-macos-aarch64-${{ needs.validate_release.outputs.tag }}
+          path: |
+            target/aarch64-apple-darwin/release/${{ needs.validate_release.outputs.dmg_name }}
+            target/aarch64-apple-darwin/release/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  create_draft_prerelease:
+    name: Create draft prerelease and upload verified assets
+    needs:
+      - validate_release
+      - build_preview
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    environment:
+      name: preview
+    steps:
+      - name: Check out immutable preview commit with release refs
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ needs.validate_release.outputs.tag_commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Revalidate tag immediately before creating the draft
+        env:
+          EXPECTED_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          PREVIEW_TAG: ${{ needs.validate_release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ./script/validate-preview-release tag-format "${PREVIEW_TAG}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --no-tags origin "refs/tags/${PREVIEW_TAG}:refs/tags/${PREVIEW_TAG}"
+          ./script/validate-preview-release source "${PREVIEW_TAG}"
+          [[ "$(git rev-parse "refs/tags/${PREVIEW_TAG}^{commit}")" == "${EXPECTED_COMMIT}" ]] || { echo "::error::preview tag moved after validation"; exit 1; }
+      - name: Download verified release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: preview-macos-aarch64-${{ needs.validate_release.outputs.tag }}
+          path: release-artifacts
+      - name: Verify downloaded checksum
+        working-directory: release-artifacts
+        run: sha256sum -c SHA256SUMS
+      - name: Create or safely reuse the draft prerelease
+        env:
+          DMG_NAME: ${{ needs.validate_release.outputs.dmg_name }}
+          EXPECTED_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_TAG: ${{ needs.validate_release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          notes_file="docs/releases/${PREVIEW_TAG}.md"
+          [[ -f "${notes_file}" && ! -L "${notes_file}" ]] || { echo "::error::missing versioned release notes ${notes_file}"; exit 1; }
+          ./script/validate-preview-release tag-format "${PREVIEW_TAG}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --no-tags origin "refs/tags/${PREVIEW_TAG}:refs/tags/${PREVIEW_TAG}"
+          ./script/validate-preview-release source "${PREVIEW_TAG}"
+          [[ "$(git rev-parse "refs/tags/${PREVIEW_TAG}^{commit}")" == "${EXPECTED_COMMIT}" ]] || { echo "::error::preview tag moved before draft preparation"; exit 1; }
+          if gh release view "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            is_draft=$(gh release view "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)
+            is_prerelease=$(gh release view "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)
+            [[ "${is_draft}" == true ]] || { echo "::error::a published Release already exists for ${PREVIEW_TAG}; refusing to modify it"; exit 1; }
+            [[ "${is_prerelease}" == true ]] || { echo "::error::the existing draft for ${PREVIEW_TAG} is not a prerelease"; exit 1; }
+            existing_assets=$(gh release view "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
+            while IFS= read -r asset_name; do
+              [[ -z "${asset_name}" ]] && continue
+              case "${asset_name}" in
+                "${DMG_NAME}"|SHA256SUMS) ;;
+                *) echo "::error::existing draft contains unexpected asset ${asset_name}"; exit 1 ;;
+              esac
+            done <<< "${existing_assets}"
+            echo "Reusing validated draft prerelease ${PREVIEW_TAG}"
+            gh release edit "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" \
+              --title "Orion Studio ${PREVIEW_TAG}" --notes-file "${notes_file}"
+          else
+            gh release create "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft --prerelease \
+              --title "Orion Studio ${PREVIEW_TAG}" \
+              --notes-file "${notes_file}"
+          fi
+      - name: Upload DMG and checksum manifest to the draft
+        env:
+          DMG_NAME: ${{ needs.validate_release.outputs.dmg_name }}
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_TAG: ${{ needs.validate_release.outputs.tag }}
+        run: gh release upload "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" --clobber "release-artifacts/${DMG_NAME}" release-artifacts/SHA256SUMS
+      - name: Verify the release remains a draft prerelease with exact assets
+        env:
+          EXPECTED_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_TAG: ${{ needs.validate_release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --no-tags origin "refs/tags/${PREVIEW_TAG}:refs/tags/${PREVIEW_TAG}"
+          ./script/validate-preview-release source "${PREVIEW_TAG}"
+          [[ "$(git rev-parse "refs/tags/${PREVIEW_TAG}^{commit}")" == "${EXPECTED_COMMIT}" ]] || { echo "::error::preview tag moved after asset upload"; exit 1; }
+          [[ "$(gh release view "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)" == true ]]
+          [[ "$(gh release view "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)" == true ]]
+          assets=$(gh release view "${PREVIEW_TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '[.assets[].name] | sort | join(",")')
+          [[ "${assets}" == 'Orion-Studio-aarch64.dmg,SHA256SUMS' ]] || { echo "::error::unexpected draft release assets: ${assets}"; exit 1; }

@@ -10,8 +10,9 @@ use util::rel_path::RelPath;
 
 mod migration;
 pub use migration::{
-    MIGRATION_MARKER_NAME, MIGRATION_SCHEMA_VERSION, MigrationError, MigrationState,
-    legacy_config_dir, legacy_data_dir, migrate_root,
+    MIGRATION_MARKER_NAME, MIGRATION_SCHEMA_VERSION, MigrationError, MigrationOutcome,
+    MigrationState, legacy_config_dir, legacy_data_dir, migrate_legacy_dirs,
+    migrate_legacy_user_data, migrate_root,
 };
 
 /// A default editorconfig file name to use when resolving project settings.
@@ -71,6 +72,17 @@ pub fn remote_server_dir_relative_legacy() -> &'static RelPath {
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
         LazyLock::new(|| RelPath::from_unix_str(".orion_wsl_server").unwrap());
+    *CACHED
+}
+
+/// Legacy relative path to the `zed_wsl_server` directory on the wsl host.
+///
+/// Retained so the S04-era migration can detect WSL server data from existing
+/// Zed installs. Do not use for new installs; scheduled for removal after the
+/// migration window.
+pub fn remote_wsl_server_dir_relative_legacy() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::from_unix_str(".zed_wsl_server").unwrap());
     *CACHED
 }
 
@@ -679,5 +691,19 @@ mod tests {
             ".zed_server"
         );
         assert_eq!(remote_server_dir_relative().as_unix_str(), ".orion_server");
+    }
+
+    #[test]
+    fn legacy_wsl_server_dir_retained_for_migration() {
+        // The WSL server directory has the same migration requirement as the
+        // SSH server directory: the legacy name is kept for detection.
+        assert_eq!(
+            remote_wsl_server_dir_relative_legacy().as_unix_str(),
+            ".zed_wsl_server"
+        );
+        assert_eq!(
+            remote_wsl_server_dir_relative().as_unix_str(),
+            ".orion_wsl_server"
+        );
     }
 }

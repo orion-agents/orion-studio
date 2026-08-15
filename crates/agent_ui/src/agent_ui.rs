@@ -437,7 +437,7 @@ pub enum Agent {
 
 impl From<AgentId> for Agent {
     fn from(id: AgentId) -> Self {
-        if id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
+        if agent::is_native_agent_id(id.as_ref()) {
             return Self::NativeAgent;
         }
         #[cfg(any(test, feature = "test-support"))]
@@ -451,7 +451,7 @@ impl From<AgentId> for Agent {
 impl Agent {
     pub fn id(&self) -> AgentId {
         match self {
-            Self::NativeAgent => agent::ZED_AGENT_ID.clone(),
+            Self::NativeAgent => agent::ORION_AGENT_ID.clone(),
             Self::Custom { id } => id.clone(),
             #[cfg(any(test, feature = "test-support"))]
             Self::Stub => "stub".into(),
@@ -464,7 +464,7 @@ impl Agent {
 
     pub fn label(&self) -> SharedString {
         match self {
-            Self::NativeAgent => "Zed Agent".into(),
+            Self::NativeAgent => "Orion Agent".into(),
             Self::Custom { id, .. } => id.0.clone(),
             #[cfg(any(test, feature = "test-support"))]
             Self::Stub => "Stub Agent".into(),
@@ -821,6 +821,7 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.hide_namespace("agents");
             filter.hide_namespace("assistant");
             filter.hide_namespace("copilot");
+            // Retain the legacy namespace because existing keymaps address it directly.
             filter.hide_namespace("zed_predict_onboarding");
             filter.hide_namespace("edit_prediction");
 
@@ -848,7 +849,7 @@ fn update_command_palette_filter(cx: &mut App) {
                     filter.show_namespace("copilot");
                     filter.show_action_types(edit_prediction_actions.iter());
                 }
-                EditPredictionProvider::Zed
+                EditPredictionProvider::Orion
                 | EditPredictionProvider::Codestral
                 | EditPredictionProvider::Ollama
                 | EditPredictionProvider::OpenAiCompatibleApi
@@ -859,6 +860,7 @@ fn update_command_palette_filter(cx: &mut App) {
                 }
             }
 
+            // Retain the legacy namespace because existing keymaps address it directly.
             filter.show_namespace("zed_predict_onboarding");
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
 
@@ -1237,6 +1239,15 @@ mod tests {
                 id: "my-agent".into(),
             },
         );
+    }
+
+    #[test]
+    fn test_native_agent_identity_writes_orion_and_reads_legacy_zed_id() {
+        assert_eq!(
+            Agent::from(agent::LEGACY_ZED_AGENT_ID.clone()),
+            Agent::NativeAgent
+        );
+        assert_eq!(Agent::NativeAgent.id(), agent::ORION_AGENT_ID.clone());
     }
 
     #[test]

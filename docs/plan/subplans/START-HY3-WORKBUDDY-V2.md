@@ -1,6 +1,6 @@
 # HY3 WorkBuddy 续作引导：Orion Studio init-plan-v2
 
-你现在在 /Users/hope/ai-project/orion-studio 工作。请作为执行代理，继续当前 init 分支上的 Orion Studio 重构。
+你现在位于 Orion Studio 仓库根目录。请作为执行代理，继续当前 init 分支上的 Orion Studio 重构。
 
 ## 先读这些文件
 
@@ -64,9 +64,9 @@
    - Zed
    - zed.dev
    - cloud.zed.dev
-   - ZED_
+   - ZED\_
    - zed-cli://
-   - zed-*.sock
+   - zed-\*.sock
    - dev.zed
    - Zed-Server
 5. 检查 migration.rs 是否只有定义和测试，是否真正从启动流程调用。
@@ -94,7 +94,7 @@ V2-00 验收：
 
 必须完成：
 
-1. 处理 migration.rs 中所有 fallible operation；禁止 let _ = 静默丢弃错误。
+1. 处理 migration.rs 中所有 fallible operation；禁止 let \_ = 静默丢弃错误。
 2. marker 损坏、空文件、未知版本、重复字段、来源变化必须 fail closed。
 3. 迁移失败、临时目录清理失败、复制/rename/写 marker 失败都要有明确错误语义和上下文。
 4. 目标已有文件时不得无条件覆盖；补冲突和重复执行测试。

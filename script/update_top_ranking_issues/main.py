@@ -15,8 +15,8 @@ DATETIME_FORMAT: str = "%B %d, %Y %I:%M %p"
 ISSUES_PER_SECTION: int = 50
 ISSUES_TO_FETCH: int = 100
 
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "orion-agents"
+REPO_NAME = "orion-studio"
 GITHUB_API_BASE_URL = "https://api.github.com"
 
 EXCLUDE_LABEL = "ignore top-ranking issues"

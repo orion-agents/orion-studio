@@ -3,15 +3,35 @@
 set -euo pipefail
 source script/lib/blob-store.sh
 
-bucket_name="zed-nightly-host"
-version=$(./script/get-crate-version zed)+nightly."${GITHUB_RUN_NUMBER}.${GITHUB_SHA}"
+bucket_name="${ORION_STUDIO_NIGHTLY_BUCKET:?ORION_STUDIO_NIGHTLY_BUCKET is required}"
+base_version="$(./script/get-crate-version orion-studio)"
+if [[ -z "$base_version" ]]; then
+    echo "Unable to resolve the orion-studio package version." >&2
+    exit 1
+fi
+version="${base_version}+nightly.${GITHUB_RUN_NUMBER:?GITHUB_RUN_NUMBER is required}.${GITHUB_SHA:?GITHUB_SHA is required}"
 
-for file_to_upload in ./release-artifacts/*; do
-    [ -f "$file_to_upload" ] || continue
+shopt -s nullglob
+artifacts=(./release-artifacts/*)
+if [[ ${#artifacts[@]} -eq 0 ]]; then
+    echo "No nightly artifacts found in release-artifacts/." >&2
+    exit 1
+fi
+
+for file_to_upload in "${artifacts[@]}"; do
+    [[ -f "$file_to_upload" ]] || continue
+    case "$(basename "$file_to_upload")" in
+        Orion-Studio-*.dmg|Orion-Studio-*.exe|orion-studio-linux-*.tar.gz|orion-studio-remote-server-*|bwrap-linux-*.gz)
+            ;;
+        *)
+            echo "Refusing to upload unexpected nightly artifact: $file_to_upload" >&2
+            exit 1
+            ;;
+    esac
     upload_to_blob_store_public $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
     upload_to_blob_store_public $bucket_name "$file_to_upload" "${version}/$(basename "$file_to_upload")"
     rm -f "$file_to_upload"
 done
 
-echo -n ${version} > ./release-artifacts/latest-sha
+printf '%s' "$version" > ./release-artifacts/latest-sha
 upload_to_blob_store_public $bucket_name "release-artifacts/latest-sha" "nightly/latest-sha"

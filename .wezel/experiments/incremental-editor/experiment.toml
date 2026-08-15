@@ -2,7 +2,7 @@
 
 description = "Measures rebuild time after a trivial edit to the editor crate"
 
-# `zed` rather than `workspace`: it pulls in the whole editor -> ... -> binary
+# `orion-studio` rather than `workspace`: it pulls in the whole editor -> ... -> binary
 # chain that a developer actually waits on, without also building collab, the
 # benchmarks and the other workspace members that no editor edit can affect.
 
@@ -10,7 +10,7 @@ description = "Measures rebuild time after a trivial edit to the editor crate"
 # for editor and its dependents.
 [step.cargo.prime-cache]
 command = "build"
-build_target = ["zed"]
+build_target = ["orion-studio"]
 
 # The patch only appends an empty `//!` line to the crate-root doc comment, so
 # nothing about editor's public surface changes. What's left is the floor cost
@@ -19,5 +19,5 @@ build_target = ["zed"]
 [step.cargo.editor-doc-comment]
 apply-diff = true
 command = "build"
-build_target = ["zed"]
+build_target = ["orion-studio"]
 summary.incremental-editor-build = { outcome = "time_ms", aggregation = "min", samples = 5 }

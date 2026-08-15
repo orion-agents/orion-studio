@@ -17,31 +17,31 @@ cookie、OAuth 文件或 SSH 私钥。
 
 ## 允许修改
 
-- crates/paths/**
-- crates/zed_env_vars/**
+- crates/paths/\*\*
+- crates/zed_env_vars/\*\*
 - 这些 crate 中与迁移直接相关的测试和 fixture。
 - 如项目已有专用 migration 模块，只在该模块内实现，不新建平行存储体系。
 
 禁止修改：
 
-- crates/cli/**
-- crates/client/**
-- crates/collab/**
+- crates/cli/\*\*
+- crates/client/\*\*
+- crates/collab/\*\*
 - 数据库生产迁移、Docker、安装器、UI 文案和服务 endpoint。
 
 ## 迁移分类
 
 在代码和测试中明确区分：
 
-| 数据 | 默认处理 | 失败时 |
-| --- | --- | --- |
-| 用户配置 | 迁移并保留备份 | 保留旧配置，报告错误 |
+| 数据                   | 默认处理               | 失败时               |
+| ---------------------- | ---------------------- | -------------------- |
+| 用户配置               | 迁移并保留备份         | 保留旧配置，报告错误 |
 | workspace/session 状态 | 迁移或降级为空，按契约 | 不阻塞启动，保留诊断 |
-| 扩展目录 | 按契约迁移 | 不删除旧目录 |
-| 密钥/凭据 | 只有批准后迁移 | 失败则要求重新认证 |
-| cache/temp | 不作为必须迁移数据 | 允许重新生成 |
-| 日志 | 可选保留 | 不影响启动 |
-| remote server 数据 | 只按远程契约迁移 | 不自动覆盖远端 |
+| 扩展目录               | 按契约迁移             | 不删除旧目录         |
+| 密钥/凭据              | 只有批准后迁移         | 失败则要求重新认证   |
+| cache/temp             | 不作为必须迁移数据     | 允许重新生成         |
+| 日志                   | 可选保留               | 不影响启动           |
+| remote server 数据     | 只按远程契约迁移       | 不自动覆盖远端       |
 
 ## 执行步骤
 
@@ -98,19 +98,19 @@ cookie、OAuth 文件或 SSH 私钥。
 
 - 在兼容窗口内旧路径仍能被读取或提示迁移。
 - 规范路径优先于旧路径。
-- 旧 ZED_* 环境变量不会覆盖显式 Orion 配置。
+- 旧 ZED\_\* 环境变量不会覆盖显式 Orion 配置。
 - 迁移成功后不会反复提示。
 - 兼容窗口结束后的行为是契约规定的错误或只读提示，而不是静默删除。
 
 ## 验收命令
 
-~~~text
+```text
 git diff --check
 cargo +stable fmt --all -- --check
 cargo +stable metadata --no-deps --format-version 1
 cargo +stable test -p paths
 cargo +stable test -p zed_env_vars
-~~~
+```
 
 如果存在项目专用 migration test target，必须额外运行；如果没有，报告中写出
 “当前仓库没有专用 target”，不能虚报。
@@ -147,4 +147,3 @@ cargo +stable test -p zed_env_vars
 - 测试矩阵实际结果。
 - 失败注入和回滚证据。
 - 是否允许 S05 开始。
-

@@ -60,32 +60,61 @@ pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
 
-static SERVER_URL: LazyLock<Option<String>> = LazyLock::new(|| {
-    std::env::var("ORION_STUDIO_SERVER_URL")
-        .ok()
-        .or_else(|| std::env::var("ZED_SERVER_URL").ok())
-});
-static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
+fn preferred_environment_value<T>(canonical: Option<T>, legacy: Option<T>) -> Option<T> {
+    canonical.or(legacy)
+}
+
+fn environment_value(canonical_name: &str, legacy_name: &str) -> Option<String> {
+    preferred_environment_value(
+        std::env::var(canonical_name).ok(),
+        std::env::var(legacy_name).ok(),
+    )
+}
+
+fn non_empty_environment_value(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.is_empty())
+}
+
+fn environment_value_is_present(value: Option<String>) -> bool {
+    value.is_some()
+}
+
+fn environment_value_is_non_empty(value: Option<String>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
+}
+
+static SERVER_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| environment_value("ORION_STUDIO_SERVER_URL", "ZED_SERVER_URL"));
+static RPC_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| environment_value("ORION_STUDIO_RPC_URL", "ZED_RPC_URL"));
 
 pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
-    std::env::var("ZED_IMPERSONATE")
-        .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+    non_empty_environment_value(environment_value(
+        "ORION_STUDIO_IMPERSONATE",
+        "ZED_IMPERSONATE",
+    ))
 });
 
-pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_WEB_LOGIN").is_ok());
+pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| {
+    environment_value_is_present(environment_value("ORION_STUDIO_WEB_LOGIN", "ZED_WEB_LOGIN"))
+});
 
 pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
-    std::env::var("ZED_ADMIN_API_TOKEN")
-        .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+    non_empty_environment_value(environment_value(
+        "ORION_STUDIO_ADMIN_API_TOKEN",
+        "ZED_ADMIN_API_TOKEN",
+    ))
 });
 
-pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
-    LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
+pub static ORION_STUDIO_APP_PATH: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| environment_value("ORION_STUDIO_APP_PATH", "ZED_APP_PATH").map(PathBuf::from));
 
-pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").is_ok_and(|e| !e.is_empty()));
+pub static ORION_STUDIO_ALWAYS_ACTIVE: LazyLock<bool> = LazyLock::new(|| {
+    environment_value_is_non_empty(environment_value(
+        "ORION_STUDIO_ALWAYS_ACTIVE",
+        "ZED_ALWAYS_ACTIVE",
+    ))
+});
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(30);
@@ -94,9 +123,9 @@ pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 actions!(
     client,
     [
-        /// Signs in to Zed account.
+        /// Signs in to an Orion Studio account.
         SignIn,
-        /// Signs out of Zed account.
+        /// Signs out of an Orion Studio account.
         SignOut,
         /// Reconnects to the collaboration server.
         Reconnect
@@ -109,7 +138,7 @@ pub struct ClientSettings {
     /// Overrides the key used to store credentials in the system keychain.
     /// Defaults to `server_url` when unset.
     ///
-    /// Useful when running multiple Zed instances side by side without them
+    /// Useful when running multiple Orion Studio instances side by side without them
     /// overwriting each other's keychain entries.
     ///
     /// Note: changing this after signing in will require signing in again, as
@@ -1041,7 +1070,7 @@ impl Client {
 
     /// Performs a sign-in and also (optionally) connects to Collab.
     ///
-    /// Only Zed staff automatically connect to Collab.
+    /// Only Orion Studio staff automatically connect to Collab.
     pub async fn sign_in_with_optional_connect(
         self: &Arc<Self>,
         try_provider: bool,
@@ -1297,7 +1326,7 @@ impl Client {
                 return Ok(url);
             }
 
-            if let Some(url) = &*ZED_RPC_URL {
+            if let Some(url) = &*RPC_URL {
                 return Url::parse(url).context("invalid rpc url");
             }
 
@@ -1450,7 +1479,7 @@ impl Client {
                 .clone()
                 .spawn(async move {
                     // Generate a pair of asymmetric encryption keys. The public key will be used by the
-                    // zed server to encrypt the user's access token, so that it can'be intercepted by
+                    // Orion Studio server to encrypt the user's access token, so that it can't be intercepted by
                     // any other app running on the user's device.
                     let (public_key, private_key) =
                         rpc::auth::keypair().context("failed to generate keypair for auth")?;
@@ -1469,7 +1498,7 @@ impl Client {
                         }
                     }
 
-                    // Start an HTTP server to receive the redirect from Zed's sign-in page.
+                    // Start an HTTP server to receive the redirect from Orion Studio's sign-in page.
                     let server = tiny_http::Server::http("127.0.0.1:0")
                         .map_err(|e| anyhow!(e).context("failed to bind callback port"))?;
                     let port = server
@@ -1485,8 +1514,8 @@ impl Client {
                         system_id: Option<Arc<str>>,
                     }
 
-                    // Open the Zed sign-in page in the user's browser, with query parameters that indicate
-                    // that the user is signing in from a Zed app running on the same device.
+                    // Open the Orion Studio sign-in page in the user's browser, with query parameters that
+                    // indicate that the user is signing in from an Orion Studio app on the same device.
                     let url = http.build_url(&format!(
                         "/native_app_signin?{}",
                         serde_urlencoded::to_string(&NativeAppSignInQueryParams {
@@ -1580,7 +1609,7 @@ impl Client {
 
         let url = self
             .http
-            .build_zed_cloud_url("/internal/users/impersonate")?;
+            .build_orion_cloud_url("/internal/users/impersonate")?;
         let request = Request::post(url.as_str())
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {api_token}"))
@@ -1628,7 +1657,7 @@ impl Client {
         }
     }
 
-    /// Sends an authenticated request to the Zed LLM service, retrying once
+    /// Sends an authenticated request to the Orion Studio LLM service, retrying once
     /// with a refreshed token if the server signals that the cached LLM
     /// token is expired or otherwise rejected. Returns the raw response so
     /// callers can inspect headers and stream the body.
@@ -1947,27 +1976,27 @@ pub const ZED_URL_SCHEME: &str = "zed";
 /// prefix for the canonical orion:// url scheme
 pub const ORION_URL_SCHEME: &str = "orion";
 
-/// A parsed Zed link that can be handled internally by the application.
+/// A parsed Orion Studio link that can be handled internally by the application.
 ///
 /// Note: the type name `ZedLink` is a stable internal identifier and is intentionally
 /// retained; it now also matches the canonical `orion://` scheme in addition to the
 /// legacy `zed://` scheme. See docs/plan/evidence/S02-identity-and-compatibility-contract.md.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ZedLink {
-    /// Join a channel: `zed.dev/channel/channel-name-123` or `zed://channel/channel-name-123`
-    /// (also `orion.dev/...` / `orion://channel/...`)
+    /// Join a channel: `orion.dev/channel/channel-name-123` or
+    /// `orion://channel/channel-name-123` (legacy `zed.dev/...` and `zed://...` are accepted).
     Channel { channel_id: u64 },
-    /// Open channel notes: `zed.dev/channel/channel-name-123/notes` or with heading `notes#heading`
-    /// (also `orion.dev/...` / `orion://channel/.../notes`)
+    /// Open channel notes: `orion.dev/channel/channel-name-123/notes` or with heading
+    /// `notes#heading` (legacy `zed.dev/...` and `zed://...` are accepted).
     ChannelNotes {
         channel_id: u64,
         heading: Option<String>,
     },
 }
 
-/// Parses the given link into a Zed link.
+/// Parses the given link into an Orion Studio link.
 ///
-/// Returns a [`Some`] containing the parsed link if the link is a recognized Zed link
+/// Returns a [`Some`] containing the parsed link if it is a recognized Orion Studio link
 /// that should be handled internally by the application.
 /// Returns [`None`] for links that should be opened in the browser.
 ///
@@ -2030,6 +2059,34 @@ mod tests {
     use proto::TypedEnvelope;
     use settings::SettingsStore;
     use std::future;
+
+    #[test]
+    fn test_environment_value_prefers_canonical_and_falls_back_to_legacy() {
+        assert_eq!(
+            preferred_environment_value(Some("canonical"), Some("legacy")),
+            Some("canonical")
+        );
+        assert_eq!(
+            preferred_environment_value(None, Some("legacy")),
+            Some("legacy")
+        );
+        assert_eq!(preferred_environment_value::<&str>(None, None), None);
+    }
+
+    #[test]
+    fn test_environment_empty_value_and_boolean_semantics() {
+        let selected =
+            preferred_environment_value(Some(String::new()), Some("legacy-value".to_string()));
+
+        assert_eq!(selected.as_deref(), Some(""));
+        assert_eq!(non_empty_environment_value(selected.clone()), None);
+        assert!(environment_value_is_present(selected.clone()));
+        assert!(!environment_value_is_non_empty(selected.clone()));
+        assert_eq!(selected.map(PathBuf::from), Some(PathBuf::new()));
+
+        let legacy_flag = preferred_environment_value(None, Some("1".to_string()));
+        assert!(environment_value_is_non_empty(legacy_flag));
+    }
 
     #[test]
     fn test_proxy_settings_trims_and_ignores_empty_proxy() {
@@ -2499,15 +2556,14 @@ mod tests {
     #[gpui::test]
     fn test_parse_zed_link_accepts_orion_and_zed_schemes(cx: &mut TestAppContext) {
         init_test(cx);
-        let app = cx.to_app();
 
         // Canonical orion:// scheme parses.
         assert_eq!(
-            parse_zed_link("orion://channel/foo-123", &app),
+            cx.update(|cx| parse_zed_link("orion://channel/foo-123", cx)),
             Some(ZedLink::Channel { channel_id: 123 })
         );
         assert_eq!(
-            parse_zed_link("orion://channel/foo-123/notes#heading", &app),
+            cx.update(|cx| { parse_zed_link("orion://channel/foo-123/notes#heading", cx) }),
             Some(ZedLink::ChannelNotes {
                 channel_id: 123,
                 heading: Some("heading".to_string())
@@ -2516,12 +2572,15 @@ mod tests {
 
         // Legacy zed:// scheme still parses during the compatibility window.
         assert_eq!(
-            parse_zed_link("zed://channel/foo-123", &app),
+            cx.update(|cx| parse_zed_link("zed://channel/foo-123", cx)),
             Some(ZedLink::Channel { channel_id: 123 })
         );
 
         // Unrecognized links are left for the browser.
-        assert_eq!(parse_zed_link("https://example.com", &app), None);
-        assert_eq!(parse_zed_link("not-a-link", &app), None);
+        assert_eq!(
+            cx.update(|cx| parse_zed_link("https://example.com", cx)),
+            None
+        );
+        assert_eq!(cx.update(|cx| parse_zed_link("not-a-link", cx)), None);
     }
 }

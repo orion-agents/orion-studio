@@ -46,7 +46,7 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
                 ;;
             esac
 
-            version=$(script/get-crate-version zed)
+            version=$(script/get-crate-version orion-studio)
 
             {
                 echo "channel=$channel"
@@ -59,13 +59,13 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
 
     fn bump_version() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
-            version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
+            version="$(cargo set-version -p orion-studio --bump patch 2>&1 | sed 's/.* //')"
             echo "version=$version" >> "$GITHUB_OUTPUT"
         "#})
         .id("bump-version")
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy()
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
         .for_repository(steps::RepositoryTarget::current())
         .with_permissions([
             (steps::TokenPermissions::Contents, Level::Write),
@@ -86,7 +86,7 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
 
     named::job(
         Job::default()
-            .with_repository_owner_guard()
+            .with_repository_guard()
             .permissions(Permissions::default().contents(Level::Write))
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)

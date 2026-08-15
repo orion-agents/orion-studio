@@ -2368,7 +2368,7 @@ impl RemoteServerProjects {
                                                 .color(Color::Muted)
                                                 .size(IconSize::Small),
                                         )
-                                        .child(Label::new("Open Zed Log"))
+                                        .child(Label::new("Open Orion Studio Log"))
                                         .on_click(cx.listener(|_, _, window, cx| {
                                             window.dispatch_action(Box::new(OpenLog), cx);
                                             cx.emit(DismissEvent);
@@ -2536,7 +2536,7 @@ impl RemoteServerProjects {
                                             )
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
-                                                    "https://zed.dev/docs/remote-development",
+                                                    "https://orion.dev/docs/remote-development",
                                                 );
                                             }),
                                     ),

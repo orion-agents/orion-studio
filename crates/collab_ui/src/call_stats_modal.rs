@@ -133,7 +133,7 @@ impl CallStatsModal {
             return;
         };
         let save_dialog =
-            cx.prompt_for_new_path(&PathBuf::default(), Some("zed-call-diagnostics.json"));
+            cx.prompt_for_new_path(&PathBuf::default(), Some("orion-call-diagnostics.json"));
         cx.spawn(async move |_, cx| {
             let Some(path) = save_dialog.await?? else {
                 return anyhow::Ok(());

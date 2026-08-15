@@ -6,7 +6,7 @@ use crate::tasks::workflows::{
     vars::{self, StepOutput, WorkflowInput},
 };
 
-pub fn bump_zed_version() -> Workflow {
+pub fn bump_orion_studio_version() -> Workflow {
     let target = WorkflowInput::string("target", Some("all".to_string()))
         .description("Which channels to bump: all, main, preview, or stable");
 
@@ -37,7 +37,7 @@ struct ResolvedOutputs {
 fn resolve_versions() -> (steps::NamedJob, ResolvedOutputs) {
     fn extract_versions() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
-            version=$(script/get-crate-version zed)
+            version=$(script/get-crate-version orion-studio)
             major=$(echo "$version" | cut -d. -f1)
             minor=$(echo "$version" | cut -d. -f2)
 
@@ -51,7 +51,7 @@ fn resolve_versions() -> (steps::NamedJob, ResolvedOutputs) {
             next_version="${major}.$((minor + 1)).0"
             next_major=$(echo "$next_version" | cut -d. -f1)
             next_minor=$(echo "$next_version" | cut -d. -f2)
-            pr_branch="bump-zed-to-v${next_major}.${next_minor}.0"
+            pr_branch="bump-orion-studio-to-v${next_major}.${next_minor}.0"
 
             # New preview branch from current main
             preview_branch="v${major}.${minor}.x"
@@ -88,7 +88,7 @@ fn resolve_versions() -> (steps::NamedJob, ResolvedOutputs) {
         .id("versions")
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy()
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
         .for_repository(steps::RepositoryTarget::current())
         .with_permissions([(steps::TokenPermissions::Contents, Level::Read)])
         .into();
@@ -102,7 +102,7 @@ fn resolve_versions() -> (steps::NamedJob, ResolvedOutputs) {
     let job = named::job(
         Job::default()
             .cond(Expression::new(
-                "github.repository_owner == 'zed-industries'",
+                "github.repository == 'orion-agents/orion-studio'",
             ))
             .runs_on(runners::LINUX_XL)
             .add_step(authenticate)
@@ -134,10 +134,10 @@ fn bump_main(
     outputs: &ResolvedOutputs,
 ) -> steps::NamedJob {
     fn bump_version() -> Step<Run> {
-        named::bash("cargo set-version -p zed --bump minor")
+        named::bash("cargo set-version -p orion-studio --bump minor")
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy()
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
         .for_repository(steps::RepositoryTarget::current())
         .with_permissions([
             (steps::TokenPermissions::Contents, Level::Write),
@@ -164,7 +164,7 @@ fn bump_main(
             .add_step(steps::install_cargo_edit())
             .add_step(bump_version())
             .add_step(steps::CreatePrStep::new(
-                format!("Bump Zed to v{}", outputs.next_version),
+                format!("Bump Orion Studio to v{}", outputs.next_version),
                 &outputs.pr_branch,
                 &token,
             )),
@@ -184,7 +184,7 @@ fn create_preview_branch(
         named::bash("echo \"main_sha=$(git rev-parse HEAD)\" >> \"$GITHUB_OUTPUT\"").id("main-sha")
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy()
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
         .for_repository(steps::RepositoryTarget::current())
         .with_permissions([
             (steps::TokenPermissions::Contents, Level::Write),
@@ -240,7 +240,7 @@ fn promote_to_stable(
     versions_job: &steps::NamedJob,
     outputs: &ResolvedOutputs,
 ) -> steps::NamedJob {
-    let (authenticate, token) = steps::authenticate_as_zippy()
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
         .for_repository(steps::RepositoryTarget::current())
         .with_permissions([
             (steps::TokenPermissions::Contents, Level::Write),
@@ -249,7 +249,7 @@ fn promote_to_stable(
         .into();
 
     let read_version_step = named::bash(indoc::indoc! {r#"
-            stable_version=$(script/get-crate-version zed)
+            stable_version=$(script/get-crate-version orion-studio)
             {
                 echo "stable_tag=v${stable_version}"
             } >> "$GITHUB_OUTPUT"

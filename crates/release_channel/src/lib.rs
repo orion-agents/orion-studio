@@ -9,13 +9,21 @@ use semver::Version;
 
 const ORION_DOCS_URL: &str = "https://orion.dev/docs";
 
+/// Resolves the release channel name from the environment: canonical
+/// `ORION_STUDIO_RELEASE_CHANNEL` first, legacy `ZED_RELEASE_CHANNEL` as a
+/// fallback, and the compile-time channel when neither is set. Only consulted
+/// in debug builds; release builds always use the compile-time channel.
+fn release_channel_name_from_env() -> String {
+    env::var("ORION_STUDIO_RELEASE_CHANNEL")
+        .ok()
+        .or_else(|| env::var("ZED_RELEASE_CHANNEL").ok())
+        .unwrap_or_else(compile_time_release_channel_name)
+}
+
 /// stable | dev | nightly | preview
 pub static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
-        env::var("ORION_STUDIO_RELEASE_CHANNEL")
-            .ok()
-            .or_else(|| env::var("ZED_RELEASE_CHANNEL").ok())
-            .unwrap_or_else(compile_time_release_channel_name)
+        release_channel_name_from_env()
     } else {
         compile_time_release_channel_name()
     }
@@ -25,10 +33,17 @@ pub static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
 /// library, it vendors each crate separately and builds it in isolation, which
 /// makes the `include_str!` fail.
 ///
-/// The build script checks for `$ZED_RELEASE_CHANNEL` and emits the `cfg`
+/// The build script checks for `$ORION_STUDIO_RELEASE_CHANNEL` (canonical) or
+/// `$ZED_RELEASE_CHANNEL` (legacy fallback) and emits the `cfg`
 #[cfg(__do_not_set_zed_release_channel)]
 fn compile_time_release_channel_name() -> String {
-    env!("ZED_RELEASE_CHANNEL").trim().to_string()
+    // Canonical first; the legacy `ZED_RELEASE_CHANNEL` is retained as a
+    // fallback. The build script only enables this `cfg` when at least one of
+    // the two env vars is present, so this `or` is always hit.
+    match option_env!("ORION_STUDIO_RELEASE_CHANNEL") {
+        Some(channel) => channel.trim().to_string(),
+        None => env!("ZED_RELEASE_CHANNEL").trim().to_string(),
+    }
 }
 
 #[cfg(not(__do_not_set_zed_release_channel))]
@@ -291,7 +306,38 @@ impl FromStr for ReleaseChannel {
 
 #[cfg(test)]
 mod tests {
-    use super::ReleaseChannel;
+    use super::{ReleaseChannel, release_channel_name_from_env};
+
+    #[test]
+    fn canonical_release_channel_env_takes_precedence_over_legacy() {
+        unsafe {
+            std::env::remove_var("ZED_RELEASE_CHANNEL");
+            std::env::remove_var("ORION_STUDIO_RELEASE_CHANNEL");
+        }
+        // No env override -> falls back to the compile-time `RELEASE_CHANNEL` file ("dev").
+        assert_eq!(release_channel_name_from_env(), "dev");
+
+        unsafe {
+            std::env::set_var("ZED_RELEASE_CHANNEL", "nightly");
+        }
+        assert_eq!(release_channel_name_from_env(), "nightly");
+
+        // Canonical overrides legacy when both are present.
+        unsafe {
+            std::env::set_var("ORION_STUDIO_RELEASE_CHANNEL", "preview");
+        }
+        assert_eq!(release_channel_name_from_env(), "preview");
+
+        // Removing the canonical one falls back to the still-set legacy value.
+        unsafe {
+            std::env::remove_var("ORION_STUDIO_RELEASE_CHANNEL");
+        }
+        assert_eq!(release_channel_name_from_env(), "nightly");
+
+        unsafe {
+            std::env::remove_var("ZED_RELEASE_CHANNEL");
+        }
+    }
 
     #[test]
     fn test_docs_url_for_release_channel() {

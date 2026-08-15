@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{EditPredictionStore, ZedPredictUpsell};
+use crate::{EditPredictionStore, OrionPredictUpsell};
 use ai_onboarding::EditPredictionOnboarding;
 use client::{Client, UserStore};
 use db::kvp::Dismissable;
@@ -24,8 +24,8 @@ macro_rules! onboarding_event {
     };
 }
 
-/// Introduces user to Zed's Edit Prediction feature
-pub struct ZedPredictModal {
+/// Introduces users to the Orion AI Edit Prediction feature.
+pub struct OrionPredictModal {
     onboarding: Entity<EditPredictionOnboarding>,
     focus_handle: FocusHandle,
 }
@@ -42,7 +42,7 @@ pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx:
     });
 }
 
-impl ZedPredictModal {
+impl OrionPredictModal {
     pub fn toggle(
         workspace: &mut Workspace,
         user_store: Entity<UserStore>,
@@ -66,15 +66,15 @@ impl ZedPredictModal {
                         Arc::new({
                             let this = weak_entity.clone();
                             move |_window, cx| {
-                                ZedPredictUpsell::set_dismissed(true, cx);
-                                set_edit_prediction_provider(EditPredictionProvider::Zed, cx);
+                                OrionPredictUpsell::set_dismissed(true, cx);
+                                set_edit_prediction_provider(EditPredictionProvider::Orion, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                             }
                         }),
                         Arc::new({
                             let this = weak_entity.clone();
                             move |window, cx| {
-                                ZedPredictUpsell::set_dismissed(true, cx);
+                                OrionPredictUpsell::set_dismissed(true, cx);
                                 set_edit_prediction_provider(EditPredictionProvider::Copilot, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                                 if let Some(copilot) = copilot.clone() {
@@ -91,31 +91,31 @@ impl ZedPredictModal {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        ZedPredictUpsell::set_dismissed(true, cx);
+        OrionPredictUpsell::set_dismissed(true, cx);
         cx.emit(DismissEvent);
     }
 }
 
-impl EventEmitter<DismissEvent> for ZedPredictModal {}
+impl EventEmitter<DismissEvent> for OrionPredictModal {}
 
-impl Focusable for ZedPredictModal {
+impl Focusable for OrionPredictModal {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl ModalView for ZedPredictModal {
+impl ModalView for OrionPredictModal {
     fn on_before_dismiss(
         &mut self,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> workspace::DismissDecision {
-        ZedPredictUpsell::set_dismissed(true, cx);
+        OrionPredictUpsell::set_dismissed(true, cx);
         workspace::DismissDecision::Dismiss(true)
     }
 }
 
-impl Render for ZedPredictModal {
+impl Render for OrionPredictModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_height = window.viewport_size().height;
         let max_height = window_height - px(200.);
@@ -123,7 +123,10 @@ impl Render for ZedPredictModal {
 
         v_flex()
             .id("edit-prediction-onboarding")
-            .key_context("ZedPredictModal")
+            // Retain the legacy key context because user keymaps may reference it.
+            // Keep the legacy context active for custom keymaps while the
+            // canonical Orion context is adopted by bundled keymaps.
+            .key_context("OrionPredictModal ZedPredictModal")
             .relative()
             .w(px(550.))
             .h_full()

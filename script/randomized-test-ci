@@ -9,12 +9,9 @@ const {
   runTests,
 } = require("./randomized-test-minimize");
 
-const { ZED_SERVER_URL } = process.env;
-if (!ZED_SERVER_URL) throw new Error("Missing env var `ZED_SERVER_URL`");
+if (require.main === module) main(resolveServerUrl(process.env));
 
-main();
-
-async function main() {
+async function main(serverUrl) {
   buildTests();
 
   const seed = randomU64();
@@ -45,7 +42,7 @@ async function main() {
 
   console.log("minimized plan:\n", minimizedPlan);
 
-  const url = `${ZED_SERVER_URL}/api/randomized_test_failure`;
+  const url = `${serverUrl}/api/randomized_test_failure`;
   const body = {
     seed: minimizedSeed,
     plan: JSON.parse(minimizedPlan),
@@ -59,6 +56,23 @@ async function main() {
 
   process.exit(1);
 }
+
+function resolveServerUrl(environment) {
+  if (Object.prototype.hasOwnProperty.call(environment, "ORION_STUDIO_SERVER_URL")) {
+    if (!environment.ORION_STUDIO_SERVER_URL) {
+      throw new Error("Env var `ORION_STUDIO_SERVER_URL` is set but empty");
+    }
+    return environment.ORION_STUDIO_SERVER_URL;
+  }
+
+  if (environment.ZED_SERVER_URL) return environment.ZED_SERVER_URL;
+
+  throw new Error(
+    "Missing env var `ORION_STUDIO_SERVER_URL` (legacy fallback: `ZED_SERVER_URL`)",
+  );
+}
+
+module.exports = { resolveServerUrl };
 
 function randomU64() {
   const bytes = randomBytes(8);

@@ -1,11 +1,11 @@
 ---
 title: Terraform
-description: "Configure Terraform language support in Zed, including language servers, formatting, and debugging."
+description: "Configure Terraform language support in Orion Studio, including language servers, formatting, and debugging."
 ---
 
 # Terraform
 
-Terraform support is available through the [Terraform extension](https://github.com/zed-extensions/terraform).
+Terraform support is available through the upstream-Zed [Terraform extension](https://github.com/zed-extensions/terraform), which Orion Studio consumes through extension compatibility.
 
 - Tree-sitter: [tree-sitter-grammars/tree-sitter-hcl](https://github.com/tree-sitter-grammars/tree-sitter-hcl)
 - Language Server: [hashicorp/terraform-ls](https://github.com/hashicorp/terraform-ls)

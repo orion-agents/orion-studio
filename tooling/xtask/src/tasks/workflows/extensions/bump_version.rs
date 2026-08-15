@@ -8,7 +8,7 @@ use crate::tasks::workflows::{
     GenerateWorkflowArgs, GitSha,
     extensions::WithAppSecrets,
     runners,
-    steps::{CommonJobConditions, NamedJob, named},
+    steps::{NamedJob, named},
     vars::{JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
@@ -40,8 +40,8 @@ pub(crate) fn call_bump_version(
 ) -> NamedJob<UsesJob> {
     let job = Job::default()
         .cond(Expression::new(format!(
-            "github.event.action != 'labeled' || {} != 'patch'",
-            bump_type.expr()
+            "vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION && (github.event.action != 'labeled' || {} != 'patch')",
+            bump_type.expr(),
         )))
         .permissions(
             Permissions::default()
@@ -51,8 +51,8 @@ pub(crate) fn call_bump_version(
                 .actions(Level::Write),
         )
         .uses(
-            "zed-industries",
-            "zed",
+            "orion-agents",
+            "orion-studio",
             ".github/workflows/extension_bump.yml",
             target_ref.map_or("main", AsRef::as_ref),
         )
@@ -70,7 +70,9 @@ pub(crate) fn call_bump_version(
 fn determine_bump_type() -> (NamedJob, StepOutput) {
     let (get_bump_type, output) = get_bump_type();
     let job = Job::default()
-        .with_repository_owner_guard()
+        .cond(Expression::new(
+            "vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION",
+        ))
         .permissions(Permissions::default())
         .runs_on(runners::LINUX_SMALL)
         .add_step(get_bump_type)

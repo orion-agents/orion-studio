@@ -1,11 +1,11 @@
-// Zed settings
+// Orion Studio settings
 //
-// For information on how to configure Zed, see the Zed
-// documentation: https://zed.dev/docs/configuring-zed
+// For information on how to configure Orion Studio, see the Orion Studio
+// bundled documentation under "Configuring Orion Studio".
 //
-// To see all of Zed's default settings without changing your
-// custom settings, run `zed: open default settings` from the
-// command palette (cmd-shift-p / ctrl-shift-p)
+// To see all of Orion Studio's default settings without changing your
+// custom settings, run "Open Default Settings" from the command palette
+// (cmd-shift-p / ctrl-shift-p).
 {
   "ui_font_size": 16,
   "buffer_font_size": 15,

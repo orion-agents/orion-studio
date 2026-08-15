@@ -10,12 +10,14 @@ fi
 mkdir -p snap/gui
 
 export DO_STARTUP_NOTIFY="true"
-export APP_NAME="Zed"
-export APP_CLI="zed"
-export APP_ICON="\${SNAP}/meta/gui/zed.png"
+export APP_NAME="Orion Studio"
+export APP_CLI="orion-studio"
+export APP_ICON="\${SNAP}/meta/gui/orion-studio.png"
 export APP_ARGS="%U"
-envsubst < "crates/zed/resources/zed.desktop.in" > "snap/gui/zed.desktop"
-cp "crates/zed/resources/app-icon.png" "snap/gui/zed.png"
+envsubst < "crates/zed/resources/orion-studio.desktop.in" \
+  | sed '/^# To add Orion Studio /d; /^# Upstream reports describe /d; /^# If this happens /d' \
+  > "snap/gui/orion-studio.desktop"
+cp "crates/zed/resources/app-icon.png" "snap/gui/orion-studio.png"
 
 RELEASE_VERSION="$1" envsubst < crates/zed/resources/snap/snapcraft.yaml.in > snap/snapcraft.yaml
 

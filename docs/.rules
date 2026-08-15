@@ -1,14 +1,14 @@
-# Zed Documentation Guidelines
+# Orion Studio Documentation Guidelines
 
 ## Voice and Tone
 
 ### Core Principles
 
-- **Practical over promotional**: Focus on what users can do, not on selling Zed. Avoid marketing language like "powerful," "revolutionary," or "best-in-class."
-- **Honest about limitations**: When Zed lacks a feature or doesn't match another tool's depth, say so directly. Pair limitations with workarounds or alternative workflows.
+- **Practical over promotional**: Focus on what users can do, not on selling Orion Studio. Avoid marketing language like "powerful," "revolutionary," or "best-in-class."
+- **Honest about limitations**: When Orion Studio lacks a feature or doesn't match another tool's depth, say so directly. Pair limitations with workarounds or alternative workflows.
 - **Direct and concise**: Use short sentences. Get to the point. Developers are scanning, not reading novels.
 - **Second person**: Address the reader as "you." Avoid "the user" or "one."
-- **Present tense**: "Zed opens the file" not "Zed will open the file."
+- **Present tense**: "Orion Studio opens the file" not "Orion Studio will open the file."
 
 ### What to Avoid
 
@@ -31,12 +31,14 @@
 ### Section Patterns
 
 For how-to content:
+
 1. Brief context (1-2 sentences max)
 2. Steps or instructions
 3. Example (code block or screenshot reference)
 4. Tips or gotchas (if any)
 
 For reference content:
+
 1. What it is (definition)
 2. How to access/configure it
 3. Options/parameters table
@@ -52,7 +54,7 @@ For reference content:
 
 ### Code and Settings
 
-- Inline code for setting names, file paths, commands: `format_on_save`, `.zed/settings.json`, `zed .`
+- Inline code for setting names, file paths, commands: `format_on_save`, `.zed/settings.json`, `orion .`
 - Code blocks for JSON config, multi-line commands, or file contents
 - Always show complete, working examples—not fragments
 
@@ -61,24 +63,27 @@ For reference content:
 Use `sh` code blocks for terminal commands, not plain backticks:
 
 ```sh
-brew install --cask zed
+orion .
 ```
 
 Not:
+
 ```
-brew install --cask zed
+orion .
 ```
 
-For single inline commands in prose, backticks are fine: `zed .`
+For single inline commands in prose, backticks are fine: `orion .`
 
 ### Tables
 
 Use tables for:
+
 - Keybinding comparisons between editors
-- Settings mappings (e.g., VS Code → Zed)
+- Settings mappings (e.g., VS Code → Orion Studio)
 - Feature comparisons with clear columns
 
 Format:
+
 ```
 | Action | Shortcut | Notes |
 | --- | --- | --- |
@@ -88,6 +93,7 @@ Format:
 ### Tips and Notes
 
 Use blockquote format with bold label:
+
 ```
 > **Tip:** Practical advice that helps bridge gaps or saves time.
 ```
@@ -117,18 +123,19 @@ Reserve tips for genuinely useful information, not padding.
 
 ## Terminology
 
-| Use | Instead of |
-| --- | --- |
-| folder | directory (in user-facing text) |
-| project | workspace (Zed doesn't have workspaces) |
-| Settings Editor | settings UI, preferences |
-| command palette | command bar, action search |
-| language server | LSP (spell out first use, then LSP is fine) |
-| panel | tool window, sidebar (be specific: "Project Panel," "Terminal Panel") |
+| Use             | Instead of                                                            |
+| --------------- | --------------------------------------------------------------------- |
+| folder          | directory (in user-facing text)                                       |
+| project         | workspace (Orion Studio doesn't have workspaces)                      |
+| Settings Editor | settings UI, preferences                                              |
+| command palette | command bar, action search                                            |
+| language server | LSP (spell out first use, then LSP is fine)                           |
+| panel           | tool window, sidebar (be specific: "Project Panel," "Terminal Panel") |
 
 ## Examples
 
 ### Good: Direct and actionable
+
 ```
 To format on save, open the Settings Editor (`Cmd+,`) and search for `format_on_save`. Set it to `on`.
 
@@ -139,13 +146,15 @@ Or add this to your settings.json:
 ```
 
 ### Bad: Wordy and promotional
+
 ```
-Zed provides a powerful and seamless formatting experience. Simply navigate to the settings and you'll find the format_on_save option which enables Zed's incredible auto-formatting capabilities.
+Orion Studio provides a powerful and seamless formatting experience. Simply navigate to the settings and you'll find the format_on_save option which enables Orion Studio's incredible auto-formatting capabilities.
 ```
 
 ### Good: Honest about limitations
+
 ```
-Zed doesn't index your project like IntelliJ does. You open a folder and start working immediately—no waiting. The trade-off: cross-project analysis relies on language servers, which may not go as deep.
+Orion Studio doesn't index your project like IntelliJ does. You open a folder and start working immediately—no waiting. The trade-off: cross-project analysis relies on language servers, which may not go as deep.
 
 **How to adapt:**
 - Use `Cmd+Shift+F` for project-wide text search
@@ -153,8 +162,9 @@ Zed doesn't index your project like IntelliJ does. You open a folder and start w
 ```
 
 ### Bad: Defensive or dismissive
+
 ```
-While some users might miss indexing, Zed's approach is actually better because it's faster.
+While some users might miss indexing, Orion Studio's approach is actually better because it's faster.
 ```
 
 ## Pull request hygiene

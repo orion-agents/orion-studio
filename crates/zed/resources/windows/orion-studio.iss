@@ -2,10 +2,11 @@
 AppId={#AppId}
 AppName={#AppName}
 AppVerName={#AppDisplayName}
-AppPublisher=Zed Industries
-AppPublisherURL=https://www.orion.dev/
-AppSupportURL=https://www.orion.dev/
-AppUpdatesURL=https://www.orion.dev/
+AppPublisher={#AppPublisher}
+AppPublisherURL=https://orion.dev/
+AppSupportURL=https://orion.dev/
+AppUpdatesURL=https://orion.dev/
+UninstallDisplayName={#AppDisplayName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
@@ -15,7 +16,7 @@ OutputBaseFilename={#AppSetupName}
 Compression=lzma
 SolidCompression=yes
 AppMutex={code:GetAppMutex}
-SetupMutex={#AppMutex}Setup
+SetupMutex={#SetupMutex}
 ; WizardImageFile="{#ResourcesDir}\inno-100.bmp,{#ResourcesDir}\inno-125.bmp,{#ResourcesDir}\inno-150.bmp,{#ResourcesDir}\inno-175.bmp,{#ResourcesDir}\inno-200.bmp,{#ResourcesDir}\inno-225.bmp,{#ResourcesDir}\inno-250.bmp"
 ; WizardSmallImageFile="{#ResourcesDir}\inno-small-100.bmp,{#ResourcesDir}\inno-small-125.bmp,{#ResourcesDir}\inno-small-150.bmp,{#ResourcesDir}\inno-small-175.bmp,{#ResourcesDir}\inno-small-200.bmp,{#ResourcesDir}\inno-small-225.bmp,{#ResourcesDir}\inno-small-250.bmp"
 SetupIconFile={#ResourcesDir}\{#AppIconName}.ico
@@ -26,24 +27,27 @@ MinVersion=10.0.16299
 SourceDir={#SourceDir}
 AppVersion={#Version}
 VersionInfoVersion={#Version}
+VersionInfoCompany={#AppPublisher}
+VersionInfoDescription={#AppDisplayName}
+VersionInfoProductName={#AppName}
 ShowLanguageDialog=auto
 WizardStyle=modern
 
 CloseApplications=force
 
-#if GetEnv("ZED_SIGN_BUNDLE") != ""
+#if GetEnv("ORION_STUDIO_SIGN_BUNDLE") != ""
 SignTool=Defaultsign
 #endif
 
 DefaultDirName={autopf}\{#AppName}
 PrivilegesRequired=lowest
 
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={#ArchitecturesAllowed}
+ArchitecturesInstallIn64BitMode={#ArchitecturesAllowed}
 
 [Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl,{#ResourcesDir}\messages\en.isl"; LicenseFile: "script\terms\terms.rtf"
-Name: "simplifiedChinese"; MessagesFile: "{#ResourcesDir}\messages\Default.zh-cn.isl,{#ResourcesDir}\messages\zh-cn.isl"; LicenseFile: "script\terms\terms.rtf"
+Name: "english"; MessagesFile: "compiler:Default.isl,{#ResourcesDir}\messages\en.isl"
+Name: "simplifiedChinese"; MessagesFile: "{#ResourcesDir}\messages\Default.zh-cn.isl,{#ResourcesDir}\messages\zh-cn.isl"
 
 [UninstallDelete]
 ; Delete logs
@@ -53,11 +57,10 @@ Type: filesandordirs; Name: "{app}\updates"
 Type: filesandordirs; Name: "{app}\x64"
 Type: filesandordirs; Name: "{app}\arm64"
 
-
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "addcontextmenufiles"; Description: "{cm:AddContextMenuFiles,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"
-Name: "addcontextmenufolders"; Description: "{cm:AddContextMenuFolders,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"; Flags: unchecked; Check: not IsWindows11OrLater
+Name: "addcontextmenufolders"; Description: "{cm:AddContextMenuFolders,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"; Flags: unchecked; Check: UseClassicContextMenu
 Name: "associatewithfiles"; Description: "{cm:AssociateWithFiles,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"
 Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:Other}"
 
@@ -68,7 +71,10 @@ Name: "{app}"; AfterInstall: DisableAppDirInheritance
 Source: "{#ResourcesDir}\orion-studio.exe"; DestDir: "{code:GetInstallDir}"; Flags: ignoreversion
 Source: "{#ResourcesDir}\bin\*"; DestDir: "{code:GetInstallDir}\bin"; Flags: ignoreversion
 Source: "{#ResourcesDir}\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
-Source: "{#ResourcesDir}\appx\*"; DestDir: "{app}\appx";  BeforeInstall: RemoveAppxPackage; AfterInstall: AddAppxPackage; Flags: ignoreversion; Check: IsWindows11OrLater
+#ifexist ResourcesDir + "\appx\orion_studio_explorer_command_injector.appx"
+Source: "{#ResourcesDir}\appx\orion_studio_explorer_command_injector.dll"; DestDir: "{app}\appx"; Flags: ignoreversion; Check: IsWindows11OrLater
+Source: "{#ResourcesDir}\appx\orion_studio_explorer_command_injector.appx"; DestDir: "{app}\appx"; BeforeInstall: RemoveAppxPackage; AfterInstall: AddAppxPackage; Flags: ignoreversion; Check: IsWindows11OrLater
+#endif
 #ifexist ResourcesDir + "\amd_ags_x64.dll"
 Source: "{#ResourcesDir}\amd_ags_x64.dll"; DestDir: "{app}"; Flags: ignoreversion
 #endif
@@ -88,7 +94,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}.exe"; Tasks: de
 Filename: "{app}\{#AppExeName}.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall; Check: WizardNotSilent
 
 [UninstallRun]
-Filename: "powershell.exe"; Parameters: "Invoke-Command -ScriptBlock {{Remove-AppxPackage -Package ""{#AppxFullName}""}"; Check: IsWindows11OrLater; Flags: shellexec waituntilterminated runhidden
+#ifexist ResourcesDir + "\appx\orion_studio_explorer_command_injector.appx"
+Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Get-AppxPackage -Name '{#AppxPackageName}' | Remove-AppxPackage"""; Check: IsWindows11OrLater; Flags: shellexec waituntilterminated runhidden
+#endif
 
 [Registry]
 Root: HKCU; Subkey: "Software\Classes\.ascx\OpenWithProgids"; ValueType: none; ValueName: "{#RegValueName}"; Flags: deletevalue uninsdeletevalue; Tasks: associatewithfiles
@@ -1233,33 +1241,33 @@ Root: HKCU; Subkey: "Software\Classes\{#RegValueName}SourceFile\DefaultIcon"; Va
 Root: HKCU; Subkey: "Software\Classes\{#RegValueName}SourceFile\shell\open"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"""
 Root: HKCU; Subkey: "Software\Classes\{#RegValueName}SourceFile\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%1"""
 
-Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}.exe"; ValueType: none; ValueName: ""; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}.exe\DefaultIcon"; ValueType: none; Flags: deletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}.exe\shell\open"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExeName}.exe"""
-Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\Applications\{#ApplicationRegistrationName}"; ValueType: none; ValueName: ""
+Root: HKCU; Subkey: "Software\Classes\Applications\{#ApplicationRegistrationName}\DefaultIcon"; ValueType: none; Flags: deletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\{#ApplicationRegistrationName}\shell\open"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExeName}.exe"""
+Root: HKCU; Subkey: "Software\Classes\Applications\{#ApplicationRegistrationName}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%1"""
 
-Root: HKCU; Subkey: "Software\Classes\{#RegValueName}ContextMenu"; ValueType: expandsz; ValueName: "Title"; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufiles; Flags: uninsdeletekey; Check: IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\*\shell\{#RegValueName}"; ValueType: expandsz; ValueName: ""; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufiles; Flags: uninsdeletekey; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\*\shell\{#RegValueName}"; ValueType: expandsz; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}.exe"; Tasks: addcontextmenufiles; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\*\shell\{#RegValueName}\command"; ValueType: expandsz; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%1"""; Tasks: addcontextmenufiles; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\directory\shell\{#RegValueName}"; ValueType: expandsz; ValueName: ""; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufolders; Flags: uninsdeletekey; Check: IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\directory\shell\{#RegValueName}"; ValueType: expandsz; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}.exe"; Tasks: addcontextmenufolders; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\directory\shell\{#RegValueName}\command"; ValueType: expandsz; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%V"""; Tasks: addcontextmenufolders; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\directory\background\shell\{#RegValueName}"; ValueType: expandsz; ValueName: ""; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufolders; Flags: uninsdeletekey; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\directory\background\shell\{#RegValueName}"; ValueType: expandsz; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}.exe"; Tasks: addcontextmenufolders; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\directory\background\shell\{#RegValueName}\command"; ValueType: expandsz; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%V"""; Tasks: addcontextmenufolders; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\Drive\shell\{#RegValueName}"; ValueType: expandsz; ValueName: ""; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufolders; Flags: uninsdeletekey; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\Drive\shell\{#RegValueName}"; ValueType: expandsz; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}.exe"; Tasks: addcontextmenufolders; Check: not IsWindows11OrLater
-Root: HKCU; Subkey: "Software\Classes\Drive\shell\{#RegValueName}\command"; ValueType: expandsz; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%V"""; Tasks: addcontextmenufolders; Check: not IsWindows11OrLater
+Root: HKCU; Subkey: "Software\Classes\{#RegValueName}ContextMenu"; ValueType: expandsz; ValueName: "Title"; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufiles; Flags: uninsdeletekey; Check: UseAppxContextMenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\{#RegValueName}"; ValueType: expandsz; ValueName: ""; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufiles; Flags: uninsdeletekey; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\{#RegValueName}"; ValueType: expandsz; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}.exe"; Tasks: addcontextmenufiles; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\{#RegValueName}\command"; ValueType: expandsz; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%1"""; Tasks: addcontextmenufiles; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\directory\shell\{#RegValueName}"; ValueType: expandsz; ValueName: ""; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufolders; Flags: uninsdeletekey; Check: UseAppxContextMenu
+Root: HKCU; Subkey: "Software\Classes\directory\shell\{#RegValueName}"; ValueType: expandsz; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}.exe"; Tasks: addcontextmenufolders; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\directory\shell\{#RegValueName}\command"; ValueType: expandsz; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%V"""; Tasks: addcontextmenufolders; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\directory\background\shell\{#RegValueName}"; ValueType: expandsz; ValueName: ""; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufolders; Flags: uninsdeletekey; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\directory\background\shell\{#RegValueName}"; ValueType: expandsz; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}.exe"; Tasks: addcontextmenufolders; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\directory\background\shell\{#RegValueName}\command"; ValueType: expandsz; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%V"""; Tasks: addcontextmenufolders; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\Drive\shell\{#RegValueName}"; ValueType: expandsz; ValueName: ""; ValueData: "{cm:OpenWithContextMenu,{#ShellNameShort}}"; Tasks: addcontextmenufolders; Flags: uninsdeletekey; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\Drive\shell\{#RegValueName}"; ValueType: expandsz; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}.exe"; Tasks: addcontextmenufolders; Check: UseClassicContextMenu
+Root: HKCU; Subkey: "Software\Classes\Drive\shell\{#RegValueName}\command"; ValueType: expandsz; ValueName: ""; ValueData: """{app}\{#AppExeName}.exe"" ""%V"""; Tasks: addcontextmenufolders; Check: UseClassicContextMenu
 
 ; Environment
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{code:AddToPath|{app}\bin}"; Tasks: addtopath; Check: NeedsAddToPath(ExpandConstant('{app}\bin'))
 
 ; URI Scheme
-Root: HKCU; Subkey: "Software\Classes\orion"; ValueType: "string"; ValueData: "URL:orion Protocol"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\orion"; ValueType: "string"; ValueName: "URL Protocol"; ValueData: ""
-Root: HKCU; Subkey: "Software\Classes\orion\DefaultIcon"; ValueType: "string"; ValueData: "{app}\orion-studio.exe,1"
-Root: HKCU; Subkey: "Software\Classes\orion\shell\open\command"; ValueType: "string"; ValueData: """{app}\orion-studio.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\{#UrlScheme}"; ValueType: "string"; ValueData: "URL:{#AppDisplayName} Protocol"
+Root: HKCU; Subkey: "Software\Classes\{#UrlScheme}"; ValueType: "string"; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\{#UrlScheme}\DefaultIcon"; ValueType: "string"; ValueData: "{app}\{#AppExeName}.exe,1"
+Root: HKCU; Subkey: "Software\Classes\{#UrlScheme}\shell\open\command"; ValueType: "string"; ValueData: """{app}\{#AppExeName}.exe"" ""%1"""
 
 [Code]
 function WizardNotSilent(): Boolean;
@@ -1270,6 +1278,20 @@ end;
 function IsWindows11OrLater(): Boolean;
 begin
   Result := (GetWindowsVersion >= $0A0055F0);
+end;
+
+function UseAppxContextMenu(): Boolean;
+begin
+#ifexist ResourcesDir + "\appx\orion_studio_explorer_command_injector.appx"
+  Result := IsWindows11OrLater();
+#else
+  Result := False;
+#endif
+end;
+
+function UseClassicContextMenu(): Boolean;
+begin
+  Result := not UseAppxContextMenu();
 end;
 
 // https://stackoverflow.com/a/23838239/261019
@@ -1316,6 +1338,76 @@ begin
     Result := OrigPath + ';' + path
 end;
 
+function RegistryCommandOwnedByThisInstallation(RegistryKey: string): Boolean;
+var
+  ExistingCommand: string;
+  ExpectedCommand: string;
+begin
+  ExpectedCommand := '"' + ExpandConstant('{app}\{#AppExeName}.exe') + '" "%1"';
+  Result :=
+    RegQueryStringValue(HKCU, RegistryKey, '', ExistingCommand) and
+    (CompareText(Trim(ExistingCommand), ExpectedCommand) = 0);
+end;
+
+function ProtocolCanBeRegisteredByThisInstallation(Scheme: string): Boolean;
+var
+  ProtocolKey: string;
+begin
+  ProtocolKey := 'Software\Classes\' + Scheme;
+  Result :=
+    not RegKeyExists(HKCU, ProtocolKey) or
+    RegistryCommandOwnedByThisInstallation(ProtocolKey + '\shell\open\command');
+end;
+
+procedure WriteProtocolRegistration(Scheme: string; DisplayName: string);
+var
+  ProtocolKey: string;
+begin
+  ProtocolKey := 'Software\Classes\' + Scheme;
+  if not RegWriteStringValue(HKCU, ProtocolKey, '', 'URL:' + DisplayName + ' Protocol') then
+    RaiseException('Unable to register the ' + Scheme + ' protocol description.');
+  if not RegWriteStringValue(HKCU, ProtocolKey, 'URL Protocol', '') then
+    RaiseException('Unable to register the ' + Scheme + ' URL Protocol marker.');
+  if not RegWriteStringValue(HKCU, ProtocolKey + '\DefaultIcon', '', ExpandConstant('{app}\{#AppExeName}.exe,1')) then
+    RaiseException('Unable to register the ' + Scheme + ' protocol icon.');
+  if not RegWriteStringValue(
+    HKCU,
+    ProtocolKey + '\shell\open\command',
+    '',
+    '"' + ExpandConstant('{app}\{#AppExeName}.exe') + '" "%1"'
+  ) then
+    RaiseException('Unable to register the ' + Scheme + ' protocol command.');
+end;
+
+procedure RegisterLegacyZedProtocolIfAvailable();
+begin
+  if ProtocolCanBeRegisteredByThisInstallation('zed') then
+  begin
+    WriteProtocolRegistration('zed', '{#AppDisplayName} Legacy');
+    Log('Registered or preserved the zed:// compatibility handler for this Orion Studio installation.');
+  end
+  else
+    Log('Preserved the existing zed:// handler because it is owned by another application.');
+end;
+
+procedure RemoveProtocolIfOwnedByThisInstallation(Scheme: string);
+var
+  ProtocolKey: string;
+begin
+  ProtocolKey := 'Software\Classes\' + Scheme;
+  if RegistryCommandOwnedByThisInstallation(ProtocolKey + '\shell\open\command') then
+    RegDeleteKeyIncludingSubkeys(HKCU, ProtocolKey);
+end;
+
+procedure RemoveApplicationRegistrationIfOwnedByThisInstallation();
+var
+  ApplicationKey: string;
+begin
+  ApplicationKey := 'Software\Classes\Applications\{#ApplicationRegistrationName}';
+  if RegistryCommandOwnedByThisInstallation(ApplicationKey + '\shell\open\command') then
+    RegDeleteKeyIncludingSubkeys(HKCU, ApplicationKey);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Path: string;
@@ -1327,6 +1419,10 @@ begin
   if not CurUninstallStep = usUninstall then begin
     exit;
   end;
+  RemoveProtocolIfOwnedByThisInstallation('{#UrlScheme}');
+  // Older Orion installers claimed zed://. Remove only that exact installation's handler.
+  RemoveProtocolIfOwnedByThisInstallation('zed');
+  RemoveApplicationRegistrationIfOwnedByThisInstallation();
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', Path)
   then begin
     exit;
@@ -1360,12 +1456,17 @@ begin
   Exec(ExpandConstant('{sys}\icacls.exe'), ExpandConstant('"{app}" /inheritancelevel:r ') + Permissions, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+#ifexist ResourcesDir + "\appx\orion_studio_explorer_command_injector.appx"
 procedure AddAppxPackage();
 var
   AddAppxPackageResultCode: Integer;
 begin
   if WizardIsTaskSelected('addcontextmenufiles') then begin
-    ShellExec('', 'powershell.exe', '-Command ' + AddQuotes('Add-AppxPackage -Path ''' + ExpandConstant('{app}\appx\zed_explorer_command_injector.appx') + ''' -ExternalLocation ''' + ExpandConstant('{app}\appx') + ''''), '', SW_HIDE, ewWaitUntilTerminated, AddAppxPackageResultCode);
+    if not ShellExec('', 'powershell.exe', '-NoProfile -Command ' + AddQuotes('Add-AppxPackage -Path ''' + ExpandConstant('{app}\appx\orion_studio_explorer_command_injector.appx') + ''' -ExternalLocation ''' + ExpandConstant('{app}') + ''''), '', SW_HIDE, ewWaitUntilTerminated, AddAppxPackageResultCode) then
+      RaiseException('Unable to start PowerShell while registering the Orion Studio Explorer package.');
+    if AddAppxPackageResultCode <> 0 then
+      RaiseException(Format('PowerShell failed to register the Orion Studio Explorer package (exit code %d).', [AddAppxPackageResultCode]));
+    // The AppX package is live now; only then is it safe to remove classic fallbacks.
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\*\shell\{#RegValueName}');
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\directory\shell\{#RegValueName}');
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\directory\background\shell\{#RegValueName}');
@@ -1377,10 +1478,26 @@ procedure RemoveAppxPackage();
 var
   RemoveAppxPackageResultCode: Integer;
 begin
-  ShellExec('', 'powershell.exe', '-Command ' + AddQuotes('Remove-AppxPackage -Package ''{#AppxFullName}'''), '', SW_HIDE, ewWaitUntilTerminated, RemoveAppxPackageResultCode);
+  if not ShellExec('', 'powershell.exe', '-NoProfile -Command ' + AddQuotes('Get-AppxPackage -Name ''{#AppxPackageName}'' | Remove-AppxPackage'), '', SW_HIDE, ewWaitUntilTerminated, RemoveAppxPackageResultCode) then
+    RaiseException('Unable to start PowerShell while removing the previous Orion Studio Explorer package.');
+  if RemoveAppxPackageResultCode <> 0 then
+    RaiseException(Format('PowerShell failed to remove the previous Orion Studio Explorer package (exit code %d).', [RemoveAppxPackageResultCode]));
   if not WizardIsTaskSelected('addcontextmenufiles') then begin
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\{#RegValueName}ContextMenu');
   end;
+end;
+#endif
+
+function LegacyZedInstallationDetected(): Boolean;
+begin
+  Result := RegKeyExists(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#LegacyAppId}_is1');
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  if LegacyZedInstallationDetected() then
+    Log('Legacy Zed installation detected; Orion Studio will install side-by-side without replacing its zed:// handler.');
+  Result := True;
 end;
 
 function SwitchHasValue(Name: string; Value: string): Boolean;
@@ -1397,6 +1514,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    RegisterLegacyZedProtocolIfAvailable();
     if IsUpdating() then
     begin
       SaveStringToFile(ExpandConstant('{app}\updates\versions.txt'), '{#Version}' + #13#10, True);

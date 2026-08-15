@@ -21,15 +21,15 @@
 
 ## 1. 基线、工作树边界与工具链
 
-| 项 | 值 |
-| --- | --- |
-| 分支 | `init` |
-| HEAD | `d2779c3`（`git rev-parse --short HEAD`） |
-| 最近提交 | `d2779c3 language: Avoid UTF-16 false positive with embedded ASCII (#61250)` |
-| 工具链 | `rustc 1.95.0 (59807616e 2026-04-14)` / `cargo 1.95.0 (f2d3ce0bd 2026-03-21)` |
-| 工作树 tracked/staged 修改 | **无**（`git diff` / `git diff --cached` 均为空） |
-| 未跟踪（按规矩不修改、不清理） | `.workbuddy/`、`docs/plan/`（含本计划全部子计划）、`docs/research/open-source-code-editors-research.md` |
-| 其他未跟踪（被 `.gitignore` 忽略，不在源码口径内） | `.factory/`（已跟踪 8 文件，内部 prompts/skills，含 `brand-writer`，与产品迁移无关） |
+| 项                                                 | 值                                                                                                      |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| 分支                                               | `init`                                                                                                  |
+| HEAD                                               | `d2779c3`（`git rev-parse --short HEAD`）                                                               |
+| 最近提交                                           | `d2779c3 language: Avoid UTF-16 false positive with embedded ASCII (#61250)`                            |
+| 工具链                                             | `rustc 1.95.0 (59807616e 2026-04-14)` / `cargo 1.95.0 (f2d3ce0bd 2026-03-21)`                           |
+| 工作树 tracked/staged 修改                         | **无**（`git diff` / `git diff --cached` 均为空）                                                       |
+| 未跟踪（按规矩不修改、不清理）                     | `.workbuddy/`、`docs/plan/`（含本计划全部子计划）、`docs/research/open-source-code-editors-research.md` |
+| 其他未跟踪（被 `.gitignore` 忽略，不在源码口径内） | `.factory/`（已跟踪 8 文件，内部 prompts/skills，含 `brand-writer`，与产品迁移无关）                    |
 
 环境满足 S01 前置条件：分支为 `init`、HEAD 已记录、tracked/staged 为空、用户文件边界已锁定。
 
@@ -39,23 +39,23 @@
 
 ### 2.1 跟踪文件扫描（`git grep`，只看已跟踪文件）
 
-| 命令（简化） | 范围 | 命中数 |
-| --- | --- | --- |
-| `git grep -Il -E '<PATTERN>'` | 全仓库（跟踪文件） | **1009 文件** |
-| `git grep -In -E '<PATTERN>'` | 全仓库（跟踪文件，按行） | **7000 行** |
-| `git grep -Il -E '<PATTERN>' -- crates` | crates | **596 文件** |
-| `git grep -Il -E '<PATTERN>' -- assets` | assets | **27 文件** |
-| `git grep -Il -E '<PATTERN>' -- script .github legal docs/src` | script/.github/legal/docs/src | **298 文件** |
+| 命令（简化）                                                   | 范围                          | 命中数        |
+| -------------------------------------------------------------- | ----------------------------- | ------------- |
+| `git grep -Il -E '<PATTERN>'`                                  | 全仓库（跟踪文件）            | **1009 文件** |
+| `git grep -In -E '<PATTERN>'`                                  | 全仓库（跟踪文件，按行）      | **7000 行**   |
+| `git grep -Il -E '<PATTERN>' -- crates`                        | crates                        | **596 文件**  |
+| `git grep -Il -E '<PATTERN>' -- assets`                        | assets                        | **27 文件**   |
+| `git grep -Il -E '<PATTERN>' -- script .github legal docs/src` | script/.github/legal/docs/src | **298 文件**  |
 
 > `<PATTERN>` = `Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://`
 > 注意：按区域分桶的"文件数"之和（596+27+298=921）小于全仓库 1009，差值来自未单独分桶的目录（如 `tooling`、`extensions`、顶层文件等）；行数同理可能重叠，故各项**不可相加**，仅作分布参考。
 
 ### 2.2 工作树扫描（`rg` 指定工具 → 不可用，启用 `grep` 备用）
 
-| 命令 | 结果 |
-| --- | --- |
-| `rg --hidden --glob '!.git/**' --glob '!target/**' --glob '!.workbuddy/**' -n -E '<PATTERN>'` | **FAILED**：`rg: command not found`（PATH 中不存在）。已记录，未改用删除。 |
-| 备用：`grep -rI --exclude-dir=.git --exclude-dir=target --exclude-dir=.workbuddy -nE '<PATTERN>' .` | **7110 行**（含未跟踪内容） |
+| 命令                                                                                                | 结果                                                                       |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `rg --hidden --glob '!.git/**' --glob '!target/**' --glob '!.workbuddy/**' -n -E '<PATTERN>'`       | **FAILED**：`rg: command not found`（PATH 中不存在）。已记录，未改用删除。 |
+| 备用：`grep -rI --exclude-dir=.git --exclude-dir=target --exclude-dir=.workbuddy -nE '<PATTERN>' .` | **7110 行**（含未跟踪内容）                                                |
 
 备用扫描的口径拆解（与 §2.1 交叉印证）：
 
@@ -66,18 +66,18 @@
 
 ### 2.3 按顶层目录的命中分布（源码部分，备用扫描）
 
-| 目录 | 行数 |
-| --- | --- |
-| crates | 2996 |
-| docs（docs/src，已跟踪） | 2400 |
-| .github | 594 |
-| script | 320 |
-| tooling | 173 |
-| assets | 136 |
-| legal | 85 |
-| .factory（已跟踪，内部工具，非产品） | 52 |
-| extensions | 26 |
-| nix | 25 |
+| 目录                                                                                     | 行数 |
+| ---------------------------------------------------------------------------------------- | ---- |
+| crates                                                                                   | 2996 |
+| docs（docs/src，已跟踪）                                                                 | 2400 |
+| .github                                                                                  | 594  |
+| script                                                                                   | 320  |
+| tooling                                                                                  | 173  |
+| assets                                                                                   | 136  |
+| legal                                                                                    | 85   |
+| .factory（已跟踪，内部工具，非产品）                                                     | 52   |
+| extensions                                                                               | 26   |
+| nix                                                                                      | 25   |
 | 其他（ci/.cloudflare/.agents/.zed/.cargo/lychee.toml/README/Cargo.toml/Procfile.web 等） | 余量 |
 
 ---
@@ -86,27 +86,27 @@
 
 > 分类图例：MIGRATE=必须改为 Orion 规范；COMPAT=旧标识保留为兼容读取层（需窗口与测试，未知写 OPEN）；KEEP-ATTRIBUTION=版权/法律/上游归属保留；KEEP-HISTORY=历史/迁移/测试保留；DELETE-AFTER-APPROVAL=法务批准后替换；OPEN=需人类决策，不猜测。
 
-| 文件:行 | 命中内容（类别） | 处理结论 |
-| --- | --- | --- |
-| `crates/paths/src/paths.rs:18` | `pub const APP_NAME: &str = "Zed";`（展示名/运行时身份常量） | **MIGRATE** — 第 17 行注释明示"Forks should change this to avoid colliding with Zed's user data"，是 fork 第一锚点 |
-| `crates/paths/src/paths.rs:56/58/65` | macOS `~/Library/Application Support/Zed`、Win `%LOCALAPPDATA%\Zed`、`%APPDATA%\Zed`（配置/数据/状态目录） | **MIGRATE** |
-| `crates/paths/src/paths.rs:239` | Zed server directory on SSH host（远程目录） | **MIGRATE** |
-| `crates/paths/src/paths.rs:245/251` | `Zed.log` / `Zed.log.old`（日志文件名） | **MIGRATE**（旧日志名进兼容读取） |
-| `crates/zed_env_vars/src/zed_env_vars.rs:6` | `ZED_STATELESS` 环境变量 | **COMPAT/MIGRATE**（新代码用 `ORION_STUDIO_*`，旧名只读兼容） |
-| `crates/release_channel/src/lib.rs:10` | `ZED_DOCS_URL = "https://zed.dev/docs"`（服务 URL） | **MIGRATE**（在 Orion docs 就绪前是否暂留为 OPEN，见 §6） |
-| `crates/release_channel/src/lib.rs:47-50` | Windows App ID：`Zed-Editor-Dev/Nightly/Preview/Stable` | **MIGRATE**（平台发布身份） |
-| `crates/release_channel/src/lib.rs:15/28/104` | `ZED_RELEASE_CHANNEL`、`ZED_APP_VERSION` | **COMPAT/MIGRATE** |
-| `crates/zed/Cargo.toml:8` | `authors = ["Zed Team <hi@zed.dev>"]` | **KEEP-ATTRIBUTION**（按法务决定更新） |
-| `crates/zed/Cargo.toml:285-310` | Bundle identifier `dev.zed.Zed-Dev/-Nightly/-Preview`、name `Zed Dev/Nightly/Preview/Stable` | **MIGRATE**（macOS Bundle ID） |
-| `crates/cli/src/main.rs:34` | `URL_PREFIX` 含 `"zed://"`（URL scheme） | **MIGRATE**（新 scheme 规范，旧 scheme 兼容窗口 OPEN） |
-| `crates/cli/src/main.rs:91/1088/1103` | `dev.zed.Zed` Flatpak ID | **MIGRATE**（Flatpak ID） |
-| `crates/cli/src/main.rs:577/508/1036/1037/1059` | `ZED_CHANNEL`、`ZED_ASKPASS_SOCKET`、`ZED_FLATPAK_LIB_PATH`、`ZED_FLATPAK_NO_ESCAPE`、`ZED_UPDATE_EXPLANATION` | **COMPAT/MIGRATE** |
-| `crates/client/src/client.rs:63-85` | `ZED_SERVER_URL`/`ZED_RPC_URL`/`ZED_IMPERSONATE`/`ZED_WEB_LOGIN`/`ZED_ADMIN_API_TOKEN`/`ZED_APP_PATH`/`ZED_ALWAYS_ACTIVE`（环境变量簇） | **COMPAT**（新名 `ORION_STUDIO_*` 优先；旧名只读兼容并告警，兼容窗口 OPEN） |
-| `crates/client/src/client.rs:1942` | `pub const ZED_URL_SCHEME: &str = "zed";` | **MIGRATE**（URL scheme 常量） |
-| `crates/client/src/client.rs:1946-1993` | `ZedLink` 枚举、`zed.dev/channel/...` 解析 | **MIGRATE/COMPAT** |
-| `crates/client/src/zed_urls.rs:1/5` | `zed.dev` URL 构造辅助 | **MIGRATE**（服务 URL） |
-| `crates/remote_server/build.rs:4/8/10/29/32` | 读取 `zed/Cargo.toml`、注入 `ZED_PKG_VERSION`/`ZED_COMMIT_SHA`/`ZED_BUILD_ID` | **MIGRATE**（改为从 Orion Cargo.toml 派生） |
-| `crates/remote_server/src/server.rs:691` | User-Agent `Zed-Server/{}` | **MIGRATE** |
+| 文件:行                                         | 命中内容（类别）                                                                                                                        | 处理结论                                                                                                           |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `crates/paths/src/paths.rs:18`                  | `pub const APP_NAME: &str = "Zed";`（展示名/运行时身份常量）                                                                            | **MIGRATE** — 第 17 行注释明示"Forks should change this to avoid colliding with Zed's user data"，是 fork 第一锚点 |
+| `crates/paths/src/paths.rs:56/58/65`            | macOS `~/Library/Application Support/Zed`、Win `%LOCALAPPDATA%\Zed`、`%APPDATA%\Zed`（配置/数据/状态目录）                              | **MIGRATE**                                                                                                        |
+| `crates/paths/src/paths.rs:239`                 | Zed server directory on SSH host（远程目录）                                                                                            | **MIGRATE**                                                                                                        |
+| `crates/paths/src/paths.rs:245/251`             | `Zed.log` / `Zed.log.old`（日志文件名）                                                                                                 | **MIGRATE**（旧日志名进兼容读取）                                                                                  |
+| `crates/zed_env_vars/src/zed_env_vars.rs:6`     | `ZED_STATELESS` 环境变量                                                                                                                | **COMPAT/MIGRATE**（新代码用 `ORION_STUDIO_*`，旧名只读兼容）                                                      |
+| `crates/release_channel/src/lib.rs:10`          | `ZED_DOCS_URL = "https://zed.dev/docs"`（服务 URL）                                                                                     | **MIGRATE**（在 Orion docs 就绪前是否暂留为 OPEN，见 §6）                                                          |
+| `crates/release_channel/src/lib.rs:47-50`       | Windows App ID：`Zed-Editor-Dev/Nightly/Preview/Stable`                                                                                 | **MIGRATE**（平台发布身份）                                                                                        |
+| `crates/release_channel/src/lib.rs:15/28/104`   | `ZED_RELEASE_CHANNEL`、`ZED_APP_VERSION`                                                                                                | **COMPAT/MIGRATE**                                                                                                 |
+| `crates/zed/Cargo.toml:8`                       | `authors = ["Zed Team <hi@zed.dev>"]`                                                                                                   | **KEEP-ATTRIBUTION**（按法务决定更新）                                                                             |
+| `crates/zed/Cargo.toml:285-310`                 | Bundle identifier `dev.zed.Zed-Dev/-Nightly/-Preview`、name `Zed Dev/Nightly/Preview/Stable`                                            | **MIGRATE**（macOS Bundle ID）                                                                                     |
+| `crates/cli/src/main.rs:34`                     | `URL_PREFIX` 含 `"zed://"`（URL scheme）                                                                                                | **MIGRATE**（新 scheme 规范，旧 scheme 兼容窗口 OPEN）                                                             |
+| `crates/cli/src/main.rs:91/1088/1103`           | `dev.zed.Zed` Flatpak ID                                                                                                                | **MIGRATE**（Flatpak ID）                                                                                          |
+| `crates/cli/src/main.rs:577/508/1036/1037/1059` | `ZED_CHANNEL`、`ZED_ASKPASS_SOCKET`、`ZED_FLATPAK_LIB_PATH`、`ZED_FLATPAK_NO_ESCAPE`、`ZED_UPDATE_EXPLANATION`                          | **COMPAT/MIGRATE**                                                                                                 |
+| `crates/client/src/client.rs:63-85`             | `ZED_SERVER_URL`/`ZED_RPC_URL`/`ZED_IMPERSONATE`/`ZED_WEB_LOGIN`/`ZED_ADMIN_API_TOKEN`/`ZED_APP_PATH`/`ZED_ALWAYS_ACTIVE`（环境变量簇） | **COMPAT**（新名 `ORION_STUDIO_*` 优先；旧名只读兼容并告警，兼容窗口 OPEN）                                        |
+| `crates/client/src/client.rs:1942`              | `pub const ZED_URL_SCHEME: &str = "zed";`                                                                                               | **MIGRATE**（URL scheme 常量）                                                                                     |
+| `crates/client/src/client.rs:1946-1993`         | `ZedLink` 枚举、`zed.dev/channel/...` 解析                                                                                              | **MIGRATE/COMPAT**                                                                                                 |
+| `crates/client/src/zed_urls.rs:1/5`             | `zed.dev` URL 构造辅助                                                                                                                  | **MIGRATE**（服务 URL）                                                                                            |
+| `crates/remote_server/build.rs:4/8/10/29/32`    | 读取 `zed/Cargo.toml`、注入 `ZED_PKG_VERSION`/`ZED_COMMIT_SHA`/`ZED_BUILD_ID`                                                           | **MIGRATE**（改为从 Orion Cargo.toml 派生）                                                                        |
+| `crates/remote_server/src/server.rs:691`        | User-Agent `Zed-Server/{}`                                                                                                              | **MIGRATE**                                                                                                        |
 
 > 未发现疑似 secret：上述均为标识符/URL/常量名，未出现任何凭据明文。若后续在私有配置中发现疑似 secret，按 S01 规则只记录路径行号、不复制内容并 BLOCKED。
 
@@ -114,59 +114,59 @@
 
 ## 4. P1 清单（用户可见内容、协议文案、测试契约）— 代表命中
 
-| 文件:行 | 命中内容（类别） | 处理结论 |
-| --- | --- | --- |
-| `README.md:1/3/6/12` | `# Zed`、badge `zed-industries/zed`、`zed.dev` 下载/文档链接 | **MIGRATE**（展示文本）；badge/repo 链接 **KEEP-ATTRIBUTION** 或按决策 MIGRATE |
-| `assets/settings/default.json:2` | `"$schema": "zed://schemas/settings"`（URL scheme 用于配置 schema） | **MIGRATE/COMPAT**（scheme 改名需同步 schema 服务与客户端） |
-| `assets/settings/default.json:14/27/31/57/59` | `icon_theme: "Zed (Default)"`、`base_keymap: "Zed"`、`.ZedMono`、`.ZedSans` 字体 | **MIGRATE**（用户可见品牌/默认值） |
-| `crates/extension_api/src/extension_api.rs:21-52`、`README.md:43/47` | `zed::` WIT / Rust 扩展命名空间（`zed::extension::*`、`zed::register_extension!`） | **COMPAT（关键）**：第三方扩展依赖此命名空间；改名需双版本协商或兼容 decoder，兼容窗口 **OPEN**（不得无迁移破坏 wire/扩展格式） |
-| `docs/src/`（约 2400 行） | 文档正文、截图、链接中的 `Zed` / `zed.dev` | **MIGRATE**（展示文本）+ **KEEP-ATTRIBUTION**（上游链接/归属） |
-| 多处 UI 帮助链接（`agent_ui`、`debugger_ui`、`editor`、`extensions_ui`、`edit_prediction` 等） | `https://zed.dev/docs/...` 打开文档 | **MIGRATE**（指向 Orion docs；在 Orion docs 就绪前是否暂留 OPEN） |
-| 测试 fixture / visual test / E2E / eval（分布在各 crate） | `zed://` 测试数据、`Zed` 期望文案、snapshot | **KEEP-HISTORY**（迁移代码与测试中保留旧标识作为兼容/历史参考） |
+| 文件:行                                                                                        | 命中内容（类别）                                                                   | 处理结论                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `README.md:1/3/6/12`                                                                           | `# Zed`、badge `zed-industries/zed`、`zed.dev` 下载/文档链接                       | **MIGRATE**（展示文本）；badge/repo 链接 **KEEP-ATTRIBUTION** 或按决策 MIGRATE                                                  |
+| `assets/settings/default.json:2`                                                               | `"$schema": "zed://schemas/settings"`（URL scheme 用于配置 schema）                | **MIGRATE/COMPAT**（scheme 改名需同步 schema 服务与客户端）                                                                     |
+| `assets/settings/default.json:14/27/31/57/59`                                                  | `icon_theme: "Zed (Default)"`、`base_keymap: "Zed"`、`.ZedMono`、`.ZedSans` 字体   | **MIGRATE**（用户可见品牌/默认值）                                                                                              |
+| `crates/extension_api/src/extension_api.rs:21-52`、`README.md:43/47`                           | `zed::` WIT / Rust 扩展命名空间（`zed::extension::*`、`zed::register_extension!`） | **COMPAT（关键）**：第三方扩展依赖此命名空间；改名需双版本协商或兼容 decoder，兼容窗口 **OPEN**（不得无迁移破坏 wire/扩展格式） |
+| `docs/src/`（约 2400 行）                                                                      | 文档正文、截图、链接中的 `Zed` / `zed.dev`                                         | **MIGRATE**（展示文本）+ **KEEP-ATTRIBUTION**（上游链接/归属）                                                                  |
+| 多处 UI 帮助链接（`agent_ui`、`debugger_ui`、`editor`、`extensions_ui`、`edit_prediction` 等） | `https://zed.dev/docs/...` 打开文档                                                | **MIGRATE**（指向 Orion docs；在 Orion docs 就绪前是否暂留 OPEN）                                                               |
+| 测试 fixture / visual test / E2E / eval（分布在各 crate）                                      | `zed://` 测试数据、`Zed` 期望文案、snapshot                                        | **KEEP-HISTORY**（迁移代码与测试中保留旧标识作为兼容/历史参考）                                                                 |
 
 ---
 
 ## 5. P2 清单（组织归属、上游链接、法律文本）— 代表命中
 
-| 文件:行 | 命中内容（类别） | 处理结论 |
-| --- | --- | --- |
-| `.github/workflows/*.yml`（如 `after_release.yml:29/42/108/110`、`add_commented_closed_issue_to_project.yml:14/42/55/85`） | `github.repository == 'zed-industries/zed'`、`owner: zed-industries`、`ZedIndustries.Zed[.Preview]` 包名 | **MIGRATE**（CI/发布身份）；⚠️ **风险**：若 fork 仍带 `zed-industries` 条件，workflow 会静默跳过——必须在 Orion 仓库实跑验证 |
-| `legal/terms.md`、`legal/privacy-policy.md`（多处） | "Zed Industries, Inc."、`zed.dev`、`legal@zed.dev`、仲裁地址 | **KEEP-ATTRIBUTION / DELETE-AFTER-APPROVAL**：属法律文本，须**法务单独审批**后重写，禁止用普通搜索替换处理 |
-| `Dockerfile`、`Dockerfile-collab`、`Procfile`/`Procfile.web`、`ci/`、`mailmap`、`compliance/`、`.claude`/`CODEOWNERS`（如存在） | 组织名、上游 fork URL、部署脚本 | **MIGRATE**（组织引用）/ **KEEP-ATTRIBUTION**（版权/第三方） |
-| `Cargo.toml`（顶层） | 上游 fork URL 等 | **MIGRATE/复核**（是否继续依赖上游 fork URL） |
+| 文件:行                                                                                                                         | 命中内容（类别）                                                                                         | 处理结论                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/*.yml`（如 `after_release.yml:29/42/108/110`、`add_commented_closed_issue_to_project.yml:14/42/55/85`）      | `github.repository == 'zed-industries/zed'`、`owner: zed-industries`、`ZedIndustries.Zed[.Preview]` 包名 | **MIGRATE**（CI/发布身份）；⚠️ **风险**：若 fork 仍带 `zed-industries` 条件，workflow 会静默跳过——必须在 Orion 仓库实跑验证 |
+| `legal/terms.md`、`legal/privacy-policy.md`（多处）                                                                             | "Zed Industries, Inc."、`zed.dev`、`legal@zed.dev`、仲裁地址                                             | **KEEP-ATTRIBUTION / DELETE-AFTER-APPROVAL**：属法律文本，须**法务单独审批**后重写，禁止用普通搜索替换处理                  |
+| `Dockerfile`、`Dockerfile-collab`、`Procfile`/`Procfile.web`、`ci/`、`mailmap`、`compliance/`、`.claude`/`CODEOWNERS`（如存在） | 组织名、上游 fork URL、部署脚本                                                                          | **MIGRATE**（组织引用）/ **KEEP-ATTRIBUTION**（版权/第三方）                                                                |
+| `Cargo.toml`（顶层）                                                                                                            | 上游 fork URL 等                                                                                         | **MIGRATE/复核**（是否继续依赖上游 fork URL）                                                                               |
 
 ---
 
 ## 6. 服务端清单（collab / cloud / 部署）— 活动默认 endpoint
 
-| 文件:行 | 当前活动默认值（服务 URL / 标识） | 处理结论 |
-| --- | --- | --- |
-| `crates/collab/src/lib.rs:153-154` | staging→`https://staging.zed.dev`，默认→`https://zed.dev` | **MIGRATE**（不得把 `zed.dev` 留作活动默认；自托管/离线失败需可解释） |
-| `crates/collab/src/lib.rs:162` | 默认 RPC/cloud→`https://cloud.zed.dev` | **MIGRATE** |
-| `crates/cloud_api_client/src/cloud_api_client.rs:338/357` | `https://cloud.zed.dev/client/users/me` | **MIGRATE** |
-| `crates/context_server/src/oauth.rs:37/1773/1785` | `https://zed.dev/oauth/client-metadata.json` | **MIGRATE** |
-| `crates/http_client/src/http_client.rs:269` | `https://zed.dev` ⇒ `https://api.zed.dev`（API host 映射） | **MIGRATE** |
-| `crates/release_channel/src/lib.rs:10` | `ZED_DOCS_URL = "https://zed.dev/docs"` | **MIGRATE**（Orion docs 就绪前暂留属 OPEN，不得静默 fallback 到 zed.dev） |
-| `crates/remote_server/src/server.rs`（UA/版本派生） | 从 `ZED_*` env 派生版本；UA `Zed-Server/{}` | **MIGRATE** |
-| `Dockerfile-collab`、`compose.yml`、`livekit.yaml`、部署清单 | collab 服务端容器/编排（本次扫描未在这些文件命中 `zed` 字面，但属 S09 迁移范围） | **MIGRATE/复核**（S09 处理，不在 S01 改写） |
+| 文件:行                                                      | 当前活动默认值（服务 URL / 标识）                                                | 处理结论                                                                  |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `crates/collab/src/lib.rs:153-154`                           | staging→`https://staging.zed.dev`，默认→`https://zed.dev`                        | **MIGRATE**（不得把 `zed.dev` 留作活动默认；自托管/离线失败需可解释）     |
+| `crates/collab/src/lib.rs:162`                               | 默认 RPC/cloud→`https://cloud.zed.dev`                                           | **MIGRATE**                                                               |
+| `crates/cloud_api_client/src/cloud_api_client.rs:338/357`    | `https://cloud.zed.dev/client/users/me`                                          | **MIGRATE**                                                               |
+| `crates/context_server/src/oauth.rs:37/1773/1785`            | `https://zed.dev/oauth/client-metadata.json`                                     | **MIGRATE**                                                               |
+| `crates/http_client/src/http_client.rs:269`                  | `https://zed.dev` ⇒ `https://api.zed.dev`（API host 映射）                       | **MIGRATE**                                                               |
+| `crates/release_channel/src/lib.rs:10`                       | `ZED_DOCS_URL = "https://zed.dev/docs"`                                          | **MIGRATE**（Orion docs 就绪前暂留属 OPEN，不得静默 fallback 到 zed.dev） |
+| `crates/remote_server/src/server.rs`（UA/版本派生）          | 从 `ZED_*` env 派生版本；UA `Zed-Server/{}`                                      | **MIGRATE**                                                               |
+| `Dockerfile-collab`、`compose.yml`、`livekit.yaml`、部署清单 | collab 服务端容器/编排（本次扫描未在这些文件命中 `zed` 字面，但属 S09 迁移范围） | **MIGRATE/复核**（S09 处理，不在 S01 改写）                               |
 
 ---
 
 ## 7. 当前活动默认 endpoint / 环境变量 / 路径 / App ID / CLI / URL scheme 汇总
 
-| 类别 | 当前默认值（Zed） | 证据位置 | 计划目标（待 S02 冻结） |
-| --- | --- | --- | --- |
-| 展示名 / APP_NAME | `Zed` | `paths.rs:18` | Orion Studio（MIGRATE） |
-| 配置/数据/状态/日志目录 | `~/Library/Application Support/Zed`、`%LOCALAPPDATA%\Zed`、`%APPDATA%\Zed`、`Zed.log` | `paths.rs:56/58/65/245/251` | Orion 专属目录（MIGRATE，旧目录兼容迁移） |
-| 远程目录 | `.zed_server`（SSH host） | `paths.rs:239` | Orion 远程目录（MIGRATE，先探测旧目录） |
-| macOS Bundle ID | `dev.zed.Zed[-Dev/-Nightly/-Preview]` | `zed/Cargo.toml:285-310` | Orion 唯一 ID（MIGRATE，**禁止猜测**，需域名/组织所有权） |
-| Windows App ID | `Zed-Editor-Dev/Nightly/Preview/Stable` | `release_channel:47-50` | Orion App ID（MIGRATE） |
-| Flatpak ID | `dev.zed.Zed` | `cli/main.rs:91/1088/1103` | Orion Flatpak ID（MIGRATE） |
-| 主二进制 / CLI 命令 | `zed` | `cli`、各启动脚本 | `orion-studio`（旧 `zed` 是否保留兼容别名 **OPEN**） |
-| URL scheme | `zed://`（`ZED_URL_SCHEME="zed"`） | `client.rs:1942`、`cli/main.rs:34` | Orion scheme（旧 `zed://` 兼容窗口 **OPEN**） |
-| 服务 endpoint | `zed.dev` / `staging.zed.dev` / `cloud.zed.dev` / `api.zed.dev` | `collab/lib.rs`、`cloud_api_client`、`http_client`、`context_server` | Orion 自有的域名与凭据（**禁止留 zed.dev 作活动默认**） |
-| 环境变量前缀 | `ZED_*`（`ZED_SERVER_URL`/`ZED_RPC_URL`/`ZED_CHANNEL`/`ZED_STATELESS`/…） | `client.rs`、`release_channel`、`cli`、`zed_env_vars` | `ORION_STUDIO_*`（旧 `ZED_*` 仅进兼容读取层，窗口 **OPEN**） |
-| 扩展命名空间 | `zed::` | `extension_api` | Orion 命名空间（扩展兼容策略 **OPEN**，关键风险） |
+| 类别                    | 当前默认值（Zed）                                                                     | 证据位置                                                             | 计划目标（待 S02 冻结）                                      |
+| ----------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 展示名 / APP_NAME       | `Zed`                                                                                 | `paths.rs:18`                                                        | Orion Studio（MIGRATE）                                      |
+| 配置/数据/状态/日志目录 | `~/Library/Application Support/Zed`、`%LOCALAPPDATA%\Zed`、`%APPDATA%\Zed`、`Zed.log` | `paths.rs:56/58/65/245/251`                                          | Orion 专属目录（MIGRATE，旧目录兼容迁移）                    |
+| 远程目录                | `.zed_server`（SSH host）                                                             | `paths.rs:239`                                                       | Orion 远程目录（MIGRATE，先探测旧目录）                      |
+| macOS Bundle ID         | `dev.zed.Zed[-Dev/-Nightly/-Preview]`                                                 | `zed/Cargo.toml:285-310`                                             | Orion 唯一 ID（MIGRATE，**禁止猜测**，需域名/组织所有权）    |
+| Windows App ID          | `Zed-Editor-Dev/Nightly/Preview/Stable`                                               | `release_channel:47-50`                                              | Orion App ID（MIGRATE）                                      |
+| Flatpak ID              | `dev.zed.Zed`                                                                         | `cli/main.rs:91/1088/1103`                                           | Orion Flatpak ID（MIGRATE）                                  |
+| 主二进制 / CLI 命令     | `zed`                                                                                 | `cli`、各启动脚本                                                    | `orion-studio`（旧 `zed` 是否保留兼容别名 **OPEN**）         |
+| URL scheme              | `zed://`（`ZED_URL_SCHEME="zed"`）                                                    | `client.rs:1942`、`cli/main.rs:34`                                   | Orion scheme（旧 `zed://` 兼容窗口 **OPEN**）                |
+| 服务 endpoint           | `zed.dev` / `staging.zed.dev` / `cloud.zed.dev` / `api.zed.dev`                       | `collab/lib.rs`、`cloud_api_client`、`http_client`、`context_server` | Orion 自有的域名与凭据（**禁止留 zed.dev 作活动默认**）      |
+| 环境变量前缀            | `ZED_*`（`ZED_SERVER_URL`/`ZED_RPC_URL`/`ZED_CHANNEL`/`ZED_STATELESS`/…）             | `client.rs`、`release_channel`、`cli`、`zed_env_vars`                | `ORION_STUDIO_*`（旧 `ZED_*` 仅进兼容读取层，窗口 **OPEN**） |
+| 扩展命名空间            | `zed::`                                                                               | `extension_api`                                                      | Orion 命名空间（扩展兼容策略 **OPEN**，关键风险）            |
 
 ---
 

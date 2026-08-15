@@ -55,6 +55,10 @@ crates/docs_preprocessor/actions.json
 # Local documentation audit files
 /december-2025-releases.md
 /docs/december-2025-documentation-gaps.md
+/docs/research/
+
+# Local agent state
+/.workbuddy/
 
 # NixOS integration test state
 .nixos-test-history

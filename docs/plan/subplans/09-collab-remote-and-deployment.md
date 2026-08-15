@@ -15,8 +15,8 @@
 
 ## 允许修改
 
-- crates/collab/**
-- crates/remote_server/**
+- crates/collab/\*\*
+- crates/remote_server/\*\*
 - Dockerfile-collab
 - S01 清单中明确属于 collab/remote 的本地 Docker、Kubernetes、compose 或 Procfile。
 - 对应健康检查、配置测试和部署文档。
@@ -34,20 +34,20 @@
 
 先读：
 
-~~~text
+```text
 crates/collab/Cargo.toml
 crates/collab/src/lib.rs
 crates/collab/src/main.rs
 crates/collab/README.md
 Dockerfile-collab
-~~~
+```
 
 搜索：
 
-~~~text
+```text
 rg -n -i 'zed|ZED_|environment|url|host|port|database|postgres|s3|livekit|rpc|health' \
   crates/collab crates/remote_server Dockerfile-collab
-~~~
+```
 
 建立配置表：
 
@@ -97,13 +97,13 @@ rg -n -i 'zed|ZED_|environment|url|host|port|database|postgres|s3|livekit|rpc|he
 
 ## 验收命令
 
-~~~text
+```text
 git diff --check
 cargo +stable fmt --all -- --check
 cargo +stable metadata --no-deps --format-version 1
 cargo +stable test -p collab
 cargo +stable check -p remote_server
-~~~
+```
 
 如果本地服务依赖可用，执行仓库已有的健康检查和 integration test。记录：
 
@@ -115,10 +115,10 @@ cargo +stable check -p remote_server
 
 静态残留扫描：
 
-~~~text
+```text
 rg -n -i 'zed\.dev|collab\.zed|ZED_|zed_environment|zed_cloud' \
   crates/collab crates/remote_server Dockerfile-collab
-~~~
+```
 
 ## 验收标准
 
@@ -149,4 +149,3 @@ rg -n -i 'zed\.dev|collab\.zed|ZED_|zed_environment|zed_cloud' \
 - healthz/startup/integration 证据。
 - 数据库/对象存储/LiveKit 的实际验证状态。
 - 未完成的 SaaS、运维和安全责任。
-

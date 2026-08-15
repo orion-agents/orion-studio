@@ -11,12 +11,11 @@
   --page-padding: 15px;
   --content-max-width: 690px;
   --menu-bar-height: 64px;
-  --font: "iA Writer Quattro S", sans-serif;
-  --title-font:
-    "IBM Plex Serif", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --title-font: ui-serif, Georgia, Cambria, "Times New Roman", serif;
   --mono-font:
-    "Lilex", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    Liberation Mono, Courier New, monospace;
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono,
+    Courier New, monospace;
   --code-font-size: 0.875em
     /* please adjust the ace font size accordingly in editor.js */;
 

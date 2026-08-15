@@ -9,7 +9,7 @@
 
 在仓库根目录执行：
 
-~~~text
+```text
 pwd
 git branch --show-current
 git rev-parse --short HEAD
@@ -17,7 +17,7 @@ git status --short --branch
 git diff --name-only
 git diff --cached --name-only
 git ls-files --others --exclude-standard
-~~~
+```
 
 必须满足：
 
@@ -45,23 +45,23 @@ git ls-files --others --exclude-standard
 
 根据子计划选择最小范围运行：
 
-~~~text
+```text
 git diff --check
 cargo +stable fmt --all -- --check
 cargo +stable metadata --no-deps --format-version 1
-~~~
+```
 
 之后运行该子计划列出的包测试、集成测试或脚本。不要把“命令未运行”
 写成通过。
 
 ## 完成前固定检查
 
-~~~text
+```text
 git status --short --branch
 git diff --stat
 git diff --check
 git diff --name-only
-~~~
+```
 
 逐个确认 diff 文件都属于当前子计划。发现越界文件时，恢复动作必须可逆，
 不要直接删除用户内容；先报告。
@@ -74,4 +74,3 @@ git diff --name-only
 - 是否运行了所有列出的命令？
 - 是否有旧 Zed 标识仍出现在规范路径、默认 endpoint 或用户可见界面？
 - 是否需要人类决定，而不是模型继续猜测？
-

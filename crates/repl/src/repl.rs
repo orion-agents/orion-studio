@@ -26,16 +26,16 @@ pub use crate::repl_settings::ReplSettings;
 pub use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 
-pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";
+pub const KERNEL_DOCS_URL: &str = "https://orion.dev/docs/repl#changing-kernels";
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
-    set_dispatcher(zed_dispatcher(cx));
+    set_dispatcher(orion_dispatcher(cx));
     repl_sessions_ui::init(cx);
     ReplStore::init(fs, cx);
 }
 
-fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
-    struct ZedDispatcher {
+fn orion_dispatcher(cx: &mut App) -> impl Dispatcher {
+    struct OrionDispatcher {
         dispatcher: Arc<dyn PlatformDispatcher>,
     }
 
@@ -43,7 +43,7 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     // async-dispatcher, except for the task label in dispatch. Later we should
     // just make that consistent so we have this dispatcher ready to go for
     // other crates in Zed.
-    impl Dispatcher for ZedDispatcher {
+    impl Dispatcher for OrionDispatcher {
         #[track_caller]
         fn dispatch(&self, runnable: Runnable) {
             let (wrapper, task) = async_task::Builder::new()
@@ -69,7 +69,7 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
         }
     }
 
-    ZedDispatcher {
+    OrionDispatcher {
         dispatcher: cx.background_executor().dispatcher().clone(),
     }
 }

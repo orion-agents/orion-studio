@@ -44,8 +44,8 @@ use language_model::{
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
-    StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, ORION_CLOUD_PROVIDER_ID, Role,
+    SelectedModel, Speed, StopReason, TokenUsage,
 };
 use project::{Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
@@ -807,7 +807,7 @@ pub struct SiblingThreadRequest {
     pub title: SharedString,
     /// The initial prompt to send to the new thread.
     pub prompt: String,
-    /// Optional agent ID to use. Defaults to the native Zed agent.
+    /// Optional agent ID to use. Defaults to the native Orion Agent.
     pub agent_id: Option<String>,
     /// Optional model override, as `provider/model-id`.
     /// Defaults to the user's configured default model for the agent.
@@ -851,7 +851,7 @@ pub struct AvailableAgent {
     pub id: String,
     /// Human-readable name shown in the UI.
     pub name: SharedString,
-    /// Whether this is Zed's built-in native agent.
+    /// Whether this is Orion Studio's built-in native agent.
     pub is_native: bool,
     /// Models available for this agent. May be empty if models are not
     /// enumerated up front (e.g., external agents that choose their own).
@@ -1486,7 +1486,7 @@ impl Thread {
         }
 
         let temp_dir = tempfile::Builder::new()
-            .prefix("zed-agent-terminal-")
+            .prefix("orion-agent-terminal-")
             .tempdir()
             .context("failed to create sandboxed terminal temp directory")?;
         let temp_dir = temp_dir.keep();
@@ -3283,7 +3283,7 @@ impl Thread {
             return Err(anyhow!(error));
         };
 
-        let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
+        let auto_retry = if model.provider_id() == ORION_CLOUD_PROVIDER_ID {
             plan.is_some()
         } else {
             true

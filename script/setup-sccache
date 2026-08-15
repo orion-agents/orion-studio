@@ -81,7 +81,12 @@ configure_sccache() {
 
     echo "Configuring sccache with Cloudflare R2..."
 
-    local bucket="${SCCACHE_BUCKET:-sccache-zed}"
+    if [[ -z "${SCCACHE_BUCKET:-}" ]]; then
+        echo "SCCACHE_BUCKET must be configured when R2_ACCOUNT_ID is set" >&2
+        return 1
+    fi
+
+    local bucket="${SCCACHE_BUCKET}"
     local key_prefix="${SCCACHE_KEY_PREFIX:-sccache/}"
     local base_dir="${GITHUB_WORKSPACE:-$(pwd)}"
 

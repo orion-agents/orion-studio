@@ -1,6 +1,6 @@
 ---
 title: Release Notes
-description: "Guide to release notes for Zed development."
+description: "Guide to release notes for Orion Studio development."
 ---
 
 # Release Notes
@@ -15,15 +15,15 @@ Release Notes:
 - N/A _or_ Added/Fixed/Improved ...
 ```
 
-On Wednesdays, we run [`get-preview-channel-changes`](https://github.com/orion-agents/orion-studio/blob/main/script/get-preview-channel-changes), which collects `Release Notes` lines from pull requests landing in preview, as described in the [Release](https://orion.dev/docs/development/release-notes) docs.
+On Wednesdays, we run [`get-preview-channel-changes`](https://github.com/orion-agents/orion-studio/blob/main/script/get-preview-channel-changes), which collects `Release Notes` lines from pull requests landing in preview, as described in the [Release](./release-notes.md) docs.
 
-The script outputs everything below the `Release Notes` line, including metadata such as the pull request author (if they are not a Zed team member) and a link to the pull request.
+The script outputs everything below the `Release Notes` line, including metadata such as the pull request author (if they are not an Orion Studio maintainer) and a link to the pull request.
 If you use `N/A`, the script skips your pull request entirely.
 
 ## Guidelines for crafting your `Release Notes` line(s)
 
-- A `Release Notes` line should only be written if the user can see or feel the difference in Zed.
-- A `Release Notes` line should be written such that a Zed user can understand what the change is.
+- A `Release Notes` line should only be written if the user can see or feel the difference in Orion Studio.
+- A `Release Notes` line should be written so an Orion Studio user can understand the change.
   Don't assume a user knows technical editor developer lingo; phrase your change in language they understand as a user of a text editor.
 - If you want to include technical details about your pull request for other team members to see, do so above the `Release Notes` line.
 - Changes to docs should be labeled as `N/A`.

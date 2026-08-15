@@ -3,8 +3,8 @@
 
 //! Visual Test Runner
 //!
-//! This binary runs visual regression tests for Zed's UI. It captures screenshots
-//! of real Zed windows and compares them against baseline images.
+//! This binary runs visual regression tests for Orion Studio's UI. It captures screenshots
+//! of real Orion Studio windows and compares them against baseline images.
 //!
 //! **Note: This tool is macOS-only** because it uses `VisualTestAppContext` which
 //! depends on the macOS Metal renderer for accurate screenshot capture.
@@ -25,10 +25,10 @@
 //! ## Usage
 //!
 //! Run the visual tests:
-//!   cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+//!   cargo run -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests
 //!
 //! Update baseline images (when UI intentionally changes):
-//!   UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+//!   UPDATE_BASELINE=1 cargo run -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests
 //!
 //! ## Environment Variables
 //!
@@ -44,10 +44,11 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 fn main() {
-    // Set ZED_STATELESS early to prevent file system access to real config directories
-    // This must be done before any code accesses zed_env_vars::ZED_STATELESS
+    // Set the canonical stateless flag before any code reads the environment.
+    // The legacy flag keeps compatibility with subsystems that have not migrated yet.
     // SAFETY: We're at the start of main(), before any threads are spawned
     unsafe {
+        std::env::set_var("ORION_STUDIO_STATELESS", "1");
         std::env::set_var("ZED_STATELESS", "1");
     }
 
@@ -131,7 +132,7 @@ mod constants {
     /// Baseline images are stored relative to this file
     pub const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
 
-    /// Embedded test image (Zed app icon) for visual tests.
+    /// Embedded Orion Studio app icon for visual tests.
     pub const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
 
     /// Threshold for image comparison (0.0 to 1.0)
@@ -160,7 +161,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     });
 
     // Initialize settings store with real default settings (not test settings)
-    // Test settings use Courier font, but we want the real Zed fonts for visual tests
+    // Test settings use Courier font, but we want the real Orion Studio fonts for visual tests
     cx.update(|cx| {
         settings::init(cx);
     });
@@ -173,7 +174,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         AppState::set_global(app_state.clone(), cx);
     });
 
-    // Initialize all Zed subsystems
+    // Initialize all Orion Studio subsystems
     cx.update(|cx| {
         gpui_tokio::init(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
@@ -945,7 +946,7 @@ edition = "2021"
     // Create README.md
     let readme = r#"# Test Project
 
-This is a test project for visual testing of Zed.
+This is a test project for visual testing of Orion Studio.
 
 ## Features
 
@@ -2201,7 +2202,7 @@ fn run_agent_thread_view_test(
 
     // Send the message to trigger the image response
     let send_future = thread.update(cx, |thread, cx| {
-        thread.send(vec!["Show me the Zed logo".into()], cx)
+        thread.send(vec!["Show me the Orion Studio logo".into()], cx)
     });
 
     cx.background_executor.allow_parking();
@@ -2949,7 +2950,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
             .child(
                 container().child(
                     ThreadItem::new("ti-main-branch", "Request for Long Classic Poem")
-                        .icon(IconName::ZedAgent)
+                        .icon(IconName::Sparkle)
                         .timestamp("2d")
                         .worktrees(vec![ThreadItemWorktreeInfo {
                             worktree_name: Some("zed".into()),
@@ -2966,7 +2967,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
             .child(
                 container().child(
                     ThreadItem::new("ti-main-no-branch", "Simple greeting thread")
-                        .icon(IconName::ZedAgent)
+                        .icon(IconName::Sparkle)
                         .timestamp("3d")
                         .worktrees(vec![ThreadItemWorktreeInfo {
                             worktree_name: Some("zed".into()),
@@ -2998,7 +2999,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
             .child(
                 container().child(
                     ThreadItem::new("ti-manual-linked", "Robust Git Worktree Rollback")
-                        .icon(IconName::ZedAgent)
+                        .icon(IconName::Sparkle)
                         .timestamp("40m")
                         .worktrees(vec![ThreadItemWorktreeInfo {
                             worktree_name: Some("focal-arrow".into()),
@@ -3053,7 +3054,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
             .child(
                 container().child(
                     ThreadItem::new("ti-main-full", "Main worktree with everything")
-                        .icon(IconName::ZedAgent)
+                        .icon(IconName::Sparkle)
                         .timestamp("5m")
                         .added(23)
                         .removed(8)

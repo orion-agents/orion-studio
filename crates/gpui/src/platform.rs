@@ -95,7 +95,9 @@ pub use visual_test::VisualTestPlatform;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[inline]
 pub fn guess_compositor() -> &'static str {
-    if std::env::var_os("ZED_HEADLESS").is_some() {
+    if headless_requested(std::env::var_os("ORION_STUDIO_HEADLESS"), || {
+        std::env::var_os("ZED_HEADLESS")
+    }) {
         return "Headless";
     }
 
@@ -119,6 +121,14 @@ pub fn guess_compositor() -> &'static str {
     } else {
         "Headless"
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn headless_requested(
+    canonical: Option<std::ffi::OsString>,
+    legacy: impl FnOnce() -> Option<std::ffi::OsString>,
+) -> bool {
+    canonical.or_else(legacy).is_some()
 }
 
 #[expect(missing_docs)]
@@ -2739,7 +2749,33 @@ mod image_tests {
 #[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use std::{cell::Cell, collections::HashSet, os::unix::ffi::OsStringExt as _};
+
+    #[test]
+    fn test_headless_requested_prefers_canonical_presence() {
+        let legacy_read = Cell::new(false);
+        assert!(headless_requested(Some(std::ffi::OsString::new()), || {
+            legacy_read.set(true);
+            Some("legacy".into())
+        }));
+        assert!(!legacy_read.get());
+
+        let legacy_read = Cell::new(false);
+        assert!(headless_requested(
+            Some(std::ffi::OsString::from_vec(vec![0xff])),
+            || {
+                legacy_read.set(true);
+                Some("legacy".into())
+            }
+        ));
+        assert!(!legacy_read.get());
+    }
+
+    #[test]
+    fn test_headless_requested_falls_back_only_when_canonical_is_missing() {
+        assert!(headless_requested(None, || Some("legacy".into())));
+        assert!(!headless_requested(None, || None));
+    }
 
     #[test]
     fn test_window_button_layout_parse_standard() {

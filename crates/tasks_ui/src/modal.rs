@@ -935,14 +935,14 @@ mod tests {
                 ".zed": {
                     "tasks.json": r#"[
                         {
-                            "label": "hello from $ZED_FILE:$ZED_ROW:$ZED_COLUMN",
+                            "label": "hello from $ORION_STUDIO_FILE:$ORION_STUDIO_ROW:$ORION_STUDIO_COLUMN",
                             "command": "echo",
-                            "args": ["hello", "from", "$ZED_FILE", ":", "$ZED_ROW", ":", "$ZED_COLUMN"]
+                            "args": ["hello", "from", "$ORION_STUDIO_FILE", ":", "$ORION_STUDIO_ROW", ":", "$ORION_STUDIO_COLUMN"]
                         },
                         {
-                            "label": "opened now: $ZED_WORKTREE_ROOT",
+                            "label": "opened now: $ORION_STUDIO_WORKTREE_ROOT",
                             "command": "echo",
-                            "args": ["opened", "now:", "$ZED_WORKTREE_ROOT"]
+                            "args": ["opened", "now:", "$ORION_STUDIO_WORKTREE_ROOT"]
                         }
                     ]"#,
                 },
@@ -1152,12 +1152,12 @@ mod tests {
                             ..TaskTemplate::default()
                         },
                         TaskTemplate {
-                            label: "TypeScript task from file $ZED_FILE".to_string(),
+                            label: "TypeScript task from file $ORION_STUDIO_FILE".to_string(),
                             command: "npm run build".to_string(),
                             ..TaskTemplate::default()
                         },
                         TaskTemplate {
-                            label: "Another task from file $ZED_FILE".to_string(),
+                            label: "Another task from file $ORION_STUDIO_FILE".to_string(),
                             command: "npm run lint".to_string(),
                             ..TaskTemplate::default()
                         },

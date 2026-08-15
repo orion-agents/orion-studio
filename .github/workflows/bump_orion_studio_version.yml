@@ -1,6 +1,6 @@
-# Generated from xtask::workflows::bump_zed_version
+# Generated from xtask::workflows::bump_orion_studio_version
 # Rebuild with `cargo xtask workflows`.
-name: bump_zed_version
+name: bump_orion_studio_version
 on:
   workflow_dispatch:
     inputs:
@@ -12,15 +12,15 @@ permissions:
   contents: read
 jobs:
   resolve_versions:
-    if: github.repository_owner == 'orion-agents'
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: generate-token
-      name: steps::authenticate_as_zippy
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: read
@@ -31,9 +31,9 @@ jobs:
         ref: main
         token: ${{ steps.generate-token.outputs.token }}
     - id: versions
-      name: bump_zed_version::resolve_versions::extract_versions
+      name: bump_orion_studio_version::resolve_versions::extract_versions
       run: |
-        version=$(script/get-crate-version zed)
+        version=$(script/get-crate-version orion-studio)
         major=$(echo "$version" | cut -d. -f1)
         minor=$(echo "$version" | cut -d. -f2)
 
@@ -47,7 +47,7 @@ jobs:
         next_version="${major}.$((minor + 1)).0"
         next_major=$(echo "$next_version" | cut -d. -f1)
         next_minor=$(echo "$next_version" | cut -d. -f2)
-        pr_branch="bump-zed-to-v${next_major}.${next_minor}.0"
+        pr_branch="bump-orion-studio-to-v${next_major}.${next_minor}.0"
 
         # New preview branch from current main
         preview_branch="v${major}.${minor}.x"
@@ -96,11 +96,11 @@ jobs:
       pull-requests: write
     steps:
     - id: generate-token
-      name: steps::authenticate_as_zippy
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
@@ -115,20 +115,20 @@ jobs:
       uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
       with:
         tool: cargo-edit
-    - name: bump_zed_version::bump_main::bump_version
-      run: cargo set-version -p zed --bump minor
+    - name: bump_orion_studio_version::bump_main::bump_version
+      run: cargo set-version -p orion-studio --bump minor
     - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
-        title: Bump Zed to v${{ needs.resolve_versions.outputs.next_version }}
+        title: Bump Orion Studio to v${{ needs.resolve_versions.outputs.next_version }}
         body: |-
           Release Notes:
 
           - N/A
-        commit-message: Bump Zed to v${{ needs.resolve_versions.outputs.next_version }}
+        commit-message: Bump Orion Studio to v${{ needs.resolve_versions.outputs.next_version }}
         branch: ${{ needs.resolve_versions.outputs.pr_branch }}
-        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
-        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        committer: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
+        author: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
@@ -143,11 +143,11 @@ jobs:
       contents: write
     steps:
     - id: generate-token
-      name: steps::authenticate_as_zippy
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
@@ -159,9 +159,9 @@ jobs:
         ref: main
         token: ${{ steps.generate-token.outputs.token }}
     - id: main-sha
-      name: bump_zed_version::create_preview_branch::get_main_sha
+      name: bump_orion_studio_version::create_preview_branch::get_main_sha
       run: echo "main_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-    - name: bump_zed_version::create_preview_branch::promote_to_preview
+    - name: bump_orion_studio_version::create_preview_branch::promote_to_preview
       run: echo -n preview > crates/zed/RELEASE_CHANNEL
     - name: steps::create_branch
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
@@ -202,11 +202,11 @@ jobs:
       contents: write
     steps:
     - id: generate-token
-      name: steps::authenticate_as_zippy
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
@@ -218,13 +218,13 @@ jobs:
         ref: ${{ needs.resolve_versions.outputs.stable_branch }}
         token: ${{ steps.generate-token.outputs.token }}
     - id: stable-info
-      name: bump_zed_version::promote_to_stable
+      name: bump_orion_studio_version::promote_to_stable
       run: |
-        stable_version=$(script/get-crate-version zed)
+        stable_version=$(script/get-crate-version orion-studio)
         {
             echo "stable_tag=v${stable_version}"
         } >> "$GITHUB_OUTPUT"
-    - name: bump_zed_version::promote_to_stable
+    - name: bump_orion_studio_version::promote_to_stable
       run: echo -n stable > crates/zed/RELEASE_CHANNEL
     - id: commit
       name: steps::bot_commit

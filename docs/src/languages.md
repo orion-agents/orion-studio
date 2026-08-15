@@ -1,14 +1,14 @@
 ---
 title: Language Support
-description: "Overview of programming language support in Zed, including built-in and extension-based languages."
+description: "Overview of programming language support in Orion Studio, including built-in and extension-based languages."
 ---
 
-# Language Support in Zed
+# Language Support in Orion Studio
 
-Zed supports hundreds of programming languages and text formats.
+Orion Studio supports hundreds of programming languages and text formats.
 Some work out-of-the-box and others rely on 3rd party extensions.
 
-> The ones included out-of-the-box, natively built into Zed, are marked with \*.
+> The ones included out-of-the-box, natively built into Orion Studio, are marked with \*.
 
 ## Languages with Documentation
 
@@ -62,7 +62,7 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [Racket](./languages/racket.md)
 - [Roc](./languages/roc.md)
 - [Ruby](./languages/ruby.md)
-- [Rust](./languages/rust.md) \* (Zed's written in Rust)
+- [Rust](./languages/rust.md) \* (Orion Studio's written in Rust)
 - [Scala](./languages/scala.md)
 - [Scheme](./languages/scheme.md)
 - [Shell Script](./languages/sh.md)
@@ -82,6 +82,8 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [Zig](./languages/zig.md)
 
 ## Additional Community Language Extensions
+
+Many linked extensions and parser repositories originated in the upstream Zed ecosystem or are maintained by third parties. Their repository names and URLs may retain `zed`; those proper names identify the actual dependency and do not rename Orion Studio.
 
 - [Ada](https://github.com/wisn/zed-ada-language)
 - [Aiken](https://github.com/aiken-lang/zed-aiken)

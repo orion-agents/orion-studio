@@ -663,17 +663,27 @@ const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
 const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 
-/// Inserts Zed-specific environment variables for terminal sessions.
+/// Inserts Orion Studio-specific environment variables for terminal sessions.
 /// Used by both local terminals and remote terminals (via SSH).
+pub fn insert_orion_studio_terminal_env(
+    env: &mut HashMap<String, String>,
+    version: &impl std::fmt::Display,
+) {
+    env.insert("ORION_STUDIO_TERM".to_string(), "true".to_string());
+    // Keep this alias while shell integrations still detect terminals created by older releases.
+    env.insert("ZED_TERM".to_string(), "true".to_string());
+    env.insert("TERM_PROGRAM".to_string(), "orion-studio".to_string());
+    env.insert("TERM".to_string(), "xterm-256color".to_string());
+    env.insert("COLORTERM".to_string(), "truecolor".to_string());
+    env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
+}
+
+/// Legacy API shim for callers that have not migrated to the Orion Studio name yet.
 pub fn insert_zed_terminal_env(
     env: &mut HashMap<String, String>,
     version: &impl std::fmt::Display,
 ) {
-    env.insert("ZED_TERM".to_string(), "true".to_string());
-    env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
-    env.insert("TERM".to_string(), "xterm-256color".to_string());
-    env.insert("COLORTERM".to_string(), "truecolor".to_string());
-    env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
+    insert_orion_studio_terminal_env(env, version);
 }
 
 ///Upward flowing events, for changing the title and such
@@ -1091,7 +1101,7 @@ impl TerminalBuilder {
                     .or_insert_with(|| "en_US.UTF-8".to_string());
             }
 
-            insert_zed_terminal_env(&mut env, &version);
+            insert_orion_studio_terminal_env(&mut env, &version);
 
             #[derive(Default)]
             struct ShellParams {
@@ -1363,7 +1373,7 @@ impl TerminalBuilder {
         // as soon as the `on_app_quit` futures resolve. Perform the same
         // escalation in a quit observer, whose future keeps the app alive for
         // the grace period, so that processes ignoring SIGHUP/SIGTERM don't
-        // outlive Zed (#47412). The subscription can't be stored on `Terminal`
+        // outlive Orion Studio (#47412). The subscription can't be stored on `Terminal`
         // (`Subscription` is not `Send`, and `TerminalBuilder` is built on a
         // background thread), so its lifetime is tied to the entity's release
         // instead.
@@ -2833,7 +2843,7 @@ impl Terminal {
     /// that's running inside the terminal.
     ///
     /// This does *not* return the working directory of the shell that runs on the
-    /// remote host, in case Zed is connected to a remote host.
+    /// remote host, in case Orion Studio is connected to a remote host.
     fn client_side_working_directory(&self) -> Option<PathBuf> {
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => info
@@ -3056,7 +3066,7 @@ impl Terminal {
         if !lines_to_show.is_empty() {
             // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
             // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
-            // when Zed task finishes and no more output is made.
+            // when the Orion Studio task finishes and no more output is made.
             // After the task summary is output once, no more text is appended to the terminal.
             unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
         }
@@ -3482,6 +3492,30 @@ mod tests {
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
+
+    #[test]
+    fn terminal_environment_uses_orion_studio_identity() {
+        let mut environment = HashMap::default();
+
+        insert_orion_studio_terminal_env(&mut environment, &"1.2.3");
+
+        assert_eq!(
+            environment.get("ORION_STUDIO_TERM").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            environment.get("TERM_PROGRAM").map(String::as_str),
+            Some("orion-studio")
+        );
+        assert_eq!(
+            environment.get("TERM_PROGRAM_VERSION").map(String::as_str),
+            Some("1.2.3")
+        );
+        assert_eq!(
+            environment.get("ZED_TERM").map(String::as_str),
+            Some("true")
+        );
+    }
 
     #[test]
     fn test_init_command_startup_marker_commands_do_not_contain_marker() {

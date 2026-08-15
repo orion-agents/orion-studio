@@ -3,7 +3,7 @@
 name: after_release
 env:
   TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
-  IS_PRERELEASE: ${{ github.event.release.prerelease || inputs.prerelease }}
+  IS_PRERELEASE: ${{ github.event_name == 'release' && format('{0}', github.event.release.prerelease) || format('{0}', inputs.prerelease) }}
 on:
   release:
     types:
@@ -25,21 +25,73 @@ on:
 permissions:
   contents: read
 jobs:
+  validate_published_release:
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_AFTER_RELEASE_ENABLED == 'true'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    permissions:
+      contents: read
+    steps:
+    - name: after_release::validate_published_release
+      run: |
+        set -euo pipefail
+
+        case "$GITHUB_EVENT_NAME" in
+          release|workflow_dispatch) ;;
+          *)
+            echo "::error::after-release only accepts published-release or manual events"
+            exit 1
+            ;;
+        esac
+
+        if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-pre)?$ ]]; then
+            echo "::error::after-release tag must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-pre"
+            exit 1
+        fi
+
+        release_json=$(gh api --method GET "repos/$GITHUB_REPOSITORY/releases/tags/$TAG_NAME")
+        draft=$(jq -r '.draft' <<<"$release_json")
+        published_at=$(jq -r '.published_at // empty' <<<"$release_json")
+        actual_prerelease=$(jq -r '.prerelease' <<<"$release_json")
+
+        if [[ "$draft" != "false" || -z "$published_at" ]]; then
+            echo "::error::$TAG_NAME does not identify a published GitHub release"
+            exit 1
+        fi
+        expected_prerelease=false
+        if [[ "$TAG_NAME" == *-pre ]]; then
+            expected_prerelease=true
+        fi
+        if [[ "$actual_prerelease" != "$expected_prerelease" ]]; then
+            echo "::error::published release type does not match the release tag"
+            exit 1
+        fi
+        if [[ "$actual_prerelease" != "$IS_PRERELEASE" ]]; then
+            echo "::error::requested release channel does not match the published GitHub release"
+            exit 1
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
+    timeout-minutes: 5
   rebuild_releases_page:
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
+    needs:
+    - validate_published_release
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_AFTER_RELEASE_ENABLED == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: after_release::rebuild_releases_page::refresh_cloud_releases
       run: curl -fX POST "https://cloud.orion.dev/releases/refresh?expect_tag=$TAG_NAME"
-    - name: after_release::rebuild_releases_page::revalidate_zed_dev
-      run: 'curl -fX GET "https://orion.dev/api/revalidate?tag=releases" -H "Authorization: Bearer $ZED_DEV_REVALIDATE_TOKEN"'
+    - name: after_release::rebuild_releases_page::revalidate_orion_dev
+      run: 'curl -fX GET "https://orion.dev/api/revalidate?tag=releases" -H "Authorization: Bearer $ORION_STUDIO_REVALIDATE_TOKEN"'
       env:
-        ZED_DEV_REVALIDATE_TOKEN: ${{ secrets.ZED_DEV_REVALIDATE_TOKEN }}
+        ORION_STUDIO_REVALIDATE_TOKEN: ${{ secrets.ORION_STUDIO_REVALIDATE_TOKEN }}
+    environment: production
   deploy_docs:
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
+    needs:
+    - validate_published_release
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_AFTER_RELEASE_ENABLED == 'true' && github.event_name == 'release'
     permissions:
       contents: read
-    uses: orion-agents/orion-studio/.github/workflows/deploy_docs.yml@3f16f7b9082f8828e4d6ae207d2349b1ef932517
+    uses: ./.github/workflows/deploy_docs.yml
     secrets:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
       DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}
@@ -47,11 +99,11 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     with:
       channel: ${{ (github.event.release.prerelease || inputs.prerelease) && 'preview' || 'stable' }}
-      checkout_ref: ${{ github.event.release.tag_name || inputs.tag_name }}
   post_to_discord:
     needs:
+    - validate_published_release
     - rebuild_releases_page
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_AFTER_RELEASE_ENABLED == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: get-release-url
@@ -69,7 +121,7 @@ jobs:
       uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757
       with:
         stringToTruncate: |
-          📣 Zed [${{ env.TAG_NAME }}](<${{ steps.get-release-url.outputs.URL }}>)  was just released!
+          📣 Orion Studio [${{ env.TAG_NAME }}](<${{ steps.get-release-url.outputs.URL }}>) was just released!
 
           ${{ github.event.release.body || inputs.body }}
         maxLength: 2000
@@ -79,7 +131,11 @@ jobs:
       with:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTES }}
         content: ${{ steps.get-content.outputs.string }}
+    environment: production
   publish_winget:
+    needs:
+    - validate_published_release
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_AFTER_RELEASE_ENABLED == 'true' && vars.ORION_STUDIO_WINGET_ENABLED == 'true' && vars.ORION_STUDIO_WINGET_PACKAGE_ID != '' && vars.ORION_STUDIO_WINGET_PREVIEW_PACKAGE_ID != ''
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: after_release::publish_winget::sync_winget_pkgs_fork
@@ -105,13 +161,16 @@ jobs:
       name: after_release::publish_winget::set_package_name
       run: |
         if ($env:IS_PRERELEASE -eq "true") {
-            $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
+            $PACKAGE_NAME = $env:ORION_STUDIO_WINGET_PREVIEW_PACKAGE_ID
         } else {
-            $PACKAGE_NAME = "ZedIndustries.Zed"
+            $PACKAGE_NAME = $env:ORION_STUDIO_WINGET_PACKAGE_ID
         }
 
         echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
       shell: pwsh
+      env:
+        ORION_STUDIO_WINGET_PACKAGE_ID: ${{ vars.ORION_STUDIO_WINGET_PACKAGE_ID }}
+        ORION_STUDIO_WINGET_PREVIEW_PACKAGE_ID: ${{ vars.ORION_STUDIO_WINGET_PREVIEW_PACKAGE_ID }}
     - name: after_release::publish_winget::winget_releaser
       uses: vedantmgoyal9/winget-releaser@19e706d4c9121098010096f9c495a70a7518b30f
       with:
@@ -119,30 +178,15 @@ jobs:
         release-tag: ${{ env.TAG_NAME }}
         max-versions-to-keep: 5
         token: ${{ secrets.WINGET_TOKEN }}
-  create_sentry_release:
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-      with:
-        clean: false
-    - name: release::create_sentry_release
-      uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
-      with:
-        environment: production
-      env:
-        SENTRY_ORG: zed-dev
-        SENTRY_PROJECT: zed
-        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    environment: production
   notify_on_failure:
     needs:
+    - validate_published_release
     - rebuild_releases_page
     - post_to_discord
     - publish_winget
-    - create_sentry_release
     - deploy_docs
-    if: failure()
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_AFTER_RELEASE_ENABLED == 'true' && failure()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: release::send_slack_message
@@ -150,6 +194,7 @@ jobs:
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
         SLACK_MESSAGE: '❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+    environment: production
 defaults:
   run:
     shell: bash -euxo pipefail {0}

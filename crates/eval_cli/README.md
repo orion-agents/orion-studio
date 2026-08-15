@@ -1,17 +1,19 @@
 # eval-cli
 
-Headless Rust binary for running Zed's agent in evaluation and benchmark
+Headless Rust binary for running Orion Studio Agent in evaluation and benchmark
 environments. It is designed for containerized harnesses such as
 [Harbor](https://harborframework.com/) and Pier, where the repository is already
 checked out and model API keys are provided via environment variables.
 
 `eval-cli` uses the same `NativeAgent` + `AcpThread` pipeline as the production
-Zed editor: a full agentic loop with tool calls, subagents, and retries, without
+Orion Studio: a full agentic loop with tool calls, subagents, and retries, without
 a GUI.
 
 This directory also contains `zed_eval/`, the Python `zed-eval` package used to
 build this binary, launch remote benchmark runs on Modal/Harbor/Pier, and fetch
-results. For normal benchmark orchestration, start with
+results. Those names are retained because the package and scripts have not yet
+been migrated; they are compatibility identifiers rather than product branding.
+For normal benchmark orchestration, start with
 [`zed_eval/README.md`](zed_eval/README.md).
 
 ## Building

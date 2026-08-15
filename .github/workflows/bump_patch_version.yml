@@ -12,17 +12,17 @@ permissions:
   contents: read
 jobs:
   run_bump_patch_version:
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-16x32-ubuntu-2204
     permissions:
       contents: write
     steps:
     - id: generate-token
-      name: steps::authenticate_as_zippy
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
@@ -51,7 +51,7 @@ jobs:
             ;;
         esac
 
-        version=$(script/get-crate-version zed)
+        version=$(script/get-crate-version orion-studio)
 
         {
             echo "channel=$channel"
@@ -65,7 +65,7 @@ jobs:
     - id: bump-version
       name: bump_patch_version::run_bump_patch_version::bump_version
       run: |
-        version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
+        version="$(cargo set-version -p orion-studio --bump patch 2>&1 | sed 's/.* //')"
         echo "version=$version" >> "$GITHUB_OUTPUT"
     - id: commit
       name: steps::bot_commit

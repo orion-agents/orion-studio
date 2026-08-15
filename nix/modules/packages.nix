@@ -8,13 +8,16 @@
       ...
     }:
     let
-      mkZed = import ../toolchain.nix { inherit inputs; };
-      zed-editor = mkZed pkgs;
+      mkOrionStudio = import ../toolchain.nix { inherit inputs; };
+      orionStudio = mkOrionStudio pkgs;
     in
     {
       packages = {
-        default = zed-editor;
-        debug = zed-editor.override { profile = "dev"; };
+        default = orionStudio;
+        orion-studio = orionStudio;
+        debug = orionStudio.override { profile = "dev"; };
+        # Compatibility alias for existing flake consumers.
+        zed-editor = orionStudio;
       };
     }
     // lib.optionalAttrs (lib.hasSuffix "linux" system) {

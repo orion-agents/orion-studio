@@ -115,7 +115,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     }
 
     let (server, server_name) =
-        IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
+        IpcOneShotServer::<IpcHandshake>::new().context("handshake before Orion Studio spawn")?;
     let url = format!("zed-cli://{server_name}");
 
     let request = {
@@ -126,7 +126,8 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             match std::fs::canonicalize(&path) {
                 Ok(path) => paths.push(path.to_string_lossy().into_owned()),
                 Err(error) => {
-                    if path.starts_with("zed://")
+                    if path.starts_with("orion://")
+                        || path.starts_with("zed://")
                         || path.starts_with("http://")
                         || path.starts_with("https://")
                         || path.starts_with("file://")
@@ -172,7 +173,9 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
         .spawn({
             let exit_status = exit_status.clone();
             move || {
-                let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+                let (_, handshake) = server
+                    .accept()
+                    .context("handshake after Orion Studio spawn")?;
                 let (tx, rx) = (handshake.requests, handshake.responses);
 
                 tx.send(request)?;

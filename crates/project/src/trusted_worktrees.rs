@@ -11,7 +11,7 @@
 //! Unless `trust_all_worktrees` auto trust is enabled, does not trust anything that was not persisted before.
 //! When dealing with "restricted" and other related concepts in the API, it means all explicitly restricted, after any of the [`TrustedWorktreesStore::can_trust`] and [`TrustedWorktreesStore::can_trust_global`] calls.
 //!
-//! Zed does not consider invisible, `worktree.is_visible() == false` worktrees in Zed, as those are programmatically created inside Zed for internal needs, e.g. a tmp dir for `keymap_editor.rs` needs.
+//! Orion Studio does not consider invisible, `worktree.is_visible() == false` worktrees, as those are programmatically created for internal needs, e.g. a temporary directory used by `keymap_editor.rs`.
 //!
 //!
 //! Path rust hierarchy.
@@ -22,9 +22,9 @@
 //! * "single file worktree"
 //!
 //! After opening an empty Zed it's possible to open just a file, same as after opening a directory in Zed it's possible to open a file outside of this directory.
-//! Usual scenario for both cases is opening Zed's settings.json file via `zed: open settings file` command: that starts a language server for a new file open, which originates from a newly created, single file worktree.
+//! A common scenario for both cases is opening Orion Studio's settings.json file: that starts a language server for a newly opened file, which originates from a newly created single-file worktree.
 //!
-//! Spawning a language server is potentially dangerous, and Zed needs to restrict that by default.
+//! Spawning a language server is potentially dangerous, and Orion Studio restricts it by default.
 //! Each single file worktree requires a separate trust permission, unless a more global level is trusted.
 //!
 //! * "directory worktree"

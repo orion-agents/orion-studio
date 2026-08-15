@@ -1534,8 +1534,8 @@ pub(super) struct Initialize {
 
 fn dap_client_capabilities(adapter_id: String) -> InitializeRequestArguments {
     InitializeRequestArguments {
-        client_id: Some("zed".to_owned()),
-        client_name: Some("Zed".to_owned()),
+        client_id: Some("orion-studio".to_owned()),
+        client_name: Some("Orion Studio".to_owned()),
         adapter_id,
         locale: Some("en-US".to_owned()),
         path_format: Some(InitializeRequestArgumentsPathFormat::Path),
@@ -1971,5 +1971,18 @@ impl LocalDapCommand for dap::WriteMemoryArguments {
         message: <Self::DapRequest as dap::requests::Request>::Response,
     ) -> Result<Self::Response> {
         Ok(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dap_client_capabilities_use_orion_studio_identity() {
+        let capabilities = dap_client_capabilities("test-adapter".to_owned());
+
+        assert_eq!(capabilities.client_id.as_deref(), Some("orion-studio"));
+        assert_eq!(capabilities.client_name.as_deref(), Some("Orion Studio"));
     }
 }

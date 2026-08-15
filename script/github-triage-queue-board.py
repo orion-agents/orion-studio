@@ -27,8 +27,8 @@ MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
 
 GITHUB_API_URL = "https://api.github.com"
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "orion-agents"
+REPO_NAME = "orion-studio"
 # The eligibility window's boundaries are calendar days in this timezone. GitHub
 # search interprets bare dates as UTC, so the window is pinned to a fixed zone to
 # stay aligned with a consistent business day regardless of where the job runs.

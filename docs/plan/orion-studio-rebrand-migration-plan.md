@@ -1,15 +1,34 @@
 # Orion Studio 品牌与底层身份迁移改造计划
 
+## 2026-08-15 Finalization Update
+
+> **当前生效状态：** 本节是截至 2026-08-15 的最终本地验收结论，覆盖下方与之冲突的旧结论。下方旧状态、旧命令结果和旧阻塞记录仅作为历史证据保留，不得再将其中的 `PARTIAL`、`PENDING` 或 Metal/WebRTC 阻塞描述当作当前状态。
+
+**Init v1/v2 本地源码收口：`DONE / GO-WITH-CONDITIONS`；macOS Dev 产物：`VERIFIED`；Production release：`NO-GO`。**
+
+- **仓库与交付边界：** 验收基线为 `init@99023dd28964dc1ef729eca2e606b6194d0ace06`；仓库是仅含 2 个 commit 的 shallow checkout，共享工作树仍有大量既有 WorkBuddy/用户改动。本轮没有 stage、commit、push、tag、PR 或 release。
+- **品牌门禁：** `./script/check-orion-brand` 最终 **PASS**：扫描 4,217 个文件和 263 个符号链接目标，6,446 个命中全部被逐行 allowlist 解释，`unapproved=0`、`stale=0`、`ambiguous=0`、`errors=0`；allowlist SHA-256 为 `b67e5990a56bdf844acb8779df1ed46204943a55a7911225960d3f320c5dd538`。
+- **外部身份契约：** 主 CLI 为 `orion-studio`，短别名为 `orion`；新生成的 deep link、schema URI、provider identity、mention URI、凭据与服务地址均使用 Orion 命名。旧名称只保留在明确的输入兼容、迁移、ABI、上游来源、许可证和测试夹具边界。
+- **Workflow fail-closed：** 源文件与生成 YAML 已同步；`release`、`nightly`、`after_release`、`deploy_docs` 分别有 14、12、4、1 个生产副作用 job 绑定 `production` environment，并分别受稳定版、夜间版和 after-release 显式开关约束；相关 xtask 22 个测试 **PASS**。
+- **编译与回归：** main `cargo +stable check -p orion-studio --bin orion-studio`、完整 `./script/clippy`、format、workflow generation/check、`git diff --check`、todo/keymap/license 检查、Docker/AppX/XML/entitlements 静态门禁均 **PASS**；`paths` 51 个、`cli` 7 个、`deploy_collab` 7 个测试及约定聚焦测试均 **PASS**。
+- **macOS Dev 产物：** `target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg` 已生成并通过 `hdiutil verify`；大小 150,297,095 bytes（143 MiB），SHA-256 为 `3fa0c88c88fcc1d1c841adc6a6b338b7aed3815df229164616f33b2a00981f2d`。
+- **App 验收：** DMG 内为 `Orion Studio Dev.app`，`CFBundleIdentifier=dev.orion.OrionStudio-Dev`、`CFBundleExecutable=orion-studio`、版本 `1.16.0`，主程序为 arm64；Info.plist lint 与扩展键去重、`codesign --verify --deep --strict`、entitlements 检查均 **PASS**。
+- **开发包限制：** 当前仅有 ad-hoc 签名，`TeamIdentifier` 为空，不含 associated-domain entitlement，也未嵌入服务条款或执行 notarization；`spctl` 以状态 3 拒绝该包是预期结果，因此它不是可公开分发的 macOS release。
+- **打包稳定性：** `TERM=dumb` 下旧打包工具的彩色输出 panic 已在项目脚本中 fail-safe 规避；重复 plist 扩展会在签名前规范化；许可证内容未变化时保留文件 mtime，最终缓存复跑的 Rust 构建均在约 2 秒内完成。
+- **跨平台边界：** Windows canonical CLI、安装器、更新器、scheme 所有权与 workflow 已做源码/交叉检查，但本机不能执行真实 Windows/ISCC/Wine 安装升级卸载 E2E；Windows 更新在 `install/old` 非空的中断恢复仍建议后续增加 transaction journal（P2）。
+
+Production release 必须保持 **NO-GO**：Orion DNS、cloud/collab/OAuth、Cloudflare、Sentry、Apple/Windows 签名与公证凭据、publisher/store/Winget、真实 Windows/Linux packaging E2E、GitHub protected Environments/rulesets/reviewers，以及 trademark/privacy/terms 等法务审批均未完成。任何本地 PASS 或 Dev DMG 都不能替代这些生产、平台、治理与法务门禁。
+
 ## 1. 计划信息
 
-| 项目 | 内容 |
-| --- | --- |
-| 状态 | Draft，待产品、技术、法务与发布责任人确认 |
-| 目标分支 | init |
-| 基线 | d2779c3，与当前 main/origin/main 同指向 |
-| 编制日期 | 2026-08-09 |
+| 项目     | 内容                                                     |
+| -------- | -------------------------------------------------------- |
+| 状态     | Draft，待产品、技术、法务与发布责任人确认                |
+| 目标分支 | init                                                     |
+| 基线     | d2779c3，与当前 main/origin/main 同指向                  |
+| 编制日期 | 2026-08-09                                               |
 | 计划范围 | 品牌、运行时身份、代码命名、服务端点、打包发布、兼容迁移 |
-| 本文性质 | 执行计划，不代表已经完成改造 |
+| 本文性质 | 执行计划，不代表已经完成改造                             |
 
 本计划的目标是把当前 Zed 源码基线改造成名为 **Orion Studio** 的独立产品，
 覆盖用户可见品牌以及底层代码和运行时身份。迁移必须是可验证、可回滚的产品迁移，
@@ -54,17 +73,17 @@ GPL-3.0-or-later 不一致，必须以实际许可证文件和法务确认结果
 
 以下是实施建议，不是未经确认的最终值：
 
-| 层级 | Orion Studio 目标 | 迁移要求 |
-| --- | --- | --- |
-| 展示名称 | Orion Studio | 窗口、菜单、关于页、安装器、文档、商店元数据统一使用 |
-| 仓库/产物 slug | orion-studio | 作为产物、下载和自动化中的规范 slug |
-| Rust package/crate | orion-studio / orion_studio | 由代码所有者确认是否一次性改名或分阶段改名 |
-| 主二进制与 CLI | orion-studio | 旧 zed 命令是否保留兼容别名必须单独决策 |
-| 环境变量 | ORION_STUDIO_* | 新代码只产生规范前缀；旧 ZED_* 仅进入兼容读取层 |
-| 配置、缓存、日志目录 | Orion 专属目录 | 首次启动完成可恢复、幂等的数据迁移 |
-| URL scheme | Orion 专属 scheme | 新 scheme 与旧 zed:// 的兼容窗口必须冻结 |
-| Bundle/App/Flatpak ID | Orion 所有的唯一 ID | 需要域名/组织所有权和安装升级策略确认，禁止猜测 |
-| 服务端点 | Orion 所有的域名和凭据 | 不得把 zed.dev、cloud.zed.dev 或 collab.zed.dev 留作活动默认值 |
+| 层级                  | Orion Studio 目标           | 迁移要求                                                       |
+| --------------------- | --------------------------- | -------------------------------------------------------------- |
+| 展示名称              | Orion Studio                | 窗口、菜单、关于页、安装器、文档、商店元数据统一使用           |
+| 仓库/产物 slug        | orion-studio                | 作为产物、下载和自动化中的规范 slug                            |
+| Rust package/crate    | orion-studio / orion_studio | 由代码所有者确认是否一次性改名或分阶段改名                     |
+| 主二进制与 CLI        | orion-studio                | 旧 zed 命令是否保留兼容别名必须单独决策                        |
+| 环境变量              | ORION*STUDIO*\*             | 新代码只产生规范前缀；旧 ZED\_\* 仅进入兼容读取层              |
+| 配置、缓存、日志目录  | Orion 专属目录              | 首次启动完成可恢复、幂等的数据迁移                             |
+| URL scheme            | Orion 专属 scheme           | 新 scheme 与旧 zed:// 的兼容窗口必须冻结                       |
+| Bundle/App/Flatpak ID | Orion 所有的唯一 ID         | 需要域名/组织所有权和安装升级策略确认，禁止猜测                |
+| 服务端点              | Orion 所有的域名和凭据      | 不得把 zed.dev、cloud.zed.dev 或 collab.zed.dev 留作活动默认值 |
 
 “去掉 Zed 标签”定义为：用户可见品牌、规范运行时标识、默认服务归属和发布身份
 全部改为 Orion。以下内容不应被盲目删除：第三方许可证、版权归属、上游贡献说明、
@@ -86,7 +105,7 @@ GPL-3.0-or-later 不一致，必须以实际许可证文件和法务确认结果
 
 - crates/paths/src/paths.rs：APP_NAME、配置/缓存/状态/日志/临时目录、远程目录、
   .zed_server 和日志文件名。
-- crates/zed_env_vars、crates/release_channel：ZED_* 环境变量、版本、发布通道、
+- crates/zed*env_vars、crates/release_channel：ZED*\* 环境变量、版本、发布通道、
   Windows App ID 和显示名称。
 - crates/zed/Cargo.toml、crates/zed/build.rs、crates/zed/src/main.rs：package、
   binary、bundle、启动身份和初始化链。
@@ -94,7 +113,7 @@ GPL-3.0-or-later 不一致，必须以实际许可证文件和法务确认结果
 - crates/client/src/client.rs、crates/client/src/zed_urls.rs、
   crates/cloud_api_client：服务 URL、登录、更新、账户和 RPC/WebSocket 地址。
 - crates/remote_server、远程启动脚本、凭据和远程目录。
-- crates/zed/resources/、script/bundle-*、script/flatpak/、各平台安装器。
+- crates/zed/resources/、script/bundle-\*、script/flatpak/、各平台安装器。
 - .github/workflows/run_bundling.yml、.github/workflows/release.yml 及签名、更新、
   artifact 和 release repository 配置。
 
@@ -166,7 +185,7 @@ package 或 crate 改名。
 - [ ] 新用户只创建 Orion 目录；升级用户检测旧目录，执行版本化、幂等、可恢复迁移。
 - [ ] 迁移采用临时目录 + 原子 rename/copy、权限保留、备份标记和失败回退；成功前不
       删除旧数据，失败后保留诊断信息。
-- [ ] 规范环境变量优先；旧 ZED_* 只读兼容并发出一次可测试的弃用诊断，不把旧名
+- [ ] 规范环境变量优先；旧 ZED\_\* 只读兼容并发出一次可测试的弃用诊断，不把旧名
       写回新配置。
 - [ ] 对配置 schema、数据库、扩展目录、密钥、缓存和日志分别定义迁移，不把缓存当作
       可恢复的用户数据。
@@ -176,7 +195,7 @@ package 或 crate 改名。
 - 新装、旧装升级、迁移中断后重试、权限不足、磁盘不足和回滚均有测试。
 - 用户数据内容、权限和关键凭据不丢失；迁移重复执行不会重复覆盖或破坏数据。
 - crates/paths、env var、release channel、启动初始化和日志中不再存在未解释的
-      规范 Zed 身份。
+  规范 Zed 身份。
 
 **Gate 2**：数据迁移没有恢复证据、原子性或回滚演练时，No-Go；不允许切换默认生产
 路径。
@@ -289,17 +308,17 @@ package 或 crate 改名。
 
 ## 6. 兼容与迁移矩阵
 
-| 旧身份 | Orion 规范 | 迁移策略 | 验收证据 |
-| --- | --- | --- | --- |
-| Zed 显示文本 | Orion Studio | 新界面只显示 Orion；上游/版权文本单独保留 | UI smoke、snapshot、文案扫描 |
-| zed package/binary | Orion package/binary | 分批 rename；旧命令是否为 shim 由 Phase 1 决定 | clean checkout build、CLI E2E |
-| ZED_* env | ORION_STUDIO_* | 新名优先；旧名只读兼容并告警 | env precedence、弃用日志测试 |
-| Zed 配置/缓存/状态目录 | Orion 专属目录 | 版本化、幂等、原子迁移，保留备份 | 新装/升级/中断恢复 |
-| .zed_server 等远程目录 | Orion 远程目录 | 先探测旧目录，成功迁移后才使用新目录 | remote server smoke |
-| zed:// | Orion scheme | 新 scheme 为规范；旧 scheme 兼容窗口内解析或转发 | OS protocol registration、CLI E2E |
-| zed.dev/旧 cloud/collab endpoint | Orion endpoint | 不能静默 fallback；自托管/离线失败需可解释 | URL inventory、网络隔离测试 |
-| 旧 RPC/扩展协议 | Orion 版本化协议 | 双版本协商或兼容 decoder；禁止无迁移破坏 | protocol contract tests |
-| 旧更新 artifact | Orion artifact | 保留已发布版本可回滚，新的更新源只发 Orion | install/upgrade/rollback |
+| 旧身份                           | Orion 规范           | 迁移策略                                         | 验收证据                          |
+| -------------------------------- | -------------------- | ------------------------------------------------ | --------------------------------- |
+| Zed 显示文本                     | Orion Studio         | 新界面只显示 Orion；上游/版权文本单独保留        | UI smoke、snapshot、文案扫描      |
+| zed package/binary               | Orion package/binary | 分批 rename；旧命令是否为 shim 由 Phase 1 决定   | clean checkout build、CLI E2E     |
+| ZED\_\* env                      | ORION*STUDIO*\*      | 新名优先；旧名只读兼容并告警                     | env precedence、弃用日志测试      |
+| Zed 配置/缓存/状态目录           | Orion 专属目录       | 版本化、幂等、原子迁移，保留备份                 | 新装/升级/中断恢复                |
+| .zed_server 等远程目录           | Orion 远程目录       | 先探测旧目录，成功迁移后才使用新目录             | remote server smoke               |
+| zed://                           | Orion scheme         | 新 scheme 为规范；旧 scheme 兼容窗口内解析或转发 | OS protocol registration、CLI E2E |
+| zed.dev/旧 cloud/collab endpoint | Orion endpoint       | 不能静默 fallback；自托管/离线失败需可解释       | URL inventory、网络隔离测试       |
+| 旧 RPC/扩展协议                  | Orion 版本化协议     | 双版本协商或兼容 decoder；禁止无迁移破坏         | protocol contract tests           |
+| 旧更新 artifact                  | Orion artifact       | 保留已发布版本可回滚，新的更新源只发 Orion       | install/upgrade/rollback          |
 
 旧标识的具体保留期限、是否提供 CLI shim、是否支持旧 scheme，必须由 Phase 1 的
 兼容决策记录批准；本表不替代决策。
@@ -310,7 +329,7 @@ package 或 crate 改名。
 
 在改造过程中每个阶段都保留命令、commit、环境和结果：
 
-~~~text
+```text
 git status --short --branch
 git rev-parse --short HEAD
 git diff --check
@@ -319,15 +338,15 @@ cargo +stable fmt --all -- --check
 ./script/check-todos
 ./script/check-keymaps
 ./script/clippy
-~~~
+```
 
 品牌扫描必须同时覆盖跟踪文件和工作树文件，建议使用固定脚本而不是人工 rg：
 
-~~~text
+```text
 git grep -n -I -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
 rg --hidden --glob '!.git/**' --glob '!.workbuddy/**' \
   -n -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
-~~~
+```
 
 扫描输出必须包含路径、命中类别、处理结论和 allowlist 原因。计划文件和研究材料
 本身可保留上游名称，但不能成为源码/发布扫描的宽泛豁免。
@@ -360,16 +379,16 @@ rg --hidden --glob '!.git/**' --glob '!.workbuddy/**' \
 
 ## 9. 主要风险
 
-| 风险 | 影响 | 缓解措施 |
-| --- | --- | --- |
-| 路径迁移覆盖或丢失用户数据 | 高 | 版本化、备份、原子操作、故障注入和回滚演练 |
-| 全局改名破坏 Rust package、扩展或动态查找 | 高 | 依赖图分批、兼容入口、每批编译与契约测试 |
-| 旧 scheme/CLI/协议无法打开项目 | 高 | 双版本解析、shim/迁移矩阵、真实 OS E2E |
-| 仍连接旧服务或使用旧凭据 | 高 | endpoint allowlist、网络隔离、secret 扫描和服务责任审批 |
-| GitHub owner 条件导致 CI/发布静默跳过 | 高 | 在 Orion 仓库真实触发 workflow，审查 secrets 和权限 |
-| GPL、第三方依赖或商标边界错误 | 高 | crate 级 SPDX 清单与法务 Gate，保留 attribution |
-| 上游持续变更导致长期无法同步 | 中 | 规范身份集中管理、最小差异、定期 rebase checkpoint |
-| 云端/商业范围蔓延 | 中 | Web、托管、计费、SLA 单独立项和 Go/No-Go |
+| 风险                                      | 影响 | 缓解措施                                                |
+| ----------------------------------------- | ---- | ------------------------------------------------------- |
+| 路径迁移覆盖或丢失用户数据                | 高   | 版本化、备份、原子操作、故障注入和回滚演练              |
+| 全局改名破坏 Rust package、扩展或动态查找 | 高   | 依赖图分批、兼容入口、每批编译与契约测试                |
+| 旧 scheme/CLI/协议无法打开项目            | 高   | 双版本解析、shim/迁移矩阵、真实 OS E2E                  |
+| 仍连接旧服务或使用旧凭据                  | 高   | endpoint allowlist、网络隔离、secret 扫描和服务责任审批 |
+| GitHub owner 条件导致 CI/发布静默跳过     | 高   | 在 Orion 仓库真实触发 workflow，审查 secrets 和权限     |
+| GPL、第三方依赖或商标边界错误             | 高   | crate 级 SPDX 清单与法务 Gate，保留 attribution         |
+| 上游持续变更导致长期无法同步              | 中   | 规范身份集中管理、最小差异、定期 rebase checkpoint      |
+| 云端/商业范围蔓延                         | 中   | Web、托管、计费、SLA 单独立项和 Go/No-Go                |
 
 ## 10. 待决问题
 
@@ -411,4 +430,3 @@ rg --hidden --glob '!.git/**' --glob '!.workbuddy/**' \
    回滚测试。
 
 只有这三项通过 Gate 0/1/2，才进入全仓 package、UI、服务和发布链迁移。
-

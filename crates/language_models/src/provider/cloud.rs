@@ -13,22 +13,22 @@ use gpui::{AnyElement, App, AppContext, Context, Entity, Subscription, Task, Tas
 use language_model::{
     AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, ProviderSettingsView, ZED_CLOUD_PROVIDER_ID,
-    ZED_CLOUD_PROVIDER_NAME,
+    LanguageModelProviderState, ORION_CLOUD_PROVIDER_ID, ORION_CLOUD_PROVIDER_NAME,
+    ProviderSettingsView,
 };
 use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
+pub use settings::OrionCloudAvailableModel as AvailableModel;
+pub use settings::OrionCloudAvailableProvider as AvailableProvider;
 use settings::SettingsStore;
-pub use settings::ZedDotDevAvailableModel as AvailableModel;
-pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use std::sync::Arc;
 use std::time::Duration;
 use ui::{TintColor, prelude::*};
 
-const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
-const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
+const PROVIDER_ID: LanguageModelProviderId = ORION_CLOUD_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = ORION_CLOUD_PROVIDER_NAME;
 const MODELS_REFRESH_DEBOUNCE: Duration = Duration::from_secs(5 * 60);
 
 struct ClientTokenProvider {
@@ -88,7 +88,7 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct ZedDotDevSettings {
+pub struct OrionCloudSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -284,7 +284,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiZed)
+        IconOrSvg::Icon(IconName::Sparkle)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -363,14 +363,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
         let user_store = state.user_store.read(cx);
-        let is_zed_model_provider_enabled = user_store
+        let is_orion_model_provider_enabled = user_store
             .current_organization_configuration()
             .map_or(true, |config| config.is_zed_model_provider_enabled);
         let description = InlineDescription::Text(
-            zed_ai_description(
+            orion_ai_description(
                 !state.is_signed_out(cx),
                 user_store.plan(),
-                is_zed_model_provider_enabled,
+                is_orion_model_provider_enabled,
                 user_store.trial_started_at().is_none(),
             )
             .into(),
@@ -405,86 +405,88 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn authentication_error_message(&self) -> SharedString {
-        "Failed to sign in with your Zed account (401).".into()
+        "Failed to sign in with your Orion Studio account (401).".into()
     }
 
     fn missing_credentials_error_message(&self) -> SharedString {
-        "You are not signed in to your Zed account. \
+        "You are not signed in to your Orion Studio account. \
         Sign in to continue."
             .into()
     }
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         Some(FastModeConfirmation {
-            title: "Enable Fast Mode for Zed?".into(),
+            title: "Enable Fast Mode for Orion Studio?".into(),
             message: "Fast mode routes requests through the upstream provider's fast mode or priority tier. The \
                 upstream provider's premium per-token pricing applies and is passed through to \
-                your Zed billing."
+                your Orion Studio billing."
                 .into(),
         })
     }
 }
 
 #[derive(IntoElement, RegisterComponent)]
-struct ZedAiConfiguration {
+struct OrionAiConfiguration {
     is_connected: bool,
     plan: Option<Plan>,
-    is_zed_model_provider_enabled: bool,
+    is_orion_model_provider_enabled: bool,
     eligible_for_trial: bool,
     account_too_young: bool,
     compact: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
-fn zed_ai_description(
+fn orion_ai_description(
     is_connected: bool,
     plan: Option<Plan>,
-    is_zed_model_provider_enabled: bool,
+    is_orion_model_provider_enabled: bool,
     eligible_for_trial: bool,
 ) -> &'static str {
     if !is_connected {
-        return "Sign in to have access to Zed's complete agentic experience with hosted models.";
+        return "Sign in to access Orion Studio's complete agentic experience with hosted models.";
     }
 
     match plan {
         Some(Plan::ZedPro) => {
-            "You have access to Zed's hosted models through your Pro subscription."
+            "You have access to Orion Studio's hosted models through your Pro subscription."
         }
-        Some(Plan::ZedProTrial) => "You have access to Zed's hosted models through your Pro trial.",
+        Some(Plan::ZedProTrial) => {
+            "You have access to Orion Studio's hosted models through your Pro trial."
+        }
         Some(Plan::ZedStudent) => {
-            "You have access to Zed's hosted models through your Student subscription."
+            "You have access to Orion Studio's hosted models through your Student subscription."
         }
         Some(Plan::ZedBusiness) => {
-            if is_zed_model_provider_enabled {
-                "You have access to Zed's hosted models through your organization."
+            if is_orion_model_provider_enabled {
+                "You have access to Orion Studio's hosted models through your organization."
             } else {
-                "Zed's hosted models are disabled by your organization's configuration."
+                "Orion Studio's hosted models are disabled by your organization's configuration."
             }
         }
         Some(Plan::ZedVip) => {
-            "You have access to Zed's hosted models through your VIP subscription."
+            "You have access to Orion Studio's hosted models through your VIP subscription."
         }
         Some(Plan::ZedFree) | None => {
             if eligible_for_trial {
-                "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
+                "Subscribe for access to Orion Studio's hosted models. Start with a 14 day free trial."
             } else {
-                "Subscribe for access to Zed's hosted models."
+                "Subscribe for access to Orion Studio's hosted models."
             }
         }
     }
 }
 
-impl RenderOnce for ZedAiConfiguration {
+impl RenderOnce for OrionAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let has_paid_plan = matches!(
             self.plan,
             Some(Plan::ZedPro | Plan::ZedStudent | Plan::ZedBusiness | Plan::ZedVip)
         );
 
-        let description = zed_ai_description(
+        let description = orion_ai_description(
             self.is_connected,
             self.plan,
-            self.is_zed_model_provider_enabled,
+            self.is_orion_model_provider_enabled,
             self.eligible_for_trial,
         );
 
@@ -513,7 +515,7 @@ impl RenderOnce for ZedAiConfiguration {
                 })
                 .when(self.compact, |this| this.size(ButtonSize::Medium))
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
-                .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)))
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_orion_pro_url(cx)))
                 .into_any_element()
         };
 
@@ -522,7 +524,7 @@ impl RenderOnce for ZedAiConfiguration {
                 .gap_2()
                 .when(!self.compact, |this| this.child(Label::new(description)))
                 .child(
-                    Button::new("sign_in", "Sign In to use Zed AI")
+                    Button::new("sign_in", "Sign In to use Orion AI")
                         .start_icon(
                             Icon::new(IconName::Github)
                                 .size(IconSize::Small)
@@ -546,7 +548,7 @@ impl RenderOnce for ZedAiConfiguration {
                             .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                             .when(!self.compact, |this| this.full_width())
                             .on_click(|_, _, cx| {
-                                cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                                cx.open_url(&zed_urls::upgrade_to_orion_pro_url(cx))
                             }),
                     )
                 } else {
@@ -587,14 +589,14 @@ impl Render for ConfigurationView {
         let state = self.state.read(cx);
         let user_store = state.user_store.read(cx);
 
-        let is_zed_model_provider_enabled = user_store
+        let is_orion_model_provider_enabled = user_store
             .current_organization_configuration()
             .map_or(true, |config| config.is_zed_model_provider_enabled);
 
-        ZedAiConfiguration {
+        OrionAiConfiguration {
             is_connected: !state.is_signed_out(cx),
             plan: user_store.plan(),
-            is_zed_model_provider_enabled,
+            is_orion_model_provider_enabled,
             eligible_for_trial: user_store.trial_started_at().is_none(),
             account_too_young: user_store.account_too_young(),
             compact: self.compact,
@@ -923,7 +925,7 @@ mod tests {
     }
 }
 
-impl Component for ZedAiConfiguration {
+impl Component for OrionAiConfiguration {
     fn name() -> &'static str {
         "AI Configuration Content"
     }
@@ -937,24 +939,24 @@ impl Component for ZedAiConfiguration {
     }
 
     fn description() -> &'static str {
-        "The configuration surface for Zed's hosted AI models, \
+        "The configuration surface for Orion Studio's hosted AI models, \
         showing the user's connection status, current plan, trial eligibility, \
-        and entry points for enabling the Zed model provider."
+        and entry points for enabling the Orion model provider."
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         struct PreviewConfiguration {
             plan: Option<Plan>,
             is_connected: bool,
-            is_zed_model_provider_enabled: bool,
+            is_orion_model_provider_enabled: bool,
             eligible_for_trial: bool,
         }
 
         let configuration = |config: PreviewConfiguration| -> AnyElement {
-            ZedAiConfiguration {
+            OrionAiConfiguration {
                 is_connected: config.is_connected,
                 plan: config.plan,
-                is_zed_model_provider_enabled: config.is_zed_model_provider_enabled,
+                is_orion_model_provider_enabled: config.is_orion_model_provider_enabled,
                 eligible_for_trial: config.eligible_for_trial,
                 account_too_young: false,
                 compact: false,
@@ -972,7 +974,7 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: None,
                         is_connected: false,
-                        is_zed_model_provider_enabled: true,
+                        is_orion_model_provider_enabled: true,
                         eligible_for_trial: false,
                     }),
                 ),
@@ -981,7 +983,7 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: None,
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_orion_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
@@ -990,7 +992,7 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: None,
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_orion_model_provider_enabled: true,
                         eligible_for_trial: false,
                     }),
                 ),
@@ -999,7 +1001,7 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: None,
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_orion_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
@@ -1008,43 +1010,43 @@ impl Component for ZedAiConfiguration {
                     configuration(PreviewConfiguration {
                         plan: Some(Plan::ZedFree),
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_orion_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
                 single_example(
-                    "Zed Pro Trial Plan",
+                    "Orion Pro Trial Plan",
                     configuration(PreviewConfiguration {
                         plan: Some(Plan::ZedProTrial),
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_orion_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
                 single_example(
-                    "Zed Pro Plan",
+                    "Orion Pro Plan",
                     configuration(PreviewConfiguration {
                         plan: Some(Plan::ZedPro),
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_orion_model_provider_enabled: true,
                         eligible_for_trial: true,
                     }),
                 ),
                 single_example(
-                    "Business Plan - Zed models enabled",
+                    "Business Plan - Orion models enabled",
                     configuration(PreviewConfiguration {
                         plan: Some(Plan::ZedBusiness),
                         is_connected: true,
-                        is_zed_model_provider_enabled: true,
+                        is_orion_model_provider_enabled: true,
                         eligible_for_trial: false,
                     }),
                 ),
                 single_example(
-                    "Business Plan - Zed models disabled",
+                    "Business Plan - Orion models disabled",
                     configuration(PreviewConfiguration {
                         plan: Some(Plan::ZedBusiness),
                         is_connected: true,
-                        is_zed_model_provider_enabled: false,
+                        is_orion_model_provider_enabled: false,
                         eligible_for_trial: false,
                     }),
                 ),

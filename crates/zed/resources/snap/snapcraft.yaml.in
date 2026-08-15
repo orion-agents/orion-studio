@@ -9,15 +9,17 @@ description: |
 grade: stable
 confinement: classic
 compression: lzo
+platforms:
+  amd64:
 website: https://orion.dev/
 source-code: https://github.com/orion-agents/orion-studio
 issues: https://github.com/orion-agents/orion-studio/issues
 contact: https://orion.dev/community-links#support-and-feedback
 
 parts:
-  zed:
+  orion-studio:
     plugin: dump
-    source: "https://github.com/orion-agents/orion-studio/releases/download/v$RELEASE_VERSION/zed-linux-x86_64.tar.gz"
+    source: "https://github.com/orion-agents/orion-studio/releases/download/v$RELEASE_VERSION/orion-studio-linux-x86_64.tar.gz"
 
     organize:
       # These renames seem to not be necessary, but it's tidier.
@@ -26,10 +28,10 @@ parts:
 
     stage-packages:
       - libasound2t64
-      # snapcraft has a lint that this is unused, but without it Zed exits with
+      # snapcraft has a lint that this is unused, but without it Orion Studio exits with
       # "Missing Vulkan entry points: LibraryLoadFailure" in wgpu.
       - libvulkan1
-      # snapcraft has a lint that this is unused, but without it Zed exits with
+      # snapcraft has a lint that this is unused, but without it Orion Studio exits with
       # "NoWaylandLib" when run with Wayland.
       - libwayland-client0
       - libxcb1
@@ -54,6 +56,8 @@ parts:
 apps:
   orion-studio:
     command: usr/bin/orion-studio
-    common-id: dev.orion.OrionStudio
+    common-id: com.orion.OrionStudio
     environment:
+      ORION_STUDIO_BUNDLE_TYPE: snap
+      # Compatibility until runtime bundle diagnostics consume the Orion variable.
       ZED_BUNDLE_TYPE: snap

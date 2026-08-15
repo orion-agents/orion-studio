@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use gh_workflow::Workflow;
+use serde_yaml::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use strum::IntoEnumIterator;
@@ -9,8 +10,8 @@ use crate::tasks::workflow_checks::{self};
 
 mod after_release;
 mod autofix_pr;
+mod bump_orion_studio_version;
 mod bump_patch_version;
-mod bump_zed_version;
 mod cherry_pick;
 mod compliance_check;
 mod danger;
@@ -22,6 +23,7 @@ mod extension_tests;
 mod extension_workflow_rollout;
 mod extensions;
 mod nix_build;
+mod production_environment;
 mod publish_extension_cli;
 mod release_nightly;
 mod run_bundling;
@@ -93,16 +95,28 @@ enum WorkflowSource {
     WithContext(fn(&GenerateWorkflowArgs) -> Workflow),
 }
 
+type WorkflowTransform = fn(&mut Value) -> Result<()>;
+
 struct WorkflowFile {
     source: WorkflowSource,
     r#type: WorkflowType,
+    transform: Option<WorkflowTransform>,
 }
 
 impl WorkflowFile {
-    fn zed(f: fn() -> Workflow) -> WorkflowFile {
+    fn orion_studio(f: fn() -> Workflow) -> WorkflowFile {
         WorkflowFile {
             source: WorkflowSource::Contextless(f),
-            r#type: WorkflowType::Zed,
+            r#type: WorkflowType::OrionStudio,
+            transform: None,
+        }
+    }
+
+    fn transformed_orion_studio(f: fn() -> Workflow, transform: WorkflowTransform) -> WorkflowFile {
+        WorkflowFile {
+            source: WorkflowSource::Contextless(f),
+            r#type: WorkflowType::OrionStudio,
+            transform: Some(transform),
         }
     }
 
@@ -110,6 +124,7 @@ impl WorkflowFile {
         WorkflowFile {
             source: WorkflowSource::WithContext(f),
             r#type: WorkflowType::ExtensionCi,
+            transform: None,
         }
     }
 
@@ -117,7 +132,37 @@ impl WorkflowFile {
         WorkflowFile {
             source: WorkflowSource::WithContext(f),
             r#type: WorkflowType::ExtensionsShared,
+            transform: None,
         }
+    }
+
+    fn serialize(&self, workflow: &Workflow, workflow_path: &Path) -> Result<String> {
+        let content = workflow
+            .to_string()
+            .map_err(|error| anyhow::anyhow!("{workflow_path:?}: {error:?}"))?;
+
+        let Some(transform) = self.transform else {
+            return Ok(content);
+        };
+
+        let mut parsed = serde_yaml::from_str(&content).with_context(|| {
+            format!(
+                "Failed to parse generated workflow {}",
+                workflow_path.display()
+            )
+        })?;
+        transform(&mut parsed).with_context(|| {
+            format!(
+                "Failed to transform generated workflow {}",
+                workflow_path.display()
+            )
+        })?;
+        serde_yaml::to_string(&parsed).with_context(|| {
+            format!(
+                "Failed to serialize transformed workflow {}",
+                workflow_path.display()
+            )
+        })
     }
 
     fn generate_file(&self, workflow_args: &GenerateWorkflowArgs) -> Result<()> {
@@ -142,9 +187,7 @@ impl WorkflowFile {
 
         let workflow_path = workflow_folder.join(filename);
 
-        let content = workflow
-            .to_string()
-            .map_err(|e| anyhow::anyhow!("{:?}: {:?}", workflow_path, e))?;
+        let content = self.serialize(&workflow, &workflow_path)?;
 
         let disclaimer = self.r#type.disclaimer(workflow_name);
 
@@ -155,9 +198,9 @@ impl WorkflowFile {
 
 #[derive(PartialEq, Eq, strum::EnumIter)]
 pub enum WorkflowType {
-    /// Workflows living in the Zed repository
-    Zed,
-    /// Workflows living in the `zed-extensions/workflows` repository that are
+    /// Workflows living in the Orion Studio repository
+    OrionStudio,
+    /// Workflows distributed to Orion extension repositories that are
     /// required workflows for PRs to the extension organization
     ExtensionCi,
     /// Workflows living in each of the extensions to perform checks and version
@@ -176,15 +219,15 @@ impl WorkflowType {
             ),
             preamble = Self::PREAMBLE,
             workflow_name = workflow_name,
-            external_disclaimer = (*self != WorkflowType::Zed)
-                .then_some(" within the Zed repository.")
+            external_disclaimer = (*self != WorkflowType::OrionStudio)
+                .then_some(" within the Orion Studio repository.")
                 .unwrap_or_default(),
         )
     }
 
     pub fn folder_path(&self) -> PathBuf {
         match self {
-            WorkflowType::Zed => PathBuf::from(".github/workflows"),
+            WorkflowType::OrionStudio => PathBuf::from(".github/workflows"),
             WorkflowType::ExtensionCi => PathBuf::from("extensions/workflows"),
             WorkflowType::ExtensionsShared => PathBuf::from("extensions/workflows/shared"),
         }
@@ -220,26 +263,41 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
     WorkflowType::remove_generated_workflows()?;
 
     let workflows = [
-        WorkflowFile::zed(after_release::after_release),
-        WorkflowFile::zed(autofix_pr::autofix_pr),
-        WorkflowFile::zed(bump_patch_version::bump_patch_version),
-        WorkflowFile::zed(bump_zed_version::bump_zed_version),
-        WorkflowFile::zed(cherry_pick::cherry_pick),
-        WorkflowFile::zed(compliance_check::compliance_check),
-        WorkflowFile::zed(danger::danger),
-        WorkflowFile::zed(deploy_collab::deploy_collab),
-        WorkflowFile::zed(deploy_docs::deploy_docs),
-        WorkflowFile::zed(deploy_docs::deploy_nightly_docs),
-        WorkflowFile::zed(extension_bump::extension_bump),
-        WorkflowFile::zed(extension_auto_bump::extension_auto_bump),
-        WorkflowFile::zed(extension_tests::extension_tests),
-        WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
-        WorkflowFile::zed(nix_build::nix_build),
-        WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
-        WorkflowFile::zed(release::release),
-        WorkflowFile::zed(release_nightly::release_nightly),
-        WorkflowFile::zed(run_bundling::run_bundling),
-        WorkflowFile::zed(run_tests::run_tests),
+        WorkflowFile::transformed_orion_studio(
+            after_release::after_release,
+            after_release::add_production_environments,
+        ),
+        WorkflowFile::orion_studio(autofix_pr::autofix_pr),
+        WorkflowFile::orion_studio(bump_patch_version::bump_patch_version),
+        WorkflowFile::orion_studio(bump_orion_studio_version::bump_orion_studio_version),
+        WorkflowFile::orion_studio(cherry_pick::cherry_pick),
+        WorkflowFile::orion_studio(compliance_check::compliance_check),
+        WorkflowFile::orion_studio(danger::danger),
+        WorkflowFile::transformed_orion_studio(
+            deploy_collab::deploy_collab,
+            deploy_collab::add_deployment_environments,
+        ),
+        WorkflowFile::transformed_orion_studio(
+            deploy_docs::deploy_docs,
+            deploy_docs::add_production_environments,
+        ),
+        WorkflowFile::orion_studio(deploy_docs::deploy_nightly_docs),
+        WorkflowFile::orion_studio(extension_bump::extension_bump),
+        WorkflowFile::orion_studio(extension_auto_bump::extension_auto_bump),
+        WorkflowFile::orion_studio(extension_tests::extension_tests),
+        WorkflowFile::orion_studio(extension_workflow_rollout::extension_workflow_rollout),
+        WorkflowFile::orion_studio(nix_build::nix_build),
+        WorkflowFile::orion_studio(publish_extension_cli::publish_extension_cli),
+        WorkflowFile::transformed_orion_studio(
+            release::release,
+            release::add_production_environments,
+        ),
+        WorkflowFile::transformed_orion_studio(
+            release_nightly::release_nightly,
+            release_nightly::add_production_environments,
+        ),
+        WorkflowFile::orion_studio(run_bundling::run_bundling),
+        WorkflowFile::orion_studio(run_tests::run_tests),
         /* workflows used for CI/CD in extension repositories */
         WorkflowFile::extension(extensions::run_tests::run_tests),
         WorkflowFile::extension_shared(extensions::bump_version::bump_version),

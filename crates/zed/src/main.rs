@@ -17,7 +17,7 @@ const _: () = assert!(
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
+use cli::{FORCE_CLI_MODE_ENV_VAR_NAME, LEGACY_ZED_FORCE_CLI_MODE_ENV_VAR_NAME};
 use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
@@ -85,7 +85,11 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn build_application() -> Application {
     let platform = gpui_platform::current_platform(false);
-    if std::env::var("ZED_EXPERIMENTAL_A11Y").as_deref() == Ok("1") {
+    if std::env::var("ORION_STUDIO_EXPERIMENTAL_A11Y")
+        .or_else(|_| std::env::var("ZED_EXPERIMENTAL_A11Y"))
+        .as_deref()
+        == Ok("1")
+    {
         Application::with_platform(platform)
     } else {
         Application::new_inaccessible(platform)
@@ -93,7 +97,7 @@ fn build_application() -> Application {
 }
 
 fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
-    let message = "Zed failed to launch";
+    let message = "Orion Studio failed to launch";
     let error_details = errors
         .into_iter()
         .flat_map(|(kind, paths)| {
@@ -155,7 +159,7 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     eprintln!(
-        "Zed failed to open a window: {e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+        "Orion Studio failed to open a window: {e:?}. See https://orion.dev/docs/linux for troubleshooting steps."
     );
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
@@ -171,14 +175,14 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
                 process::exit(1);
             };
 
-            let notification_id = "dev.zed.Oops";
+            let notification_id = "dev.orion.OrionStudio.Oops";
             proxy
                 .add_notification(
                     notification_id,
-                    Notification::new("Zed failed to launch")
+                    Notification::new("Orion Studio failed to launch")
                         .body(Some(
                             format!(
-                                "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                                "{e:?}. See https://orion.dev/docs/linux for troubleshooting steps."
                             )
                             .as_str(),
                         ))
@@ -195,6 +199,33 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         .detach();
     }
 }
+
+struct LegacyMigrationNotice;
+
+fn show_legacy_migration_notice(message: String, cx: &mut App) {
+    for window in cx.windows() {
+        let Some(multi_workspace) = window.downcast::<MultiWorkspace>() else {
+            continue;
+        };
+        let notice = message.clone();
+        match multi_workspace.update(cx, move |multi_workspace, _, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(NotificationId::unique::<LegacyMigrationNotice>(), notice),
+                    cx,
+                );
+            });
+        }) {
+            Ok(()) => return,
+            Err(error) => {
+                log::error!("Failed to show legacy Zed migration notice: {error:#}");
+            }
+        }
+    }
+
+    log::warn!("Could not show legacy Zed migration notice because no workspace window exists");
+}
+
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 fn main() {
@@ -202,7 +233,7 @@ fn main() {
 
     // If this process was re-executed as a Linux sandbox helper, run that mode
     // without returning. Must run before argument parsing: the wrapped command's
-    // args are appended verbatim and would otherwise be misinterpreted as Zed's
+    // Arguments are appended verbatim and would otherwise be misinterpreted as Orion Studio's
     // own arguments.
     sandbox::run_sandbox_launcher_if_invoked();
 
@@ -211,14 +242,14 @@ fn main() {
 
     let args = Args::parse();
 
-    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
+    // `orion --askpass` makes Orion Studio operate in nc/netcat mode for askpass.
     #[cfg(not(target_os = "windows"))]
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
         return;
     }
 
-    // `zed --crash-handler` Makes zed operate in minidump crash handler mode
+    // `orion --crash-handler` makes Orion Studio operate in minidump crash-handler mode.
     if let Some(socket) = &args.crash_handler {
         crashes::crash_server(socket.as_path(), paths::logs_dir().clone());
         return;
@@ -257,7 +288,7 @@ fn main() {
         }
     }
 
-    // `zed --printenv` Outputs environment variables as JSON to stdout
+    // `orion --printenv` outputs environment variables as JSON to stdout.
     if args.printenv {
         util::shell_env::print_env();
         return;
@@ -274,11 +305,14 @@ fn main() {
     }
 
     #[cfg(target_os = "windows")]
-    match util::get_zed_cli_path() {
+    match util::get_orion_studio_cli_path() {
         Ok(path) => askpass::set_askpass_program(path),
         Err(err) => {
             eprintln!("Error: {}", err);
-            if std::option_env!("ZED_BUNDLE").is_some() {
+            if std::option_env!("ORION_STUDIO_BUNDLE")
+                .or(std::option_env!("ZED_BUNDLE"))
+                .is_some()
+            {
                 process::exit(1);
             }
         }
@@ -303,9 +337,10 @@ fn main() {
     }
     ztracing::init();
 
-    let version = option_env!("ZED_BUILD_ID");
-    let app_commit_sha =
-        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
+    let version = option_env!("ORION_STUDIO_BUILD_ID").or(option_env!("ZED_BUILD_ID"));
+    let app_commit_sha = option_env!("ORION_STUDIO_COMMIT_SHA")
+        .or(option_env!("ZED_COMMIT_SHA"))
+        .map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
     let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), version, app_commit_sha.clone());
 
     if args.system_specs {
@@ -316,7 +351,7 @@ fn main() {
             client::telemetry::os_name(),
             client::telemetry::os_version(),
         );
-        println!("Zed System Specs (from CLI):\n{}", system_specs);
+        println!("Orion Studio System Specs (from CLI):\n{}", system_specs);
         return;
     }
 
@@ -328,7 +363,7 @@ fn main() {
         .unwrap();
 
     log::info!(
-        "========== starting zed version {}, sha {} ==========",
+        "========== starting Orion Studio version {}, sha {} ==========",
         app_version,
         app_commit_sha
             .as_ref()
@@ -356,7 +391,7 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
+    let failed_single_instance_check = if *zed_env_vars::ORION_STUDIO_STATELESS
         || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
     {
         false
@@ -378,7 +413,7 @@ fn main() {
         }
     };
     if failed_single_instance_check {
-        println!("zed is already running");
+        println!("Orion Studio is already running");
         return;
     }
 
@@ -420,14 +455,15 @@ fn main() {
     };
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let git_binary_path =
-        if cfg!(target_os = "macos") && option_env!("ZED_BUNDLE").as_deref() == Some("true") {
-            app.path_for_auxiliary_executable("git")
-                .context("could not find git binary path")
-                .log_err()
-        } else {
-            None
-        };
+    let git_binary_path = if cfg!(target_os = "macos")
+        && option_env!("ORION_STUDIO_BUNDLE").or(option_env!("ZED_BUNDLE")) == Some("true")
+    {
+        app.path_for_auxiliary_executable("git")
+            .context("could not find git binary path")
+            .log_err()
+    } else {
+        None
+    };
     if let Some(git_binary_path) = &git_binary_path {
         log::info!("Using git binary path: {:?}", git_binary_path);
     }
@@ -499,7 +535,7 @@ fn main() {
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
         let user_agent = format!(
-            "Zed/{} ({}; {})",
+            "Orion-Studio/{} ({}; {})",
             AppVersion::global(cx),
             std::env::consts::OS,
             std::env::consts::ARCH
@@ -950,10 +986,75 @@ fn main() {
         let (first_window_tx, first_window_rx) = oneshot::channel::<()>();
         let first_window_tx = Rc::new(RefCell::new(Some(first_window_tx)));
         let _first_window_subscription = cx.observe_new::<MultiWorkspace>(move |_, _, _| {
-            if let Some(tx) = first_window_tx.borrow_mut().take() {
-                tx.send(()).ok();
+            if let Some(sender) = first_window_tx.borrow_mut().take() {
+                if sender.send(()).is_err() {
+                    log::debug!("First workspace window receiver was dropped");
+                }
             }
         });
+
+        let (first_frame_sender, first_frame_receiver) = oneshot::channel::<()>();
+        let first_frame_sender = Rc::new(RefCell::new(Some(first_frame_sender)));
+        let migration_window_subscription =
+            cx.observe_new::<MultiWorkspace>(move |_, window, _| {
+                let Some(window) = window else {
+                    return;
+                };
+                let first_frame_sender = first_frame_sender.clone();
+                window.on_next_frame(move |_, _| {
+                    if let Some(sender) = first_frame_sender.borrow_mut().take()
+                        && sender.send(()).is_err()
+                    {
+                        log::debug!("First rendered frame receiver was dropped");
+                    }
+                });
+            });
+
+        cx.spawn(async move |cx| {
+            let _migration_window_subscription = migration_window_subscription;
+            if let Err(error) = first_frame_receiver.await {
+                log::warn!(
+                    "Legacy Zed migration was skipped because no workspace frame was rendered: {error}"
+                );
+                return;
+            }
+
+            let result = cx
+                .background_spawn(async { paths::migrate_legacy_user_data() })
+                .await;
+            match result {
+                Ok(outcome)
+                    if matches!(
+                        &outcome.config,
+                        Some(paths::MigrationState::Migrated)
+                    ) || matches!(&outcome.data, Some(paths::MigrationState::Migrated)) =>
+                {
+                    log::info!("Legacy Zed data migration completed: {outcome:?}");
+                    cx.update(|cx| {
+                        show_legacy_migration_notice(
+                            "Legacy Zed data was imported in the background. Restart Orion Studio to load all imported state."
+                                .to_owned(),
+                            cx,
+                        );
+                    });
+                }
+                Ok(outcome) => {
+                    log::debug!("Legacy Zed data migration required no copy: {outcome:?}");
+                }
+                Err(error) => {
+                    log::error!("Failed to migrate legacy Zed data: {error}");
+                    cx.update(|cx| {
+                        show_legacy_migration_notice(
+                            format!(
+                                "Legacy Zed data could not be imported. Orion Studio will keep running, and the original Zed data was left unchanged. Details: {error}"
+                            ),
+                            cx,
+                        );
+                    });
+                }
+            }
+        })
+        .detach();
 
         let restore_finished = cx.background_spawn(restore_task).shared();
 
@@ -981,7 +1082,7 @@ fn main() {
             let _first_window_subscription = _first_window_subscription;
             let first_window_placed = first_window_rx.shared();
             while let Some(urls) = open_rx.next().await {
-                // On a macOS cold launch, `zed <path>` arrives here after startup already
+                // On a macOS cold launch, `orion <path>` arrives here after startup already
                 // began restoring the session, so wait for a restored window to exist before
                 // matching. Otherwise this open sees no windows and spawns a redundant one (#61346).
                 futures::select_biased! {
@@ -1059,7 +1160,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                 });
                             } else {
                                 log::warn!(
-                                    "zed://agent received but the AgentPanel is not registered \
+                                    "agent deep link received but the AgentPanel is not registered \
                                      (is `disable_ai` enabled?)"
                                 );
                             }
@@ -1096,7 +1197,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                     .project()
                                     .update(cx, |project, _| project.lsp_store())
                             })?;
-                            let uri = format!("zed://schemas/{}", schema_path);
+                            let uri = format!("orion://schemas/{}", schema_path);
                             let json_schema_content =
                                 json_schema_store::handle_schema_request(lsp_store, uri, cx)
                                     .await?;
@@ -1145,8 +1246,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 });
             }
             OpenRequestKind::Setting { setting_path } => {
-                // zed://settings/languages/$(language)/tab_size  - DONT SUPPORT
-                // zed://settings/languages/Rust/tab_size  - SUPPORT
+                // orion://settings/languages/$(language)/tab_size  - DONT SUPPORT
+                // orion://settings/languages/Rust/tab_size  - SUPPORT
                 // languages.$(language).tab_size
                 // [ languages $(language) tab_size]
                 cx.spawn(async move |cx| {
@@ -1528,7 +1629,7 @@ pub(crate) async fn restore_or_create_workspace(
         // If the user cancelled a failed remote connection at startup,
         // open_remote_project returns Ok but removes the window, so error_count
         // stays 0 and the toast fallback above does not trigger. Without this
-        // check, Zed would exit silently.
+        // check, Orion Studio would exit silently.
         if cx.update(|cx| cx.windows().is_empty()) {
             cx.update(|cx| {
                 workspace::open_new(
@@ -1674,9 +1775,13 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
 }
 
 pub(crate) static FORCE_CLI_MODE: LazyLock<bool> = LazyLock::new(|| {
-    let env_var = std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some();
-    unsafe { std::env::remove_var(FORCE_CLI_MODE_ENV_VAR_NAME) };
-    env_var
+    let canonical_is_present = std::env::var_os(FORCE_CLI_MODE_ENV_VAR_NAME).is_some();
+    let legacy_is_present = std::env::var_os(LEGACY_ZED_FORCE_CLI_MODE_ENV_VAR_NAME).is_some();
+    unsafe {
+        std::env::remove_var(FORCE_CLI_MODE_ENV_VAR_NAME);
+        std::env::remove_var(LEGACY_ZED_FORCE_CLI_MODE_ENV_VAR_NAME);
+    }
+    canonical_is_present || legacy_is_present
 });
 
 fn stdout_is_a_pty() -> bool {
@@ -1695,7 +1800,8 @@ struct Args {
     /// Use `path:line:row` syntax to open a file at a specific location.
     /// Non-existing paths and directories will ignore `:line:row` suffix.
     ///
-    /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
+    /// URLs can use the `file://`, canonical `orion://`, or legacy `zed://` scheme,
+    /// or be relative to <https://orion.dev>.
     paths_or_urls: Vec<String>,
 
     /// Pairs of file paths to diff. Can be specified multiple times.
@@ -1713,7 +1819,7 @@ struct Args {
     user_data_dir: Option<String>,
 
     /// The username and WSL distribution to use when opening paths. If not specified,
-    /// Zed will attempt to open the paths directly.
+    /// Orion Studio will attempt to open the paths directly.
     ///
     /// The username is optional, and if not specified, the default user for the distribution
     /// will be used.
@@ -1732,24 +1838,24 @@ struct Args {
     #[arg(long)]
     dev_container: bool,
 
-    /// Instructs zed to run as a dev server on this machine. (not implemented)
+    /// Instructs Orion Studio to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
 
     /// Prints system specs.
     ///
     /// Useful for submitting issues on GitHub when encountering a bug that
-    /// prevents Zed from starting, so you can't run `zed: copy system specs to
+    /// prevents Orion Studio from starting, so you can't run `zed: copy system specs to
     /// clipboard`
     #[arg(long)]
     system_specs: bool,
 
-    /// Used for recording minidumps on crashes by having Zed run a separate
+    /// Used for recording minidumps on crashes by having Orion Studio run a separate
     /// process communicating over a socket.
     #[arg(long, hide = true)]
     crash_handler: Option<PathBuf>,
 
-    /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
+    /// Run Orion Studio in the foreground on Windows to match the macOS behavior.
     #[arg(long)]
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
@@ -1762,7 +1868,7 @@ struct Args {
     dock_action: Option<usize>,
 
     /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
-    /// by having Zed act like netcat communicating over a Unix socket.
+    /// by having Orion Studio act like netcat over a Unix socket.
     #[arg(long)]
     #[cfg(not(target_os = "windows"))]
     #[arg(hide = true)]
@@ -1780,7 +1886,7 @@ struct Args {
     #[arg(long, hide = true)]
     record_etw_trace: bool,
 
-    /// The PID of the Zed process to trace for heap analysis.
+    /// The PID of the Orion Studio process to trace for heap analysis.
     #[cfg(target_os = "windows")]
     #[arg(long, hide = true, allow_hyphen_values = true)]
     etw_zed_pid: Option<i64>,
@@ -1790,7 +1896,7 @@ struct Args {
     #[arg(long, hide = true)]
     etw_output: Option<PathBuf>,
 
-    /// Unix socket path for IPC with the parent Zed process.
+    /// Unix socket path for IPC with the parent Orion Studio process.
     #[cfg(target_os = "windows")]
     #[arg(long, hide = true)]
     etw_socket: Option<String>,
@@ -1815,6 +1921,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> String {
         Ok(path) => format!("file://{}", path.display()),
         Err(_) => {
             if arg.starts_with("file://")
+                || arg.starts_with("orion://")
                 || arg.starts_with("zed://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")

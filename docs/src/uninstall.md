@@ -1,121 +1,71 @@
 ---
-title: Uninstall
-description: "This guide covers how to uninstall Zed on different operating systems."
+title: Uninstall Orion Studio
+description: Remove Orion Studio and, optionally, its user data on macOS, Linux, and Windows.
 ---
 
-# Uninstall
+# Uninstall Orion Studio
 
-This guide covers how to uninstall Zed on different operating systems.
+Quit Orion Studio before removing the application. Removing user data is optional and cannot be undone, so back up settings you want to keep.
 
 ## macOS
 
-### Standard Installation
+Remove `Orion Studio.app` from the location where you installed it, normally `/Applications` or `~/Applications`.
 
-If you installed Zed by downloading it from the website:
+To remove Orion Studio user data as well, delete only the paths that exist:
 
-1. Quit Zed if it's running
-2. Open Finder and go to your Applications folder
-3. Drag Zed to the Trash (or right-click and select "Move to Trash")
-4. Empty the Trash
+- `~/Library/Application Support/Orion Studio`
+- `~/Library/Saved Application State/dev.orion.OrionStudio.savedState`
+- `~/Library/Logs/Orion Studio`
+- `~/Library/Caches/dev.orion.OrionStudio`
+- `~/Library/Caches/Orion Studio`
+- `~/.config/orion-studio`
+- `~/.local/state/Orion Studio`
 
-### Homebrew Installation
-
-If you installed Zed using Homebrew, use the following command:
-
-```sh
-brew uninstall --cask zed
-```
-
-Or for the preview version:
-
-```sh
-brew uninstall --cask zed@preview
-```
-
-### Removing User Data (Optional)
-
-To completely remove all Zed configuration files and data:
-
-1. Open Finder
-2. Press `Cmd + Shift + G` to open "Go to Folder"
-3. Delete the following directories if they exist:
-   - `~/Library/Application Support/Zed`
-   - `~/Library/Saved Application State/dev.zed.Zed.savedState`
-   - `~/Library/Logs/Zed`
-   - `~/Library/Caches/dev.zed.Zed`
-   - `~/Library/Caches/Zed`
-   - `~/.config/zed`
-   - `~/.local/state/Zed`
+No Orion Studio Homebrew cask is assumed to be published. Casks named `zed` install or remove the upstream Zed application, not Orion Studio.
 
 ## Linux
 
-### Standard Uninstall
-
-If Zed was installed using the default installation script, run:
+If you installed a release bundle with the repository installer, run:
 
 ```sh
-zed --uninstall
+orion-studio --uninstall
 ```
 
-You'll be prompted whether to keep or delete your preferences. After making a choice, you should see a message that Zed was successfully uninstalled.
-
-If the `zed` command is not found in your PATH, try:
+If `orion-studio` is not on your `PATH`, invoke the packaged launcher directly:
 
 ```sh
-$HOME/.local/bin/zed --uninstall
+$HOME/.local/orion-studio.app/bin/orion-studio --uninstall
 ```
 
-or:
+For a manual installation, remove the paths you created. The repository installer normally uses:
 
-```sh
-$HOME/.local/zed.app/bin/zed --uninstall
-```
+- application bundle: `~/.local/orion-studio.app`
+- canonical launcher: `~/.local/bin/orion-studio`
+- optional short alias: `~/.local/bin/orion`
+- deprecated legacy alias: `~/.local/bin/zed`
+- configuration: `~/.config/orion-studio`
+- data: `~/.local/share/orion-studio`
+- state: `~/.local/state/orion-studio`
 
-### Package Manager
-
-If you installed Zed using a package manager (such as Flatpak, Snap, or a distribution-specific package manager), consult that package manager's documentation for uninstallation instructions.
-
-### Manual Removal
-
-If the uninstall command fails or Zed was installed to a custom location, you can manually remove:
-
-- Installation directory: `~/.local/zed.app` (or your custom installation path)
-- Binary symlink: `~/.local/bin/zed`
-- Configuration and data: `~/.config/zed`
+If a package manager supplied Orion Studio, use that package manager's uninstall command and package identifier. Packages named `zed` or `zed-editor` refer to upstream Zed unless the package maintainer explicitly states otherwise.
 
 ## Windows
 
-### Standard Installation
+If Orion Studio appears in **Settings → Apps → Installed apps**, select it and choose **Uninstall**. For a portable or locally built installation, remove the directory where you placed `orion-studio.exe`.
 
-1. Quit Zed if it's running
-2. Open Settings (Windows key + I)
-3. Go to "Apps" > "Installed apps" (or "Apps & features" on Windows 10)
-4. Search for "Zed"
-5. Click the three dots menu next to Zed and select "Uninstall"
-6. Follow the prompts to complete the uninstallation
+To remove Orion Studio user data as well, delete only the paths that exist:
 
-Alternatively, you can:
+- `%APPDATA%\Orion Studio`
+- `%LOCALAPPDATA%\Orion Studio`
 
-1. Open the Start menu
-2. Right-click on Zed
-3. Select "Uninstall"
+## Legacy Zed Data
 
-### Removing User Data (Optional)
+Orion Studio can migrate selected data from legacy Zed locations. Those locations intentionally retain `Zed`, `zed`, or `dev.zed` in their names. Delete them only if you no longer use upstream Zed and no longer need migration or rollback data.
 
-To completely remove all Zed configuration files and data:
+Examples include:
 
-1. Press `Windows key + R` to open Run
-2. Type `%APPDATA%` and press Enter
-3. Delete the `Zed` folder if it exists
-4. Press `Windows key + R` again, type `%LOCALAPPDATA%` and press Enter
-5. Delete the `Zed` folder if it exists
+- macOS: `~/Library/Application Support/Zed`, `~/.config/zed`, and `~/Library/Caches/dev.zed.Zed`
+- Linux: `~/.config/zed`, `~/.local/share/zed`, and `~/.local/state/zed`
+- Windows: `%APPDATA%\Zed` and `%LOCALAPPDATA%\Zed`
 
-## Troubleshooting
-
-If you encounter issues during uninstallation:
-
-- **macOS/Windows**: Ensure Zed is completely quit before attempting to uninstall. Check Activity Manager (macOS) or Task Manager (Windows) for any running Zed processes.
-- **Linux**: If the uninstall script fails, check the error message and consider manual removal of the directories listed above.
-- **All platforms**: If you want to start fresh while keeping Zed installed, you can delete the configuration directories instead of uninstalling the application entirely.
-
-For additional help, see our [Linux-specific documentation](./linux.md) or visit the [Zed community](https://orion.dev/community-links).
+For installation-specific Linux troubleshooting, see [Orion Studio on Linux](./linux.md). For other problems, file a [GitHub issue](https://github.com/orion-agents/orion-studio/issues/new/choose).

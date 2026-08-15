@@ -154,7 +154,14 @@ pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
 pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
     static ZED_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
     let zed_measurements = ZED_MEASUREMENTS.get_or_init(|| {
-        env::var("ZED_MEASUREMENTS")
+        env::var("ORION_STUDIO_MEASUREMENTS")
+            .or_else(|error| {
+                if matches!(error, env::VarError::NotPresent) {
+                    env::var("ZED_MEASUREMENTS")
+                } else {
+                    Err(error)
+                }
+            })
             .map(|measurements| measurements == "1" || measurements == "true")
             .unwrap_or(false)
     });

@@ -66,7 +66,7 @@ impl ProjectEnvironment {
         }
     }
 
-    /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
+    /// Returns the inherited CLI environment, if this project was opened from the Orion Studio CLI.
     pub(crate) fn get_cli_environment(&self) -> Option<HashMap<String, String>> {
         if cfg!(any(test, feature = "test-support")) {
             return Some(HashMap::default());
@@ -291,9 +291,17 @@ impl ProjectEnvironment {
 }
 
 fn set_origin_marker(env: &mut HashMap<String, String>, origin: EnvironmentOrigin) {
-    env.insert(ZED_ENVIRONMENT_ORIGIN_MARKER.to_string(), origin.into());
+    let origin: String = origin.into();
+    env.insert(
+        ORION_STUDIO_ENVIRONMENT_ORIGIN_MARKER.to_string(),
+        origin.clone(),
+    );
+    // Keep the legacy marker while existing subprocess consumers migrate to
+    // ORION_STUDIO_ENVIRONMENT.
+    env.insert(ZED_ENVIRONMENT_ORIGIN_MARKER.to_string(), origin);
 }
 
+const ORION_STUDIO_ENVIRONMENT_ORIGIN_MARKER: &str = "ORION_STUDIO_ENVIRONMENT";
 const ZED_ENVIRONMENT_ORIGIN_MARKER: &str = "ZED_ENVIRONMENT";
 
 enum EnvironmentOrigin {
@@ -307,6 +315,30 @@ impl From<EnvironmentOrigin> for String {
             EnvironmentOrigin::Cli => "cli".into(),
             EnvironmentOrigin::WorktreeShell => "worktree-shell".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn origin_marker_writes_canonical_and_legacy_names() {
+        let mut environment = HashMap::default();
+        set_origin_marker(&mut environment, EnvironmentOrigin::Cli);
+
+        assert_eq!(
+            environment
+                .get(ORION_STUDIO_ENVIRONMENT_ORIGIN_MARKER)
+                .map(String::as_str),
+            Some("cli")
+        );
+        assert_eq!(
+            environment
+                .get(ZED_ENVIRONMENT_ORIGIN_MARKER)
+                .map(String::as_str),
+            Some("cli")
+        );
     }
 }
 

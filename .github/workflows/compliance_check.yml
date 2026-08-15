@@ -11,7 +11,7 @@ permissions:
   contents: read
 jobs:
   scheduled_compliance_check:
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -40,8 +40,12 @@ jobs:
       run: |
         cargo xtask compliance version "$LATEST_TAG" --branch main --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
-        GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        GITHUB_APP_ID: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        GITHUB_APP_KEY: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
+        ORION_STUDIO_AUTOMATION_BOT_LOGIN: ${{ vars.ORION_STUDIO_AUTOMATION_BOT_LOGIN }}
+        ORION_STUDIO_AUTOMATION_GIT_EMAIL: ${{ vars.ORION_STUDIO_AUTOMATION_GIT_EMAIL }}
+        ORION_STUDIO_AUTOMATION_GIT_NAME: ${{ vars.ORION_STUDIO_AUTOMATION_GIT_NAME }}
+        ORION_STUDIO_RELEASE_COMPLIANCE: '1'
         LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
       continue-on-error: true
     - name: run_bundling::upload_artifact

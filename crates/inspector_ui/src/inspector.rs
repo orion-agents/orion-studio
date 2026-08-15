@@ -3,6 +3,12 @@ use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, T
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*, utils::platform_title_bar_height};
 use util::{ResultExt as _, command::new_command};
+
+fn repository_directory() -> &'static str {
+    option_env!("ORION_STUDIO_REPO_DIR")
+        .or(option_env!("ZED_REPO_DIR"))
+        .unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+}
 use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
@@ -110,7 +116,7 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
     // For unknown reasons, for some elements the path is absolute.
     let source_location_string = source_location.to_string();
     let source_location_string = source_location_string
-        .strip_prefix(env!("ZED_REPO_DIR"))
+        .strip_prefix(repository_directory())
         .and_then(|s| s.strip_prefix("/"))
         .map(|s| s.to_string())
         .unwrap_or(source_location_string);
@@ -139,9 +145,11 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
                 .font_buffer(cx)
                 .text_xs()
                 .child(source_location_string)
-                .tooltip(Tooltip::text("Click to open by running Zed CLI"))
+                .tooltip(Tooltip::text(
+                    "Click to open by running the Orion Studio CLI",
+                ))
                 .on_click(move |_, _window, cx| {
-                    cx.background_spawn(open_zed_source_location(source_location))
+                    cx.background_spawn(open_orion_source_location(source_location))
                         .detach_and_log_err(cx);
                 }),
         )
@@ -157,10 +165,10 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
         )
 }
 
-async fn open_zed_source_location(
+async fn open_orion_source_location(
     location: &'static std::panic::Location<'static>,
 ) -> anyhow::Result<()> {
-    let mut path = Path::new(env!("ZED_REPO_DIR")).to_path_buf();
+    let mut path = Path::new(repository_directory()).to_path_buf();
     path.push(Path::new(location.file()));
     let path_arg = format!(
         "{}:{}:{}",
@@ -169,15 +177,27 @@ async fn open_zed_source_location(
         location.column()
     );
 
-    let output = new_command("zed")
-        .arg(&path_arg)
-        .output()
-        .await
-        .with_context(|| format!("running zed to open {path_arg} failed"))?;
+    let (output, command_name) = match new_command("orion").arg(&path_arg).output().await {
+        Ok(output) => (output, "Orion Studio CLI"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (
+            new_command("zed")
+                .arg(&path_arg)
+                .output()
+                .await
+                .with_context(|| {
+                    format!("running the Orion Studio or legacy CLI to open {path_arg} failed")
+                })?,
+            "legacy Orion Studio CLI alias `zed`",
+        ),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("running Orion Studio CLI to open {path_arg} failed"));
+        }
+    };
 
     if !output.status.success() {
         Err(anyhow!(
-            "running zed to open {path_arg} failed with stderr: {}",
+            "running {command_name} to open {path_arg} failed with stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         ))
     } else {

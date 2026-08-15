@@ -24,25 +24,25 @@
 
 报告中必须有一张最终值表，不能只写“以后决定”：
 
-| 类别 | 最终值 | 旧值 | 兼容策略 | 责任人/批准证据 |
-| --- | --- | --- | --- | --- |
-| 展示名称 |  | Zed |  |  |
-| repo/product slug |  | zed |  |  |
-| Rust package/crate |  | zed |  |  |
-| 主 binary |  | zed |  |  |
-| CLI 命令与别名 |  | zed |  |  |
-| 环境变量前缀 |  | ZED_ |  |  |
-| 配置/缓存/日志目录 |  | Zed/zed |  |  |
-| 远程 server 目录 |  | .zed_server |  |  |
-| URL scheme |  | zed:// |  |  |
-| macOS Bundle ID |  | dev.zed.* |  |  |
-| Windows App/installer ID |  | Zed |  |  |
-| Linux desktop/Flatpak ID |  | zed/zed-editor |  |  |
-| 文档/官网 endpoint |  | zed.dev |  |  |
-| cloud/collab endpoint |  | cloud.zed.dev/collab.zed.dev |  |  |
-| update/crash/telemetry endpoint |  | Zed service |  |  |
-| extension registry/API namespace |  | Zed |  |  |
-| 配置、协议、数据库兼容窗口 |  | N/A |  |  |
+| 类别                             | 最终值 | 旧值                         | 兼容策略 | 责任人/批准证据 |
+| -------------------------------- | ------ | ---------------------------- | -------- | --------------- |
+| 展示名称                         |        | Zed                          |          |                 |
+| repo/product slug                |        | zed                          |          |                 |
+| Rust package/crate               |        | zed                          |          |                 |
+| 主 binary                        |        | zed                          |          |                 |
+| CLI 命令与别名                   |        | zed                          |          |                 |
+| 环境变量前缀                     |        | ZED\_                        |          |                 |
+| 配置/缓存/日志目录               |        | Zed/zed                      |          |                 |
+| 远程 server 目录                 |        | .zed_server                  |          |                 |
+| URL scheme                       |        | zed://                       |          |                 |
+| macOS Bundle ID                  |        | dev.zed.\*                   |          |                 |
+| Windows App/installer ID         |        | Zed                          |          |                 |
+| Linux desktop/Flatpak ID         |        | zed/zed-editor               |          |                 |
+| 文档/官网 endpoint               |        | zed.dev                      |          |                 |
+| cloud/collab endpoint            |        | cloud.zed.dev/collab.zed.dev |          |                 |
+| update/crash/telemetry endpoint  |        | Zed service                  |          |                 |
+| extension registry/API namespace |        | Zed                          |          |                 |
+| 配置、协议、数据库兼容窗口       |        | N/A                          |          |                 |
 
 ## 执行步骤
 
@@ -58,7 +58,7 @@
 5. 对许可证写清楚实际 SPDX 标识、适用 crate、第三方依赖、商标和 attribution。
 6. 在文档底部添加人类审批区：
 
-~~~text
+```text
 产品范围批准：
 身份矩阵批准：
 服务端点批准：
@@ -67,7 +67,7 @@
 批准人：
 日期：
 决策记录链接：
-~~~
+```
 
 ## 阻塞规则
 
@@ -100,4 +100,3 @@
 - 哪些字段已批准，哪些字段 BLOCKED。
 - 后续子计划可以开始到哪一项。
 - 未决问题和需要谁批准。
-

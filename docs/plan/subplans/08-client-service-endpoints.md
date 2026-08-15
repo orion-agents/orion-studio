@@ -14,15 +14,15 @@ Orion 契约。不得让客户端在活动默认路径上继续依赖未经批�
 
 ## 允许修改
 
-- crates/client/**
-- crates/cloud_api_client/**
+- crates/client/\*\*
+- crates/cloud_api_client/\*\*
 - 与客户端服务配置直接相关的测试和 mock。
 - 如 S01 明确列出其他 URL builder 文件，只能在报告中申请后修改。
 
 禁止修改：
 
 - crates/collab/**、crates/remote_server/**
-- crates/zed/resources/**、安装器、workflow。
+- crates/zed/resources/\*\*、安装器、workflow。
 - 认证数据库、生产 secret、法律条款和计费实现。
 - RPC wire format 和数据库 schema。
 
@@ -32,18 +32,18 @@ Orion 契约。不得让客户端在活动默认路径上继续依赖未经批�
 
 先读：
 
-~~~text
+```text
 crates/client/src/client.rs
 crates/client/src/zed_urls.rs
 crates/cloud_api_client/
-~~~
+```
 
 搜索：
 
-~~~text
+```text
 rg -n -i 'ZED_|zed\.dev|cloud\.zed|collab\.zed|rpc|websocket|login|update|telemetry|crash' \
   crates/client crates/cloud_api_client
-~~~
+```
 
 按来源分类：
 
@@ -61,7 +61,7 @@ rg -n -i 'ZED_|zed\.dev|cloud\.zed|collab\.zed|rpc|websocket|login|update|teleme
 
 - 规范 endpoint 由统一配置/URL builder 产生。
 - 环境变量覆盖优先级保持不变。
-- 旧 ZED_* 只读兼容并产生可测试的弃用诊断。
+- 旧 ZED\_\* 只读兼容并产生可测试的弃用诊断。
 - 生产 URL、测试 URL、localhost 和 staging 必须明确区分。
 - 默认配置不含 secret；日志不能打印 token、cookie、授权 header 或完整用户 URL。
 - 离线/自托管模式不应该静默回退到 Zed 服务。
@@ -109,20 +109,20 @@ rg -n -i 'ZED_|zed\.dev|cloud\.zed|collab\.zed|rpc|websocket|login|update|teleme
 
 ## 验收命令
 
-~~~text
+```text
 git diff --check
 cargo +stable fmt --all -- --check
 cargo +stable metadata --no-deps --format-version 1
 cargo +stable test -p client
 cargo +stable test -p cloud_api_client
-~~~
+```
 
 按实际 package 名补充 URL、登录或 RPC 专用测试。最终检查：
 
-~~~text
+```text
 rg -n -i 'zed\.dev|cloud\.zed|collab\.zed|ZED_' \
   crates/client crates/cloud_api_client
-~~~
+```
 
 剩余命中必须属于兼容、测试、法律或上游归属，并在交接中列出。
 
@@ -155,4 +155,3 @@ rg -n -i 'zed\.dev|cloud\.zed|collab\.zed|ZED_' \
 - mock 网络请求记录。
 - 所有剩余旧 endpoint 命中及理由。
 - S09 需要的服务端契约和字段。
-

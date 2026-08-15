@@ -2,24 +2,26 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ${ZED_KUBE_NAMESPACE}
+  name: ${ORION_STUDIO_KUBE_NAMESPACE}
+  labels:
+    orion.studio/environment: ${ORION_STUDIO_KUBE_NAMESPACE}
 
 ---
 kind: Service
 apiVersion: v1
 metadata:
-  namespace: ${ZED_KUBE_NAMESPACE}
-  name: ${ZED_SERVICE_NAME}
+  namespace: ${ORION_STUDIO_KUBE_NAMESPACE}
+  name: ${ORION_STUDIO_SERVICE_NAME}
   annotations:
-    service.beta.kubernetes.io/do-loadbalancer-name: "${ZED_SERVICE_NAME}-${ZED_KUBE_NAMESPACE}"
-    service.beta.kubernetes.io/do-loadbalancer-size-unit: "${ZED_LOAD_BALANCER_SIZE_UNIT}"
+    service.beta.kubernetes.io/do-loadbalancer-name: "${ORION_STUDIO_SERVICE_NAME}-${ORION_STUDIO_KUBE_NAMESPACE}"
+    service.beta.kubernetes.io/do-loadbalancer-size-unit: "${ORION_STUDIO_LOAD_BALANCER_SIZE_UNIT}"
     service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
-    service.beta.kubernetes.io/do-loadbalancer-certificate-id: ${ZED_DO_CERTIFICATE_ID}
+    service.beta.kubernetes.io/do-loadbalancer-certificate-id: ${ORION_STUDIO_DO_CERTIFICATE_ID}
     service.beta.kubernetes.io/do-loadbalancer-disable-lets-encrypt-dns-records: "true"
 spec:
   type: LoadBalancer
   selector:
-    app: ${ZED_SERVICE_NAME}
+    app: ${ORION_STUDIO_SERVICE_NAME}
   ports:
     - name: web
       protocol: TCP
@@ -30,11 +32,15 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: ${ZED_KUBE_NAMESPACE}
-  name: ${ZED_SERVICE_NAME}
+  namespace: ${ORION_STUDIO_KUBE_NAMESPACE}
+  name: ${ORION_STUDIO_SERVICE_NAME}
+  annotations:
+    orion.studio/source-revision: ${GITHUB_SHA}
 
 spec:
-  replicas: 1
+  replicas: 2
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -42,18 +48,27 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app: ${ZED_SERVICE_NAME}
+      app: ${ORION_STUDIO_SERVICE_NAME}
   template:
     metadata:
       labels:
-        app: ${ZED_SERVICE_NAME}
+        app: ${ORION_STUDIO_SERVICE_NAME}
+      annotations:
+        orion.studio/source-revision: ${GITHUB_SHA}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
-        - name: ${ZED_SERVICE_NAME}
-          image: "${ZED_IMAGE_ID}"
+        - name: ${ORION_STUDIO_SERVICE_NAME}
+          image: "${ORION_STUDIO_IMAGE_ID}"
           args:
             - serve
-            - ${ZED_SERVICE_NAME}
+            - ${ORION_STUDIO_SERVICE_NAME}
           ports:
             - containerPort: 8080
               protocol: TCP
@@ -77,6 +92,13 @@ spec:
             initialDelaySeconds: 1
             periodSeconds: 1
             failureThreshold: 15
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
           env:
             - name: HTTP_PORT
               value: "8080"
@@ -87,16 +109,26 @@ spec:
                   key: url
             - name: DATABASE_MAX_CONNECTIONS
               value: "${DATABASE_MAX_CONNECTIONS}"
-            - name: ZED_CLIENT_CHECKSUM_SEED
+            - name: ORION_STUDIO_CLIENT_CHECKSUM_SEED
               valueFrom:
                 secretKeyRef:
-                  name: zed-client
+                  name: orion-studio-client
                   key: checksum-seed
-            - name: ZED_CLOUD_INTERNAL_API_KEY
+            - name: ORION_STUDIO_CLOUD_INTERNAL_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: zed-cloud
+                  name: orion-studio-cloud
                   key: internal-api-key
+            - name: ORION_STUDIO_WEB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: orion-studio-cloud
+                  key: web-url
+            - name: ORION_STUDIO_CLOUD_URL
+              valueFrom:
+                secretKeyRef:
+                  name: orion-studio-cloud
+                  key: cloud-url
             - name: LIVEKIT_SERVER
               valueFrom:
                 secretKeyRef:
@@ -157,22 +189,83 @@ spec:
                 secretKeyRef:
                   name: kinesis
                   key: region
-            - name: BLOB_STORE_BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: blob-store
-                  key: bucket
             - name: RUST_BACKTRACE
               value: "1"
             - name: RUST_LOG
               value: ${RUST_LOG}
             - name: LOG_JSON
               value: "true"
-            - name: ZED_ENVIRONMENT
-              value: ${ZED_ENVIRONMENT}
+            - name: ORION_STUDIO_ENVIRONMENT
+              value: ${ORION_STUDIO_ENVIRONMENT}
           securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
-              # TODO - Switch to the more restrictive `PERFMON` capability.
-              # This capability isn't yet available in a stable version of Debian.
-              add: ["SYS_ADMIN"]
+              drop: ["ALL"]
+          volumeMounts:
+            - name: temporary-files
+              mountPath: /tmp
+      volumes:
+        - name: temporary-files
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
       terminationGracePeriodSeconds: 10
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  namespace: ${ORION_STUDIO_KUBE_NAMESPACE}
+  name: ${ORION_STUDIO_SERVICE_NAME}-disruption-budget
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ${ORION_STUDIO_SERVICE_NAME}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  namespace: ${ORION_STUDIO_KUBE_NAMESPACE}
+  name: ${ORION_STUDIO_SERVICE_NAME}-network
+spec:
+  podSelector:
+    matchLabels:
+      app: ${ORION_STUDIO_SERVICE_NAME}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: ${ORION_STUDIO_INGRESS_CIDR}
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: ${ORION_STUDIO_DATABASE_EGRESS_CIDR}
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - ipBlock:
+            cidr: ${ORION_STUDIO_HTTPS_EGRESS_CIDR}
+      ports:
+        - protocol: TCP
+          port: 443

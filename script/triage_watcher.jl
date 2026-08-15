@@ -1,5 +1,5 @@
 ## Triage Watcher v0.1
-# This is a small script to watch for new issues on the Zed repository and open them in a new browser tab interactively.
+# This is a small script to watch for new issues on the Orion Studio repository and open them in a new browser tab interactively.
 #
 ## Installing Julia
 #

@@ -24,8 +24,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolSchemaFormat, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
-    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    OPEN_AI_PROVIDER_NAME, ORION_CLOUD_PROVIDER_ID, ORION_CLOUD_PROVIDER_NAME, RateLimiter,
+    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -46,8 +46,8 @@ use open_ai::completion::{
     into_open_ai_response, token_usage_from_response_usage,
 };
 
-const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
-const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
+const PROVIDER_ID: LanguageModelProviderId = ORION_CLOUD_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = ORION_CLOUD_PROVIDER_NAME;
 
 /// Trait for acquiring and refreshing LLM authentication tokens.
 pub trait CloudLlmTokenProvider: Send + Sync {
@@ -63,7 +63,7 @@ pub trait CloudLlmTokenProvider: Send + Sync {
     fn has_data_retention_consent(&self, cx: &impl AppContext) -> bool;
 }
 
-/// Sends an authenticated request to the Zed LLM service, retrying once with
+/// Sends an authenticated request to the Orion Studio LLM service, retrying once with
 /// a refreshed token if the server signals that the cached LLM token is
 /// expired or otherwise rejected. Returns the raw response so callers can
 /// inspect headers and stream the body.
@@ -253,7 +253,7 @@ struct ApiError {
     headers: HeaderMap<HeaderValue>,
 }
 
-/// Represents error responses from Zed's cloud API.
+/// Represents error responses from Orion Studio's cloud API.
 ///
 /// Example JSON for an upstream HTTP error:
 /// ```json

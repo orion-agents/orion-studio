@@ -9,7 +9,7 @@ use serde_json::json;
 use crate::tasks::workflows::{
     steps::{
         CommonJobConditions, CommonPermissionSets, cache_rust_dependencies_namespace,
-        repository_owner_guard_expression, use_clang,
+        repository_guard_expression, use_clang,
     },
     vars::{self, PathCondition},
 };
@@ -301,7 +301,7 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
 
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
-        .with_repository_owner_guard()
+        .with_repository_guard()
         .outputs(outputs)
         .when(target == OrchestrateTarget::ZedRepo, |this| {
             this.add_step(steps::harden_runner())
@@ -358,7 +358,7 @@ pub fn tests_pass(jobs: &[NamedJob], extra_job_names: &[&str]) -> NamedJob {
                 .map(|name| name.to_string())
                 .collect::<Vec<String>>(),
         )
-        .cond(repository_owner_guard_expression(true))
+        .cond(repository_guard_expression(true))
         .add_step(
             env_entries
                 .into_iter()
@@ -656,7 +656,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
 
 fn build_visual_tests_binary() -> NamedJob {
     pub fn cargo_build_visual_tests() -> Step<Run> {
-        named::bash("cargo build -p zed --bin zed_visual_test_runner --features visual-tests")
+        named::bash(
+            "cargo build -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests",
+        )
     }
 
     named::job(
@@ -716,9 +718,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
-            .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
+            .add_env(("GIT_AUTHOR_EMAIL", "ci@orion.dev"))
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
-            .add_env(("GIT_COMMITTER_EMAIL", "ci@zed.dev"))
+            .add_env(("GIT_COMMITTER_EMAIL", "ci@orion.dev"))
             .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
@@ -820,8 +822,10 @@ pub(crate) fn check_scripts(harden: bool) -> NamedJob {
     fn check_xtask_workflows() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             cargo xtask workflows
-            if ! git diff --exit-code .github; then
-              echo "Error: .github directory has uncommitted changes after running 'cargo xtask workflows'"
+            workflow_changes=$(git status --porcelain --untracked-files=all -- .github/workflows extensions/workflows)
+            if [[ -n "$workflow_changes" ]]; then
+              printf '%s\n' "$workflow_changes"
+              echo "Error: generated workflow files are not synchronized with their Rust sources"
               echo "Please run 'cargo xtask workflows' locally and commit the changes"
               exit 1
             fi

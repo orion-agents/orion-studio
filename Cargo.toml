@@ -498,7 +498,7 @@ web_search_providers = { path = "crates/web_search_providers" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
-zed = { path = "crates/zed" }
+orion_studio = { package = "orion-studio", path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
@@ -1062,7 +1062,7 @@ lto = "thin"
 codegen-units = 1
 
 [profile.release.package]
-zed = { codegen-units = 16 }
+orion-studio = { codegen-units = 16 }
 
 [profile.release-fast]
 inherits = "release"
@@ -1083,7 +1083,7 @@ redundant_clone = "deny"
 disallowed_methods = "deny"
 
 # We currently do not restrict any style rules
-# as it slows down shipping code to Zed.
+# as it slows down shipping code to Orion Studio.
 #
 # Running ./script/clippy can take several minutes, and so it's
 # common to skip that step and let CI do it. Any unexpected failures
@@ -1091,7 +1091,7 @@ disallowed_methods = "deny"
 # to an old branch, manual fixing, and re-pushing.
 #
 # In the future we could improve this by either making sure
-# Zed can surface clippy errors in diagnostics (in addition to the
+# Orion Studio can surface clippy errors in diagnostics (in addition to the
 # rust-analyzer errors), or by having CI fix style nits automatically.
 style = { level = "allow", priority = -1 }
 

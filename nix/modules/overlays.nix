@@ -3,9 +3,12 @@
   flake.overlays.default =
     final: _:
     let
-      mkZed = import ../toolchain.nix { inherit inputs; };
+      mkOrionStudio = import ../toolchain.nix { inherit inputs; };
+      orionStudio = mkOrionStudio final;
     in
     {
-      zed-editor = mkZed final;
+      orion-studio = orionStudio;
+      # Compatibility alias for existing overlay consumers.
+      zed-editor = orionStudio;
     };
 }

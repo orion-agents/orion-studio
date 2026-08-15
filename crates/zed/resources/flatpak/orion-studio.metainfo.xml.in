@@ -5,13 +5,10 @@
     <project_license>Apache-2.0 and GPL-3.0-or-later</project_license>
 
     <name>$APP_NAME</name>
-    <summary>High-performance, multiplayer code editor</summary>
-    <developer id="dev.orion">
-        <name translate="no">Zed Industries, Inc.</name>
-    </developer>
+    <summary>Orion Studio, a high-performance collaborative code editor</summary>
     <description>
         <p>
-            Productive coding starts with a tool that stays out of your way. Zed blends the power of an IDE with the speed of a lightweight editor for productivity you can feel under your fingertips.
+            Orion Studio blends the power of an IDE with the speed of a lightweight editor for a responsive development workflow.
         </p>
         <p>Features:</p>
         <ul>

@@ -14,9 +14,9 @@
 
 ## 允许修改
 
-- crates/cli/**
-- crates/extension_api/**
-- extensions/test-extension/**
+- crates/cli/\*\*
+- crates/extension_api/\*\*
+- extensions/test-extension/\*\*
 - 与上述入口直接相关的测试和 fixture。
 
 如编译错误涉及主 binary，只能记录并交回 S05；不要修改 S05 的文件。
@@ -27,19 +27,19 @@
 
 先读：
 
-~~~text
+```text
 crates/cli/src/main.rs
 crates/cli/Cargo.toml
 crates/extension_api/src/extension_api.rs
 extensions/test-extension/
-~~~
+```
 
 搜索并分类：
 
-~~~text
+```text
 rg -n 'zed://|zed::|Zed|zed|binary|command|WIT|namespace|extension' \
   crates/cli crates/extension_api extensions/test-extension
-~~~
+```
 
 记录参数、退出码、打开文件/目录、行列号、stdin/stdout、错误输出和协议版本。
 
@@ -87,22 +87,22 @@ rg -n 'zed://|zed::|Zed|zed|binary|command|WIT|namespace|extension' \
 
 ## 验收命令
 
-~~~text
+```text
 git diff --check
 cargo +stable fmt --all -- --check
 cargo +stable metadata --no-deps --format-version 1
 cargo +stable test -p cli
 cargo +stable test -p extension_api
 cargo +stable test -p test-extension
-~~~
+```
 
 如果 package 名不同，先从 cargo metadata 获取实际 package 名；不要猜测。
 在可用环境运行主 binary 的 CLI smoke：
 
-~~~text
+```text
 cargo +stable run -p <最终主 package> --bin <最终 binary> -- --help
 cargo +stable run -p <最终主 package> --bin <最终 binary> -- --version
-~~~
+```
 
 ## 验收标准
 
@@ -132,4 +132,3 @@ cargo +stable run -p <最终主 package> --bin <最终 binary> -- --version
 - 兼容测试结果和期限。
 - 主 binary smoke 结果。
 - S07/S10 仍需处理的文案、资源和平台注册项。
-

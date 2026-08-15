@@ -16,10 +16,15 @@ pub const GOOGLE_PROVIDER_NAME: LanguageModelProviderName =
 pub const X_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 pub const X_AI_PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
 
-pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId =
+pub const ORION_CLOUD_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("orion.dev");
-pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
-    LanguageModelProviderName::new("Zed");
+pub const ORION_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Orion");
+
+#[deprecated(note = "use ORION_CLOUD_PROVIDER_ID")]
+pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = ORION_CLOUD_PROVIDER_ID;
+#[deprecated(note = "use ORION_CLOUD_PROVIDER_NAME")]
+pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName = ORION_CLOUD_PROVIDER_NAME;
 
 pub fn provider_name_for_id(provider_id: &LanguageModelProviderId) -> LanguageModelProviderName {
     if provider_id == &OPEN_AI_PROVIDER_ID {
@@ -30,8 +35,8 @@ pub fn provider_name_for_id(provider_id: &LanguageModelProviderId) -> LanguageMo
         GOOGLE_PROVIDER_NAME
     } else if provider_id == &X_AI_PROVIDER_ID {
         X_AI_PROVIDER_NAME
-    } else if provider_id == &ZED_CLOUD_PROVIDER_ID {
-        ZED_CLOUD_PROVIDER_NAME
+    } else if provider_id == &ORION_CLOUD_PROVIDER_ID {
+        ORION_CLOUD_PROVIDER_NAME
     } else {
         LanguageModelProviderName(provider_id.0.clone())
     }

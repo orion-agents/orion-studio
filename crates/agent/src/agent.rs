@@ -2565,15 +2565,31 @@ fn model_id_to_selection(model_id: &AgentModelId, cx: &App) -> LanguageModelSele
     agent_settings::language_model_to_selection(&resolved, current_user_selection.as_ref())
 }
 
-pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed Agent"));
+pub static ORION_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Orion Agent"));
+
+// Older thread metadata persisted this identifier. New state uses `ORION_AGENT_ID`, while reads
+// continue to recognize this value so existing threads remain attached to the native agent.
+pub static LEGACY_ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed Agent"));
+
+pub fn is_native_agent_id(agent_id: &str) -> bool {
+    agent_id == ORION_AGENT_ID.as_ref() || agent_id == LEGACY_ZED_AGENT_ID.as_ref()
+}
+
+pub fn canonicalize_native_agent_id(agent_id: AgentId) -> AgentId {
+    if is_native_agent_id(agent_id.as_ref()) {
+        ORION_AGENT_ID.clone()
+    } else {
+        agent_id
+    }
+}
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
-        ZED_AGENT_ID.clone()
+        ORION_AGENT_ID.clone()
     }
 
     fn telemetry_id(&self) -> SharedString {
-        "zed".into()
+        "orion-studio".into()
     }
 
     fn new_session(
@@ -3161,7 +3177,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         // Linux, and via WSL on Windows) already mounts a fresh, writable
         // `tmpfs` over `/tmp`, so the environment looks like a normal
         // filesystem with no special `$TMPDIR` (which would only make the
-        // sandbox more obviously Zed-specific). On Windows a per-thread
+        // sandbox more obviously Orion Studio-specific). On Windows a per-thread
         // `$TMPDIR` would also be a Windows path that's meaningless inside
         // WSL, and adding it to the writable scope would bind a stray
         // `/mnt/<drive>/...` path.
@@ -3726,6 +3742,22 @@ mod internal_tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
+
+    #[test]
+    fn native_agent_id_canonicalizes_legacy_persisted_identity() {
+        assert!(is_native_agent_id(ORION_AGENT_ID.as_ref()));
+        assert!(is_native_agent_id(LEGACY_ZED_AGENT_ID.as_ref()));
+        assert_eq!(
+            canonicalize_native_agent_id(LEGACY_ZED_AGENT_ID.clone()),
+            ORION_AGENT_ID.clone()
+        );
+
+        let external_agent_id = AgentId::new("external-agent");
+        assert_eq!(
+            canonicalize_native_agent_id(external_agent_id.clone()),
+            external_agent_id
+        );
+    }
 
     fn make_global_skill(name: &str, description: &str) -> Skill {
         Skill {

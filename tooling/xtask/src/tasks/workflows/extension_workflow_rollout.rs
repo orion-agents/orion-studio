@@ -14,14 +14,13 @@ use crate::tasks::workflows::steps::{
 use crate::tasks::workflows::vars::JobOutput;
 use crate::tasks::workflows::{
     runners,
-    steps::{
-        self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, RepositoryTarget, generate_token, named,
-    },
+    steps::{self, DEFAULT_REPOSITORY_GUARD, NamedJob, RepositoryTarget, named},
     vars::{self, StepOutput, WorkflowInput},
 };
 
 const ROLLOUT_TAG_NAME: &str = "extension-workflows";
 const WORKFLOW_ARTIFACT_NAME: &str = "extension-workflow-files";
+const EXTENSION_AUTOMATION_GUARD: &str = "vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion')";
 
 pub(crate) fn extension_workflow_rollout() -> Workflow {
     let filter_repos_input = WorkflowInput::string("filter-repos", Some(String::new()))
@@ -57,8 +56,13 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
 fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOutput, JobOutput) {
     fn get_repositories(filter_repos_input: &WorkflowInput) -> (Step<Use>, StepOutput) {
         let step: Step<Use> = steps::github_script(formatdoc! {r#"
+                const organization = process.env.EXTENSION_ORGANIZATION.trim();
+                if (!/^orion(?:-[a-z0-9]+)*$/.test(organization)) {{
+                    throw new Error('ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization');
+                }}
+
                 const repos = await github.paginate(github.rest.repos.listForOrg, {{
-                    org: 'zed-extensions',
+                    org: organization,
                     type: 'public',
                     per_page: 100,
                 }});
@@ -80,6 +84,10 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
             .result_encoding(ResultEncoding::Json)
             .custom_name("get_repositories")
             .id("list-repos")
+            .env(
+                "EXTENSION_ORGANIZATION",
+                vars::ORION_STUDIO_EXTENSION_ORGANIZATION,
+            )
             .env("FILTER_REPOS", filter_repos_input.to_string())
             .into();
 
@@ -88,10 +96,11 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
         (step, filtered_repos)
     }
 
-    fn checkout_zed_repo() -> CheckoutStep {
+    fn checkout_orion_studio_repo() -> CheckoutStep {
         steps::checkout_repo()
             .with_full_history()
-            .with_custom_name("checkout_zed_repo")
+            .without_persisted_credentials()
+            .with_custom_name("checkout_orion_studio_repo")
     }
 
     fn get_previous_tag_commit() -> (Step<Run>, StepOutput) {
@@ -158,7 +167,7 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
 
     let job = Job::default()
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} && (github.ref == 'refs/tags/{ROLLOUT_TAG_NAME}' || github.ref == 'refs/heads/main')")))
+            "{DEFAULT_REPOSITORY_GUARD} && {EXTENSION_AUTOMATION_GUARD} && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'")))
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(10u32)
         .outputs([
@@ -167,7 +176,7 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
             ("removed_ci".to_owned(), removed_ci.to_string()),
             ("removed_shared".to_owned(), removed_shared.to_string()),
         ])
-        .add_step(checkout_zed_repo())
+        .add_step(checkout_orion_studio_repo())
         .add_step(get_prev_tag)
         .add_step(calc_changes)
         .add_step(get_org_repositories)
@@ -192,10 +201,15 @@ fn rollout_workflows_to_extension(
     filter_repos_input: &WorkflowInput,
 ) -> NamedJob {
     fn checkout_extension_repo(token: &StepOutput) -> CheckoutStep {
+        let repository = format!(
+            "{}/${{{{ matrix.repo }}}}",
+            vars::ORION_STUDIO_EXTENSION_ORGANIZATION
+        );
         steps::checkout_repo()
             .with_custom_name("checkout_extension_repo")
             .with_token(token)
-            .with_repository("zed-extensions/${{ matrix.repo }}")
+            .without_persisted_credentials()
+            .with_repository(&repository)
             .with_path("extension")
     }
 
@@ -203,6 +217,32 @@ fn rollout_workflows_to_extension(
         steps::download_artifact()
             .artifact_name(WORKFLOW_ARTIFACT_NAME)
             .path("workflow-files")
+    }
+
+    fn validate_extension_target() -> Step<Run> {
+        named::bash(indoc! {r#"
+            if [[ "$EXTENSION_REGISTRY_ENABLED" != "true" ]]; then
+                echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED must be true"
+                exit 1
+            fi
+            if [[ ! "$EXTENSION_ORGANIZATION" =~ ^orion(-[a-z0-9]+)*$ ]]; then
+                echo "::error::ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization"
+                exit 1
+            fi
+            if [[ ! "$EXTENSION_REPOSITORY" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+                echo "::error::The extension repository name is invalid"
+                exit 1
+            fi
+        "#})
+        .add_env((
+            "EXTENSION_REGISTRY_ENABLED",
+            vars::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED,
+        ))
+        .add_env((
+            "EXTENSION_ORGANIZATION",
+            vars::ORION_STUDIO_EXTENSION_ORGANIZATION,
+        ))
+        .add_env(("EXTENSION_REPOSITORY", "${{ matrix.repo }}"))
     }
 
     fn sync_workflow_files(removed_ci: JobOutput, removed_shared: JobOutput) -> Step<Run> {
@@ -258,7 +298,7 @@ fn rollout_workflows_to_extension(
         let title = format!("Update CI workflows to `{short_sha}`");
 
         let body = formatdoc! {r#"
-            This PR updates the CI workflow files from the main Zed repository
+            This PR updates the CI workflow files from the main Orion Studio repository
             based on the commit orion-agents/orion-studio@${{{{ github.sha }}}}
 
             {context_input}
@@ -291,25 +331,24 @@ fn rollout_workflows_to_extension(
         ))
     }
 
-    let (authenticate, token) =
-        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
-            .for_repository(RepositoryTarget::new(
-                "zed-extensions",
-                &["${{ matrix.repo }}"],
-            ))
-            .with_permissions([
-                (TokenPermissions::PullRequests, Level::Write),
-                (TokenPermissions::Contents, Level::Write),
-                (TokenPermissions::Workflows, Level::Write),
-            ])
-            .into();
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
+        .for_repository(RepositoryTarget::new(
+            vars::ORION_STUDIO_EXTENSION_ORGANIZATION,
+            &["${{ matrix.repo }}"],
+        ))
+        .with_permissions([
+            (TokenPermissions::PullRequests, Level::Write),
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
+        ])
+        .into();
 
     let (calculate_short_sha, short_sha) = get_short_sha();
 
     let job = Job::default()
         .needs([fetch_repos_job.name.clone()])
         .cond(Expression::new(format!(
-            "needs.{}.outputs.repos != '[]'",
+            "{DEFAULT_REPOSITORY_GUARD} && {EXTENSION_AUTOMATION_GUARD} && needs.{}.outputs.repos != '[]'",
             fetch_repos_job.name
         )))
         .runs_on(runners::LINUX_SMALL)
@@ -322,6 +361,7 @@ fn rollout_workflows_to_extension(
                     "repo": format!("${{{{ fromJson(needs.{}.outputs.repos) }}}}", fetch_repos_job.name)
                 })),
         )
+        .add_step(validate_extension_target())
         .add_step(authenticate)
         .add_step(checkout_extension_repo(&token))
         .add_step(download_workflow_files())
@@ -334,26 +374,28 @@ fn rollout_workflows_to_extension(
 }
 
 fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput) -> NamedJob {
-    fn checkout_zed_repo(token: &StepOutput) -> CheckoutStep {
-        steps::checkout_repo().with_full_history().with_token(token)
+    fn checkout_orion_studio_repo(token: &StepOutput) -> CheckoutStep {
+        steps::checkout_repo()
+            .with_full_history()
+            .with_token(token)
+            .without_persisted_credentials()
     }
 
-    let (authenticate, token) =
-        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
-            .for_repository(RepositoryTarget::current())
-            .with_permissions([(TokenPermissions::Contents, Level::Write)])
-            .into();
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
+        .for_repository(RepositoryTarget::current())
+        .with_permissions([(TokenPermissions::Contents, Level::Write)])
+        .into();
 
     let job = Job::default()
         .needs([rollout_job.name.clone()])
         .cond(Expression::new(format!(
-            "{filter_repos} == ''",
+            "{DEFAULT_REPOSITORY_GUARD} && {EXTENSION_AUTOMATION_GUARD} && github.ref == 'refs/heads/main' && {filter_repos} == ''",
             filter_repos = filter_repos_input.expr(),
         )))
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(authenticate)
-        .add_step(checkout_zed_repo(&token))
+        .add_step(checkout_orion_studio_repo(&token))
         .add_step(steps::update_ref(
             GitRef::Tag(ROLLOUT_TAG_NAME.to_owned()),
             RefSha::Context,

@@ -1,11 +1,11 @@
 ---
 title: Erlang
-description: "Configure Erlang language support in Zed, including language servers, formatting, and debugging."
+description: "Configure Erlang language support in Orion Studio, including language servers, formatting, and debugging."
 ---
 
 # Erlang
 
-Erlang support is available through the [Erlang extension](https://github.com/zed-extensions/erlang).
+Erlang support is available through the upstream-Zed [Erlang extension](https://github.com/zed-extensions/erlang), which Orion Studio consumes through extension compatibility.
 
 - Tree-sitter: [WhatsApp/tree-sitter-erlang](https://github.com/WhatsApp/tree-sitter-erlang)
 - Language Servers:

@@ -1,0 +1,411 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+expected_bundle_identifier="dev.orion.OrionStudio-Preview"
+expected_bundle_name="Orion Studio Preview.app"
+expected_dmg_name="Orion-Studio-aarch64.dmg"
+preview_version=""
+
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat >&2 <<'EOF'
+Usage:
+  script/validate-preview-release tag-format TAG
+  script/validate-preview-release source TAG [MAIN_REF]
+  script/validate-preview-release checkout TAG EXPECTED_COMMIT
+  script/validate-preview-release artifact TAG DMG_PATH
+  script/validate-preview-release mach-o-minimum MACH_O_PATH
+  script/validate-preview-release disk-space MINIMUM_FREE_GIB [PATH]
+  script/validate-preview-release signing-inputs
+
+TAG must use vMAJOR.MINOR.PATCH-pre.
+MAIN_REF defaults to refs/remotes/origin/main.
+EOF
+}
+
+validate_tag_format() {
+    local tag=$1
+
+    if [[ ! "${tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-pre$ ]]; then
+        fail "preview tag must match vMAJOR.MINOR.PATCH-pre, with no leading zeroes"
+    fi
+
+    preview_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+}
+
+write_github_output() {
+    local key=$1
+    local value=$2
+
+    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+        printf '%s=%s\n' "${key}" "${value}" >> "${GITHUB_OUTPUT}"
+    fi
+}
+
+read_crate_version() {
+    local commit=$1
+    local manifest=""
+    local crate_version=""
+
+    if ! manifest=$(git show "${commit}:crates/zed/Cargo.toml"); then
+        fail "tag commit does not contain crates/zed/Cargo.toml"
+    fi
+
+    crate_version=$(printf '%s\n' "${manifest}" | awk '
+        /^\[package\][[:space:]]*$/ { in_package = 1; next }
+        in_package && /^\[/ { exit }
+        in_package && /^[[:space:]]*version[[:space:]]*=/ {
+            value = $0
+            sub(/^[^=]*=[[:space:]]*"/, "", value)
+            sub(/".*$/, "", value)
+            print value
+            exit
+        }
+    ')
+
+    if [[ ! "${crate_version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+        fail "could not read a semantic package version from crates/zed/Cargo.toml at ${commit}"
+    fi
+
+    printf '%s\n' "${crate_version}"
+}
+
+validate_source() {
+    local tag=$1
+    local main_ref=${2:-refs/remotes/origin/main}
+    local tag_ref=""
+    local tag_commit=""
+    local main_commit=""
+    local release_channel=""
+    local crate_version=""
+
+    validate_tag_format "${tag}"
+    command -v git >/dev/null 2>&1 || fail "git is required"
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "source validation must run inside a Git worktree"
+
+    tag_ref="refs/tags/${tag}"
+    git show-ref --verify --quiet "${tag_ref}" || fail "tag ${tag} is not available locally; fetch the exact origin tag first"
+    if ! tag_commit=$(git rev-parse --verify "${tag_ref}^{commit}"); then
+        fail "tag ${tag} does not resolve to a commit"
+    fi
+    if ! main_commit=$(git rev-parse --verify "${main_ref}^{commit}"); then
+        fail "main ref ${main_ref} does not resolve to a commit; fetch origin/main first"
+    fi
+    if ! git merge-base --is-ancestor "${tag_commit}" "${main_commit}"; then
+        fail "tag commit ${tag_commit} is not an ancestor of ${main_ref} (${main_commit})"
+    fi
+
+    if ! release_channel=$(git show "${tag_commit}:crates/zed/RELEASE_CHANNEL"); then
+        fail "tag commit does not contain crates/zed/RELEASE_CHANNEL"
+    fi
+    if [[ "${release_channel}" != "preview" ]]; then
+        fail "tag commit RELEASE_CHANNEL must be preview, found '${release_channel}'"
+    fi
+
+    crate_version=$(read_crate_version "${tag_commit}")
+    if [[ "${crate_version}" != "${preview_version}" ]]; then
+        fail "tag version ${preview_version} does not match crates/zed package version ${crate_version}"
+    fi
+
+    write_github_output tag "${tag}"
+    write_github_output tag_commit "${tag_commit}"
+    write_github_output main_commit "${main_commit}"
+    write_github_output version "${preview_version}"
+    write_github_output dmg_name "${expected_dmg_name}"
+
+    printf 'Validated preview source: tag=%s commit=%s main=%s version=%s\n' \
+        "${tag}" "${tag_commit}" "${main_commit}" "${preview_version}"
+}
+
+validate_checkout() {
+    local tag=$1
+    local expected_commit=$2
+    local checked_out_commit=""
+    local release_channel=""
+    local crate_version=""
+
+    validate_tag_format "${tag}"
+    [[ "${expected_commit}" =~ ^[0-9a-f]{40}$ ]] || fail "expected commit must be a full lowercase 40-character Git SHA"
+    command -v git >/dev/null 2>&1 || fail "git is required"
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "checkout validation must run inside a Git worktree"
+    if ! checked_out_commit=$(git rev-parse --verify 'HEAD^{commit}'); then
+        fail "HEAD does not resolve to a commit"
+    fi
+    [[ "${checked_out_commit}" == "${expected_commit}" ]] || fail "checked-out commit ${checked_out_commit} does not match validated tag commit ${expected_commit}"
+
+    if ! release_channel=$(git show 'HEAD:crates/zed/RELEASE_CHANNEL'); then
+        fail "checked-out commit does not contain crates/zed/RELEASE_CHANNEL"
+    fi
+    [[ "${release_channel}" == "preview" ]] || fail "checked-out RELEASE_CHANNEL must be preview, found '${release_channel}'"
+    crate_version=$(read_crate_version "${checked_out_commit}")
+    [[ "${crate_version}" == "${preview_version}" ]] || fail "tag version ${preview_version} does not match checked-out package version ${crate_version}"
+
+    printf 'Validated preview checkout: tag=%s commit=%s version=%s\n' "${tag}" "${checked_out_commit}" "${crate_version}"
+}
+
+validate_disk_space() {
+    local minimum_free_gib=$1
+    local target_path=${2:-.}
+    local available_kib=""
+    local required_kib=""
+
+    [[ "${minimum_free_gib}" =~ ^[1-9][0-9]*$ ]] || fail "minimum free GiB must be a positive integer"
+    [[ -e "${target_path}" ]] || fail "disk-space path does not exist: ${target_path}"
+    if ! available_kib=$(LC_ALL=C df -Pk "${target_path}" | awk 'NR == 2 { print $4 }'); then
+        fail "could not inspect free disk space for ${target_path}"
+    fi
+    [[ "${available_kib}" =~ ^[0-9]+$ ]] || fail "could not parse free disk space for ${target_path}"
+    required_kib=$((minimum_free_gib * 1024 * 1024))
+    if (( available_kib < required_kib )); then
+        fail "insufficient disk space for ${target_path}: ${available_kib} KiB available, at least ${required_kib} KiB (${minimum_free_gib} GiB) required"
+    fi
+
+    printf 'Validated disk capacity: path=%s available_kib=%s minimum_gib=%s\n' "${target_path}" "${available_kib}" "${minimum_free_gib}"
+}
+
+validate_signing_inputs() {
+    local required_variables=(
+        MACOS_CERTIFICATE
+        MACOS_CERTIFICATE_PASSWORD
+        APPLE_NOTARIZATION_KEY
+        APPLE_NOTARIZATION_KEY_ID
+        APPLE_NOTARIZATION_ISSUER_ID
+        ORION_STUDIO_MACOS_SIGNING_IDENTITY
+        ORION_STUDIO_MACOS_TEAM_ID
+    )
+    local missing_variables=()
+    local variable_name=""
+    local provisioning_profile=${ORION_STUDIO_MACOS_PROVISIONING_PROFILE:-}
+    local provisioning_profile_base64=${ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64:-}
+    local signing_identity=${ORION_STUDIO_MACOS_SIGNING_IDENTITY:-}
+    local team_identifier=${ORION_STUDIO_MACOS_TEAM_ID:-}
+
+    for variable_name in "${required_variables[@]}"; do
+        if [[ -z "${!variable_name:-}" ]]; then
+            missing_variables+=("${variable_name}")
+        fi
+    done
+    if [[ -n "${provisioning_profile}" && -n "${provisioning_profile_base64}" ]]; then
+        fail "set only one of ORION_STUDIO_MACOS_PROVISIONING_PROFILE and ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64"
+    fi
+    if [[ -z "${provisioning_profile}" && -z "${provisioning_profile_base64}" ]]; then
+        missing_variables+=("ORION_STUDIO_MACOS_PROVISIONING_PROFILE or ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64")
+    fi
+    if [[ ${#missing_variables[@]} -gt 0 ]]; then
+        printf 'error: incomplete macOS release signing configuration; missing:' >&2
+        printf ' %s' "${missing_variables[@]}" >&2
+        printf '\n' >&2
+        exit 1
+    fi
+    [[ "${team_identifier}" =~ ^[A-Z0-9]{10}$ ]] || fail "ORION_STUDIO_MACOS_TEAM_ID must be a 10-character Apple Team ID"
+    [[ "${signing_identity}" != *$'\n'* && "${signing_identity}" != *$'\r'* ]] || fail "ORION_STUDIO_MACOS_SIGNING_IDENTITY must not contain line breaks"
+    if [[ -n "${provisioning_profile}" ]]; then
+        [[ -f "${provisioning_profile}" && ! -L "${provisioning_profile}" ]] || fail "ORION_STUDIO_MACOS_PROVISIONING_PROFILE must name a regular non-symlink file"
+    fi
+
+    printf 'Validated presence of all required macOS signing and notarization inputs\n'
+}
+
+require_executable() {
+    local executable=$1
+
+    [[ -x "${executable}" ]] || fail "required executable is unavailable: ${executable}"
+}
+
+verify_developer_id_metadata() {
+    local signed_path=$1
+    local label=$2
+    local expected_team_identifier=$3
+    local expected_signing_identity=$4
+    local metadata=""
+
+    if ! metadata=$(/usr/bin/codesign -d --verbose=4 "${signed_path}" 2>&1); then
+        fail "could not read code-signing metadata for ${label}"
+    fi
+    if printf '%s\n' "${metadata}" | grep -Fqx 'Signature=adhoc'; then
+        fail "${label} has an ad-hoc signature"
+    fi
+    if ! printf '%s\n' "${metadata}" | grep -Eq '^Authority=Developer ID Application: '; then
+        fail "${label} is not signed with a Developer ID Application certificate"
+    fi
+    if ! printf '%s\n' "${metadata}" | grep -Fqx "Authority=${expected_signing_identity}"; then
+        fail "${label} signing authority does not match ORION_STUDIO_MACOS_SIGNING_IDENTITY"
+    fi
+    if ! printf '%s\n' "${metadata}" | grep -Fqx "TeamIdentifier=${expected_team_identifier}"; then
+        fail "${label} TeamIdentifier does not match ORION_STUDIO_MACOS_TEAM_ID"
+    fi
+}
+
+validate_macos_minimum_version() {
+    local executable_path=$1
+    local load_commands=""
+    local minimum_versions=""
+    local minimum_version_count=""
+    local minimum_version=""
+
+    [[ -f "${executable_path}" && ! -L "${executable_path}" ]] || fail "Mach-O executable must be a regular non-symlink file: ${executable_path}"
+    require_executable /usr/bin/otool
+    if ! load_commands=$(/usr/bin/otool -l "${executable_path}"); then
+        fail "could not read Mach-O load commands from ${executable_path}"
+    fi
+    minimum_versions=$(printf '%s\n' "${load_commands}" | awk '
+        $1 == "cmd" { current_command = $2; next }
+        current_command == "LC_BUILD_VERSION" && $1 == "minos" { print $2 }
+        current_command == "LC_VERSION_MIN_MACOSX" && $1 == "version" { print $2 }
+    ')
+    minimum_version_count=$(printf '%s\n' "${minimum_versions}" | awk 'NF { count += 1 } END { print count + 0 }')
+    [[ "${minimum_version_count}" == "1" ]] || fail "expected exactly one macOS minimum-version load command, found ${minimum_version_count}"
+    minimum_version=$(printf '%s\n' "${minimum_versions}" | awk 'NF { print; exit }')
+    case "${minimum_version}" in
+        11.0|11.0.0)
+            ;;
+        *)
+            fail "main Mach-O minimum macOS version must be 11.0, found ${minimum_version}"
+            ;;
+    esac
+
+    printf 'Validated Mach-O minimum macOS version: executable=%s minos=%s\n' "${executable_path}" "${minimum_version}"
+}
+
+validate_artifact() {
+    local tag=$1
+    local dmg_path=$2
+    local signing_team_identifier=${ORION_STUDIO_MACOS_TEAM_ID:-}
+    local signing_identity=${ORION_STUDIO_MACOS_SIGNING_IDENTITY:-}
+    local mount_directory=""
+    local mounted=false
+    local app_path=""
+    local info_plist=""
+    local bundle_identifier=""
+    local bundle_short_version=""
+    local bundle_version=""
+    local bundle_executable=""
+    local executable_path=""
+    local executable_architectures=""
+
+    validate_tag_format "${tag}"
+    [[ -f "${dmg_path}" && ! -L "${dmg_path}" ]] || fail "DMG must be a regular non-symlink file: ${dmg_path}"
+    [[ "$(basename "${dmg_path}")" == "${expected_dmg_name}" ]] || fail "DMG must be named ${expected_dmg_name}"
+    [[ "${signing_team_identifier}" =~ ^[A-Z0-9]{10}$ ]] || fail "ORION_STUDIO_MACOS_TEAM_ID must be a 10-character Apple Team ID"
+    [[ -n "${signing_identity}" ]] || fail "ORION_STUDIO_MACOS_SIGNING_IDENTITY is required for artifact validation"
+    [[ "${signing_identity}" != *$'\n'* && "${signing_identity}" != *$'\r'* ]] || fail "ORION_STUDIO_MACOS_SIGNING_IDENTITY must not contain line breaks"
+
+    require_executable /usr/bin/codesign
+    require_executable /usr/bin/hdiutil
+    require_executable /usr/bin/lipo
+    require_executable /usr/bin/otool
+    require_executable /usr/bin/xcrun
+    require_executable /usr/libexec/PlistBuddy
+    require_executable /usr/sbin/spctl
+
+    /usr/bin/hdiutil verify "${dmg_path}"
+    /usr/bin/codesign --verify --strict --verbose=2 "${dmg_path}"
+    verify_developer_id_metadata "${dmg_path}" "DMG" "${signing_team_identifier}" "${signing_identity}"
+    /usr/bin/xcrun stapler validate "${dmg_path}"
+    /usr/sbin/spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg_path}"
+
+    mount_directory=$(mktemp -d "${TMPDIR:-/tmp}/orion-preview-verify.XXXXXX") || fail "could not create a private DMG mount directory"
+    cleanup_mount() {
+        local status=$?
+
+        trap - EXIT
+        if [[ "${mounted}" == true ]]; then
+            if ! /usr/bin/hdiutil detach "${mount_directory}" >/dev/null; then
+                printf 'error: could not detach verification mount %s\n' "${mount_directory}" >&2
+                status=1
+            fi
+        fi
+        if ! rmdir "${mount_directory}"; then
+            printf 'error: could not remove verification mount directory %s\n' "${mount_directory}" >&2
+            status=1
+        fi
+        exit "${status}"
+    }
+    trap cleanup_mount EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    /usr/bin/hdiutil attach -acceptlicense -nobrowse -readonly -mountpoint "${mount_directory}" "${dmg_path}" >/dev/null
+    mounted=true
+    app_path="${mount_directory}/${expected_bundle_name}"
+    [[ -d "${app_path}" && ! -L "${app_path}" ]] || fail "DMG does not contain ${expected_bundle_name}"
+
+    info_plist="${app_path}/Contents/Info.plist"
+    [[ -f "${info_plist}" && ! -L "${info_plist}" ]] || fail "application bundle has no regular Info.plist"
+    if ! bundle_identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${info_plist}") ||
+        ! bundle_short_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${info_plist}") ||
+        ! bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${info_plist}") ||
+        ! bundle_executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${info_plist}"); then
+        fail "application Info.plist is missing required identity or version keys"
+    fi
+
+    [[ "${bundle_identifier}" == "${expected_bundle_identifier}" ]] || fail "bundle identifier must be ${expected_bundle_identifier}, found ${bundle_identifier}"
+    [[ "${bundle_short_version}" == "${preview_version}" ]] || fail "CFBundleShortVersionString must be ${preview_version}, found ${bundle_short_version}"
+    [[ "${bundle_version}" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || fail "CFBundleVersion must contain one to three numeric components, found ${bundle_version}"
+    [[ "${bundle_executable}" == "orion-studio" ]] || fail "CFBundleExecutable must be orion-studio, found ${bundle_executable}"
+
+    /usr/bin/codesign --verify --deep --strict --verbose=2 "${app_path}"
+    verify_developer_id_metadata "${app_path}" "application bundle" "${signing_team_identifier}" "${signing_identity}"
+    /usr/sbin/spctl --assess --type execute --verbose=2 "${app_path}"
+
+    executable_path="${app_path}/Contents/MacOS/${bundle_executable}"
+    [[ -f "${executable_path}" && ! -L "${executable_path}" ]] || fail "application executable is missing or symlinked"
+    if ! executable_architectures=$(/usr/bin/lipo -archs "${executable_path}"); then
+        fail "could not inspect application executable architecture"
+    fi
+    [[ "${executable_architectures}" == "arm64" ]] || fail "application executable must be arm64-only, found ${executable_architectures}"
+    validate_macos_minimum_version "${executable_path}"
+
+    if ! /usr/bin/hdiutil detach "${mount_directory}" >/dev/null; then
+        fail "could not detach verification mount ${mount_directory}"
+    fi
+    mounted=false
+    if ! rmdir "${mount_directory}"; then
+        fail "could not remove verification mount directory ${mount_directory}"
+    fi
+    trap - EXIT INT TERM
+
+    printf 'Validated preview artifact: dmg=%s bundle_id=%s version=%s build=%s arch=%s\n' \
+        "${dmg_path}" "${bundle_identifier}" "${bundle_short_version}" "${bundle_version}" "${executable_architectures}"
+}
+
+case "${1:-}" in
+    tag-format)
+        [[ $# -eq 2 ]] || { usage; exit 2; }
+        validate_tag_format "$2"
+        printf 'Validated preview tag: tag=%s version=%s\n' "$2" "${preview_version}"
+        ;;
+    source)
+        [[ $# -eq 2 || $# -eq 3 ]] || { usage; exit 2; }
+        validate_source "$2" "${3:-refs/remotes/origin/main}"
+        ;;
+    checkout)
+        [[ $# -eq 3 ]] || { usage; exit 2; }
+        validate_checkout "$2" "$3"
+        ;;
+    artifact)
+        [[ $# -eq 3 ]] || { usage; exit 2; }
+        validate_artifact "$2" "$3"
+        ;;
+    mach-o-minimum)
+        [[ $# -eq 2 ]] || { usage; exit 2; }
+        validate_macos_minimum_version "$2"
+        ;;
+    disk-space)
+        [[ $# -eq 2 || $# -eq 3 ]] || { usage; exit 2; }
+        validate_disk_space "$2" "${3:-.}"
+        ;;
+    signing-inputs)
+        [[ $# -eq 1 ]] || { usage; exit 2; }
+        validate_signing_inputs
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac

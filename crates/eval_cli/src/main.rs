@@ -1,4 +1,4 @@
-//! Headless CLI binary for running Zed's agent in evaluation/benchmark environments.
+//! Headless CLI binary for running Orion Agent in evaluation and benchmark environments.
 //!
 //! Designed to work inside containerized environments (like Harbor/termbench) where:
 //! - The repository is already checked out at the working directory
@@ -61,11 +61,11 @@ use crate::headless::AgentCliAppState;
 #[derive(Parser, Debug)]
 #[command(
     name = "eval-cli",
-    about = "Run Zed's agent headlessly in evaluation/benchmark environments"
+    about = "Run Orion Agent headlessly in evaluation and benchmark environments"
 )]
 struct Args {
     /// Output current environment variables as JSON to stdout.
-    /// Used internally by Zed's shell environment capture.
+    /// Used internally by Orion Studio's shell environment capture.
     #[arg(long, hide = true)]
     printenv: bool,
 
@@ -207,7 +207,9 @@ fn main() {
         // navigation tools behind `lsp-tool` / `rename-tool`) so experiments can
         // measure the agent with tools that aren't yet GA. Comma-separated flag
         // names; unset in production.
-        if let Ok(raw_flags) = std::env::var("ZED_EVAL_ENABLE_FLAGS") {
+        if let Ok(raw_flags) =
+            environment_variable("ORION_STUDIO_EVAL_ENABLE_FLAGS", "ZED_EVAL_ENABLE_FLAGS")
+        {
             let flags: Vec<String> = raw_flags
                 .split(',')
                 .map(|flag| flag.trim().to_string())
@@ -342,10 +344,33 @@ fn main() {
 /// `{ "api_url": ..., "available_models": [...] }`). Lets zed-eval route the
 /// agent itself through an OpenAI-compatible endpoint (e.g. Baseten) that isn't
 /// one of Zed's built-in providers, without hardcoding it into eval-cli.
-const OPENAI_COMPATIBLE_PROVIDERS_ENV: &str = "ZED_OPENAI_COMPATIBLE_PROVIDERS";
+const OPENAI_COMPATIBLE_PROVIDERS_ENV: &str = "ORION_STUDIO_OPENAI_COMPATIBLE_PROVIDERS";
+const LEGACY_OPENAI_COMPATIBLE_PROVIDERS_ENV: &str = "ZED_OPENAI_COMPATIBLE_PROVIDERS";
+
+fn environment_variable_from(
+    canonical_name: &str,
+    legacy_name: &str,
+    mut read: impl FnMut(&str) -> Result<String, std::env::VarError>,
+) -> Result<String, std::env::VarError> {
+    match read(canonical_name) {
+        Err(std::env::VarError::NotPresent) => read(legacy_name),
+        result => result,
+    }
+}
+
+fn environment_variable(
+    canonical_name: &str,
+    legacy_name: &str,
+) -> Result<String, std::env::VarError> {
+    environment_variable_from(canonical_name, legacy_name, |name| std::env::var(name))
+}
 
 fn openai_compatible_providers_override() -> Option<String> {
-    let raw = std::env::var(OPENAI_COMPATIBLE_PROVIDERS_ENV).ok()?;
+    let raw = environment_variable(
+        OPENAI_COMPATIBLE_PROVIDERS_ENV,
+        LEGACY_OPENAI_COMPATIBLE_PROVIDERS_ENV,
+    )
+    .ok()?;
     if raw.trim().is_empty() {
         return None;
     }
@@ -368,10 +393,15 @@ fn apply_openai_compatible_providers(providers_json: &str, cx: &mut gpui::App) -
 /// zed-eval run models that exist on the Anthropic API for the configured
 /// key (e.g. early-access-program models) but aren't returned by the live
 /// `/v1/models` listing, without hardcoding them into eval-cli.
-const ANTHROPIC_AVAILABLE_MODELS_ENV: &str = "ZED_ANTHROPIC_AVAILABLE_MODELS";
+const ANTHROPIC_AVAILABLE_MODELS_ENV: &str = "ORION_STUDIO_ANTHROPIC_AVAILABLE_MODELS";
+const LEGACY_ANTHROPIC_AVAILABLE_MODELS_ENV: &str = "ZED_ANTHROPIC_AVAILABLE_MODELS";
 
 fn anthropic_available_models_override() -> Option<String> {
-    let raw = std::env::var(ANTHROPIC_AVAILABLE_MODELS_ENV).ok()?;
+    let raw = environment_variable(
+        ANTHROPIC_AVAILABLE_MODELS_ENV,
+        LEGACY_ANTHROPIC_AVAILABLE_MODELS_ENV,
+    )
+    .ok()?;
     if raw.trim().is_empty() {
         return None;
     }
@@ -557,6 +587,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn environment_variable_prefers_canonical_and_only_falls_back_when_absent() {
+        let canonical = environment_variable_from("canonical", "legacy", |name| match name {
+            "canonical" => Ok(String::new()),
+            "legacy" => Ok("legacy".to_owned()),
+            _ => unreachable!(),
+        });
+        assert!(matches!(canonical.as_deref(), Ok("")));
+
+        let legacy = environment_variable_from("canonical", "legacy", |name| match name {
+            "canonical" => Err(std::env::VarError::NotPresent),
+            "legacy" => Ok("legacy".to_owned()),
+            _ => unreachable!(),
+        });
+        assert!(matches!(legacy.as_deref(), Ok("legacy")));
+
+        let invalid = environment_variable_from("canonical", "legacy", |name| match name {
+            "canonical" => Err(std::env::VarError::NotUnicode("invalid".into())),
+            "legacy" => Ok("legacy".to_owned()),
+            _ => unreachable!(),
+        });
+        assert!(matches!(invalid, Err(std::env::VarError::NotUnicode(_))));
+    }
+
+    #[test]
     fn anthropic_latest_alias_matches_listed_base_model() {
         assert!(model_id_matches_selected(
             &ANTHROPIC_PROVIDER_ID,
@@ -668,7 +722,11 @@ async fn run_agent(
         // listed explicitly here. Keep WRITE_TOOLS in sync with the "write"
         // profile in assets/settings/default.json.
         let profile_field = {
-            let raw = std::env::var("ZED_EVAL_DISABLE_TOOLS").unwrap_or_default();
+            let raw = environment_variable(
+                "ORION_STUDIO_EVAL_DISABLE_TOOLS",
+                "ZED_EVAL_DISABLE_TOOLS",
+            )
+            .unwrap_or_default();
             let disabled = raw
                 .split(',')
                 .map(|name| name.trim().to_string())

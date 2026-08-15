@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euxo pipefail
+set -euo pipefail
 source script/lib/blob-store.sh
 
 # Function for displaying help info
@@ -11,7 +11,7 @@ Build a release .tar.gz for Linux.
 
 Options:
   -h, --help     Display this help and exit.
-  --flatpak      Set ZED_BUNDLE_TYPE=flatpak so that this can be included in system info
+  --flatpak      Set the Orion Studio bundle type to flatpak for system info
   "
 }
 
@@ -23,6 +23,8 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --flatpak)
+            export ORION_STUDIO_BUNDLE_TYPE=flatpak
+            # Legacy runtime fallback until system_specs consumes the Orion name.
             export ZED_BUNDLE_TYPE=flatpak
             shift
             ;;
@@ -43,12 +45,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+export ORION_STUDIO_BUNDLE=true
+# Legacy build-time fallback consumed by bundle diagnostics.
 export ZED_BUNDLE=true
 
 channel=$(<crates/zed/RELEASE_CHANNEL)
 target_dir="${CARGO_TARGET_DIR:-target}"
 
-version="$(script/get-crate-version zed)"
+version="$(script/get-crate-version orion-studio)"
 # Set RELEASE_VERSION so it's compiled into GPUI and it knows about the version.
 export RELEASE_VERSION="${version}"
 
@@ -83,7 +87,7 @@ if [[ "$(uname -m)" == "aarch64" ]]; then
 else
     export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
 fi
-cargo build --release --target "${target_triple}" --package zed --package cli
+cargo build --release --target "${target_triple}" --package orion-studio --package cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 if [[ "$remote_server_triple" == "$musl_triple" ]]; then
@@ -93,33 +97,61 @@ if [[ "$remote_server_triple" == "$musl_triple" ]]; then
 fi
 cargo build --release --target "${remote_server_triple}" --package remote_server
 
-# Upload debug info to sentry.io
-if ! command -v sentry-cli >/dev/null 2>&1; then
-    echo "sentry-cli not found. skipping sentry upload."
-    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
-else
-    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
-        echo "Uploading zed debug symbols to sentry..."
-        # note: this uploads the unstripped binary which is needed because it contains
-        # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
-        for attempt in 1 2 3; do
-            echo "Attempting sentry upload (attempt $attempt/3)..."
-            if sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-                "${target_dir}/${target_triple}"/release/orion-studio \
-                "${target_dir}/${remote_server_triple}"/release/remote_server; then
-                echo "Sentry upload successful on attempt $attempt"
-                break
-            else
-                echo "Sentry upload failed on attempt $attempt"
-                if [ $attempt -eq 3 ]; then
-                    echo "All sentry upload attempts failed"
-                fi
-            fi
-        done
-    else
-        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
+sentry_upload_unavailable() {
+    local reason="$1"
+
+    if [[ "${ORION_STUDIO_REQUIRE_SENTRY:-0}" == "1" ]]; then
+        echo "Error: ${reason} Sentry debug-symbol upload is required." >&2
+        return 1
     fi
-fi
+
+    echo "Warning: ${reason} Skipping Sentry debug-symbol upload for this local build." >&2
+}
+
+upload_debug_symbols_to_sentry() {
+    local sentry_organization="${ORION_STUDIO_SENTRY_ORGANIZATION:-${ORION_SENTRY_ORG:-}}"
+    local sentry_project="${ORION_STUDIO_SENTRY_PROJECT:-${ORION_SENTRY_PROJECT:-}}"
+
+    if ! command -v sentry-cli >/dev/null 2>&1; then
+        sentry_upload_unavailable "sentry-cli is unavailable."
+        return $?
+    fi
+
+    if [[ -z "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        sentry_upload_unavailable "SENTRY_AUTH_TOKEN is unset."
+        return $?
+    fi
+
+    if [[ -z "$sentry_organization" || -z "$sentry_project" ]]; then
+        sentry_upload_unavailable "ORION_STUDIO_SENTRY_ORGANIZATION and ORION_STUDIO_SENTRY_PROJECT must both be set."
+        return $?
+    fi
+
+    if [[ -z "${ORION_STUDIO_SENTRY_ORGANIZATION:-}" && -n "${ORION_SENTRY_ORG:-}" ]]; then
+        echo "Warning: using a deprecated Sentry organization variable; set ORION_STUDIO_SENTRY_ORGANIZATION instead." >&2
+    fi
+    if [[ -z "${ORION_STUDIO_SENTRY_PROJECT:-}" && -n "${ORION_SENTRY_PROJECT:-}" ]]; then
+        echo "Warning: using a deprecated Sentry project variable; set ORION_STUDIO_SENTRY_PROJECT instead." >&2
+    fi
+
+    # This uploads the unstripped binary because it contains the .eh_frame data
+    # required for stack unwinding. See https://github.com/getsentry/symbolic/issues/783.
+    local attempt
+    for attempt in 1 2 3; do
+        echo "Attempting Sentry debug-symbol upload (attempt $attempt/3)..."
+        if sentry-cli debug-files upload --include-sources --wait -p "$sentry_project" -o "$sentry_organization" \
+            "${target_dir}/${target_triple}"/release/orion-studio \
+            "${target_dir}/${remote_server_triple}"/release/remote_server; then
+            echo "Sentry debug-symbol upload succeeded on attempt $attempt."
+            return 0
+        fi
+        echo "Sentry debug-symbol upload failed on attempt $attempt." >&2
+    done
+
+    sentry_upload_unavailable "All three Sentry debug-symbol upload attempts failed."
+}
+
+upload_debug_symbols_to_sentry
 
 # Strip debug symbols and save them for upload to DigitalOcean.
 # We use llvm-objcopy because GNU objcopy on older distros (e.g. Ubuntu 20.04)
@@ -145,14 +177,17 @@ fi
 # Move everything that should end up in the final package
 # into a temp directory.
 temp_dir=$(mktemp -d)
-zed_dir="${temp_dir}/orion-studio$suffix.app"
+app_dir="${temp_dir}/orion-studio$suffix.app"
 
 # Binary
-mkdir -p "${zed_dir}/bin" "${zed_dir}/libexec"
-cp "${target_dir}/${target_triple}/release/orion-studio" "${zed_dir}/libexec/orion-studio"
-ln -sf "orion-studio" "${zed_dir}/libexec/zed-editor"
-cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/orion-studio"
-ln -sf "orion-studio" "${zed_dir}/bin/zed"
+mkdir -p "${app_dir}/bin" "${app_dir}/libexec"
+cp "${target_dir}/${target_triple}/release/orion-studio" "${app_dir}/libexec/orion-studio"
+# Compatibility path for older CLI launchers.
+ln -sf "orion-studio" "${app_dir}/libexec/zed-editor"
+cp "${target_dir}/${target_triple}/release/cli" "${app_dir}/bin/orion-studio"
+# Optional short command and legacy compatibility command for existing scripts.
+ln -sf "orion-studio" "${app_dir}/bin/orion"
+ln -sf "orion-studio" "${app_dir}/bin/zed"
 
 # Libs
 # Bundle libstdc++ so older supported systems can run binaries built with our
@@ -163,15 +198,15 @@ find_libs() {
         grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)'
 }
 
-mkdir -p "${zed_dir}/lib"
-rm -rf "${zed_dir}/lib/*"
-cp $(find_libs) "${zed_dir}/lib"
+mkdir -p "${app_dir}/lib"
+rm -rf "${app_dir}/lib/*"
+cp $(find_libs) "${app_dir}/lib"
 
 # Icons
-mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"
-cp "crates/zed/resources/app-icon$suffix.png" "${zed_dir}/share/icons/hicolor/512x512/apps/orion-studio.png"
-mkdir -p "${zed_dir}/share/icons/hicolor/1024x1024/apps"
-cp "crates/zed/resources/app-icon$suffix@2x.png" "${zed_dir}/share/icons/hicolor/1024x1024/apps/orion-studio.png"
+mkdir -p "${app_dir}/share/icons/hicolor/512x512/apps"
+cp "crates/zed/resources/app-icon$suffix.png" "${app_dir}/share/icons/hicolor/512x512/apps/orion-studio.png"
+mkdir -p "${app_dir}/share/icons/hicolor/1024x1024/apps"
+cp "crates/zed/resources/app-icon$suffix@2x.png" "${app_dir}/share/icons/hicolor/1024x1024/apps/orion-studio.png"
 
 # .desktop
 export DO_STARTUP_NOTIFY="true"
@@ -180,30 +215,32 @@ export APP_ICON="orion-studio"
 export APP_ARGS="%U"
 if [[ "$channel" == "preview" ]]; then
   export APP_NAME="Orion Studio Preview"
-  APP_ID="dev.orion.OrionStudio-Preview"
+  APP_ID="com.orion.OrionStudio.Preview"
 elif [[ "$channel" == "nightly" ]]; then
   export APP_NAME="Orion Studio Nightly"
-  APP_ID="dev.orion.OrionStudio-Nightly"
+  APP_ID="com.orion.OrionStudio.Nightly"
 elif [[ "$channel" == "dev" ]]; then
   export APP_NAME="Orion Studio Devel"
-  APP_ID="dev.orion.OrionStudio-Dev"
+  APP_ID="com.orion.OrionStudio.Dev"
 else
   export APP_NAME="Orion Studio"
-  APP_ID="dev.orion.OrionStudio"
+  APP_ID="com.orion.OrionStudio"
 fi
 
-mkdir -p "${zed_dir}/share/applications"
-envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/applications/$APP_ID.desktop"
-chmod +x "${zed_dir}/share/applications/$APP_ID.desktop"
+mkdir -p "${app_dir}/share/applications"
+envsubst < "crates/zed/resources/orion-studio.desktop.in" \
+  | sed '/^# To add Orion Studio /d; /^# Upstream reports describe /d; /^# If this happens /d' \
+  > "${app_dir}/share/applications/$APP_ID.desktop"
+chmod +x "${app_dir}/share/applications/$APP_ID.desktop"
 
 # Copy generated licenses so they'll end up in archive too
-cp "assets/licenses.md" "${zed_dir}/licenses.md"
+cp "assets/licenses.md" "${app_dir}/licenses.md"
 
 # Create archive out of everything that's in the temp directory
 arch=$(uname -m)
 archive="orion-studio-linux-${arch}.tar.gz"
 
-rm -rf "${archive}"
+mkdir -p "${target_dir}/release"
 remove_match="orion-studio(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
 ls "${target_dir}/release" | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f "${target_dir}/release/{}" || true
 tar -czvf "${target_dir}/release/$archive" -C ${temp_dir} "orion-studio$suffix.app"

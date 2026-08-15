@@ -5,7 +5,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
-  ZED_EXTENSION_CLI_SHA: 9ee3c503a4bbbc6b4a0f8a789acca4871d773223
+  ORION_STUDIO_EXTENSION_CLI_SHA: 9ee3c503a4bbbc6b4a0f8a789acca4871d773223
   RUSTUP_TOOLCHAIN: stable
   CARGO_BUILD_TARGET: wasm32-wasip2
 on:
@@ -19,7 +19,7 @@ permissions:
   contents: read
 jobs:
   orchestrate:
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
+    if: (github.repository == 'orion-agents/orion-studio' || (vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION))
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -123,17 +123,28 @@ jobs:
       with:
         clean: false
         fetch-depth: 0
-    - id: cache-zed-extension-cli
-      name: extension_tests::cache_zed_extension_cli
+    - id: cache-orion-extension-cli
+      name: extension_tests::cache_extension_cli
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: zed-extension
-        key: zed-extension-${{ env.ZED_EXTENSION_CLI_SHA }}
-    - name: extension_tests::download_zed_extension_cli
-      if: steps.cache-zed-extension-cli.outputs.cache-hit != 'true'
+        key: orion-studio-extension-cli-${{ env.ORION_STUDIO_EXTENSION_CLI_SHA }}
+    - name: extension_tests::download_extension_cli
+      if: steps.cache-orion-extension-cli.outputs.cache-hit != 'true'
       run: |
-        wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension" -O "$GITHUB_WORKSPACE/zed-extension"
+        if [[ ! "$ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME" =~ ^orion-studio-[a-z0-9-]+$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME must name an Orion-owned bucket"
+            exit 1
+        fi
+        if [[ ! "$ORION_STUDIO_EXTENSION_CLI_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_CLI_SHA must be a full Git commit SHA"
+            exit 1
+        fi
+
+        wget --quiet --https-only "https://${ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME}.nyc3.digitaloceanspaces.com/$ORION_STUDIO_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension" -O "$GITHUB_WORKSPACE/zed-extension"
         chmod +x "$GITHUB_WORKSPACE/zed-extension"
+      env:
+        ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME: ${{ vars.ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME }}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -180,14 +191,21 @@ jobs:
         echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
     - name: extension_tests::verify_version_did_not_change
       run: |
-        if [[ "$VERSION_CHANGED" == "true" && "$GITHUB_EVENT_NAME" == "pull_request" && "$PR_USER_LOGIN" != "zed-zippy[bot]" ]] ; then
-            echo "Version change detected in your change!"
-            echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
-            exit 42
+        if [[ "$VERSION_CHANGED" == "true" && "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            if [[ -z "$AUTOMATION_BOT_LOGIN" ]]; then
+                echo "::error::ORION_STUDIO_AUTOMATION_BOT_LOGIN must be configured before accepting automated version changes"
+                exit 1
+            fi
+            if [[ "$PR_USER_LOGIN" != "$AUTOMATION_BOT_LOGIN" ]]; then
+                echo "Version change detected in your change!"
+                echo "Version changes happen in separate PRs and are performed by Orion Studio automation"
+                exit 42
+            fi
         fi
       env:
         VERSION_CHANGED: ${{ steps.compare-versions-check.outputs.version_changed }}
         PR_USER_LOGIN: ${{ github.event.pull_request.user.login }}
+        AUTOMATION_BOT_LOGIN: ${{ vars.ORION_STUDIO_AUTOMATION_BOT_LOGIN }}
     timeout-minutes: 6
     defaults:
       run:
@@ -198,7 +216,7 @@ jobs:
     - orchestrate
     - check_rust
     - check_extension
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions') && always()
+    if: (github.repository == 'orion-agents/orion-studio' || (vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION)) && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: run_tests::tests_pass

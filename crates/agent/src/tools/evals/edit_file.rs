@@ -266,12 +266,26 @@ impl EditToolTest {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let agent_model = SelectedModel::from_str(
-            &std::env::var("ZED_AGENT_MODEL")
+            &std::env::var("ORION_STUDIO_AGENT_MODEL")
+                .or_else(|error| {
+                    if matches!(error, std::env::VarError::NotPresent) {
+                        std::env::var("ZED_AGENT_MODEL")
+                    } else {
+                        Err(error)
+                    }
+                })
                 .unwrap_or("anthropic/claude-sonnet-4-6-latest".into()),
         )
         .unwrap();
         let judge_model = SelectedModel::from_str(
-            &std::env::var("ZED_JUDGE_MODEL")
+            &std::env::var("ORION_STUDIO_JUDGE_MODEL")
+                .or_else(|error| {
+                    if matches!(error, std::env::VarError::NotPresent) {
+                        std::env::var("ZED_JUDGE_MODEL")
+                    } else {
+                        Err(error)
+                    }
+                })
                 .unwrap_or("anthropic/claude-sonnet-4-6-latest".into()),
         )
         .unwrap();

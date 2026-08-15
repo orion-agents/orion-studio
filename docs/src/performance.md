@@ -1,9 +1,9 @@
 ---
 title: Rough quick CPU profiling (Flamechart)
-description: "Performance profiling and optimization for Zed development."
+description: "Performance profiling and optimization for Orion Studio development."
 ---
 
-How to use our internal tools to profile and keep Zed fast.
+How to use our internal tools to profile and keep Orion Studio fast.
 
 # Rough quick CPU profiling (Flamechart)
 
@@ -33,15 +33,9 @@ fn should_appear_in_profile(kitty: Cat) {
 }
 ```
 
-Then either compile Zed with `ZTRACING=1 cargo r --features tracy --release`. The release build is optional but highly recommended as like every program Zed's performance characteristics change dramatically with optimizations. You do not want to chase slowdowns that do not exist in release.
+Then either compile Orion Studio with `ZTRACING=1 cargo r --features tracy --release`. The release build is optional but highly recommended as like every program Orion Studio's performance characteristics change dramatically with optimizations. You do not want to chase slowdowns that do not exist in release.
 
-## One time Setup/Building the profiler:
-
-Download the profiler:
-[linux x86_64](https://zed-tracy-import-miniprofiler.nyc3.digitaloceanspaces.com/tracy-profiler-linux-x86_64)
-[macos aarch64](https://zed-tracy-import-miniprofiler.nyc3.digitaloceanspaces.com/tracy-profiler-0.13.0-macos-aarch64)
-
-### Alternative: Building it yourself
+## One-time profiler setup
 
 - Clone the repo at git@github.com:wolfpld/tracy.git
 - `cd profiler && mkdir build && cd build`
@@ -51,9 +45,7 @@ Download the profiler:
 
 ## Usage
 
-Open the profiler (tracy-profiler), you should see zed in the list of `Discovered clients` click it.
-
-<img width="392" height="auto" alt="image" src="https://github.com/user-attachments/assets/b6f06fc3-6b25-41c7-ade9-558cc93d6033" style="display: block; margin: 0 auto;"/>
+Open `tracy-profiler`, select the `orion-studio` process from `Discovered clients`, and connect to it.
 
 Tracy is an incredibly powerful profiler which can do a lot; however, its UI is not that friendly. This is not the place for an in depth guide to Tracy, I do however want to highlight one particular workflow that is helpful when figuring out why a piece of code is _sometimes_ slow.
 
@@ -96,33 +88,29 @@ let _enter = span.enter(); // span guard, when this is dropped the span ends (an
 
 # Task/Async profiling
 
-Get a profile of the zed foreground executor and background executors. Check if
+Get a profile of the Orion Studio foreground executor and background executors. Check if
 anything is blocking the foreground too long or taking too much (clock) time in
 the background.
 
 The profiler always runs in the background. You can save a trace from its UI or
 look at the results live.
 
-## Setup/Building the importer:
+## Build the importer
 
-Download the importer
-[linux x86_64](https://zed-tracy-import-miniprofiler.nyc3.digitaloceanspaces.com/tracy-import-miniprofiler-linux-x86_64)
-[mac aarch64](https://zed-tracy-import-miniprofiler.nyc3.digitaloceanspaces.com/tracy-import-miniprofiler-macos-aarch64)
-
-### Alternative: Building it yourself
-
-- Clone the repo at git@github.com:zed-industries/tracy.git on v0.12.2 branch
+- Clone the upstream Zed fork at `https://github.com/zed-industries/tracy.git` on the `v0.12.2` branch. The organization name is retained because this is the actual upstream repository.
 - `cd import && mkdir build && cd build`
 - Run cmake to generate build files: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..`
 - Build the importer: `ninja`
 - Run the importer on the trace file: `./tracy-import-miniprofiler /path/to/trace.miniprof.json /path/to/output.tracy`
 - Open the trace in tracy:
   - If you're on windows download the v0.12.2 version from the releases on the upstream repo
-  - If you're on other platforms open it on the website: https://tracy.nereid.pl/ (the version might mismatch so your luck might vary, we need to host our own ideally..)
+  - On other platforms, you can use <https://tracy.nereid.pl/>. Its Tracy
+    version may differ from the importer version, so verify compatibility before
+    relying on the result.
 
 ## To Save a Trace:
 
-- Run the action: `zed open performance profiler`
+- Run the action `orion: open performance profiler` from the Command Palette.
 - Hit the save button. This opens a save dialog or if that fails to open the trace gets saved in your working directory.
 - Convert the profile so it can be imported in tracy using the importer: `./tracy-import-miniprofiler <path to performance_profile.miniprof.json> output.tracy`
 - Go to <https://tracy.nereid.pl/> hit the 'power button' in the top left and then open saved trace.

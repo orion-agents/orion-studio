@@ -7,9 +7,9 @@ mod updater;
 
 #[cfg(target_os = "windows")]
 fn main() {
-    if let Err(e) = windows_impl::run() {
-        log::error!("Error: Zed update failed, {:?}", e);
-        windows_impl::show_error(format!("Error: {:?}", e));
+    if let Err(error) = windows_impl::run() {
+        log::error!("Error: Orion Studio update failed, {:?}", error);
+        windows_impl::show_error(format!("Error: {:?}", error));
     }
 }
 
@@ -53,14 +53,20 @@ mod windows_impl {
             .context("No parent directory")?
             .to_path_buf();
 
-        log::info!("======= Starting Zed update =======");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let hwnd = create_dialog_window(rx)?.0 as isize;
+        log::info!("======= Starting Orion Studio update =======");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let hwnd = create_dialog_window(receiver)?.0 as isize;
         let args = parse_args(std::env::args().skip(1));
         std::thread::spawn(move || {
             let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch);
-            tx.send(result).ok();
-            unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
+            if sender.send(result).is_err() {
+                log::error!("Unable to report the Orion Studio update result to the dialog.");
+            }
+            if let Err(error) =
+                unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }
+            {
+                log::error!("Unable to close the Orion Studio update dialog: {error:?}");
+            }
         });
         unsafe {
             let mut message = MSG::default();
@@ -78,7 +84,7 @@ mod windows_impl {
             std::fs::File::options()
                 .append(true)
                 .create(true)
-                .open(helper_dir.join("auto_update_helper.log"))?,
+                .open(helper_dir.join("orion_studio_auto_update_helper.log"))?,
         )?;
         Ok(())
     }
@@ -111,11 +117,11 @@ mod windows_impl {
             content.truncate(600);
             content.push_str("...\n");
         }
-        let _ = unsafe {
+        unsafe {
             MessageBoxW(
                 None,
                 &HSTRING::from(content),
-                windows::core::w!("Error: Zed update failed."),
+                windows::core::w!("Error: Orion Studio update failed."),
                 MB_ICONERROR | MB_SYSTEMMODAL,
             )
         };

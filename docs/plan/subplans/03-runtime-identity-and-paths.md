@@ -15,18 +15,18 @@ channel 代码中。此子计划不处理用户数据迁移、不改平台安装
 
 主要范围：
 
-- crates/paths/**
-- crates/zed_env_vars/**
-- crates/release_channel/**
+- crates/paths/\*\*
+- crates/zed_env_vars/\*\*
+- crates/release_channel/\*\*
 
 可以修改这些目录中的测试和必要的 fixture。只允许修改下列范围外的文件，
 如果编译错误明确需要它，必须先停止并报告：
 
 - Cargo.toml/Cargo.lock
 - crates/zed/Cargo.toml
-- crates/cli/**
-- crates/client/**
-- crates/zed/resources/**
+- crates/cli/\*\*
+- crates/client/\*\*
+- crates/zed/resources/\*\*
 
 ## 执行步骤
 
@@ -34,18 +34,18 @@ channel 代码中。此子计划不处理用户数据迁移、不改平台安装
 
 先读：
 
-~~~text
+```text
 crates/paths/src/paths.rs
 crates/zed_env_vars/src/zed_env_vars.rs
 crates/release_channel/src/lib.rs
-~~~
+```
 
 搜索：
 
-~~~text
+```text
 rg -n 'APP_NAME|ZED_|Zed|zed|release|channel|log|config|cache|state' \
   crates/paths crates/zed_env_vars crates/release_channel
-~~~
+```
 
 把每个命中分成规范值、兼容值、第三方归属或待决，不直接替换。
 
@@ -68,7 +68,7 @@ rg -n 'APP_NAME|ZED_|Zed|zed|release|channel|log|config|cache|state' \
 按照 S02 的最终前缀：
 
 - 新代码和新文档使用 Orion 前缀。
-- 旧 ZED_* 名称只作为兼容读取入口，不能被新配置写回。
+- 旧 ZED\_\* 名称只作为兼容读取入口，不能被新配置写回。
 - 每个兼容读取入口必须有注释或测试说明其移除条件；不要让旧名散落在业务代码。
 - 处理环境变量时保持现有优先级：命令行/显式配置、规范环境变量、兼容环境变量、
   默认值的优先顺序不得无意改变。
@@ -95,22 +95,22 @@ rg -n 'APP_NAME|ZED_|Zed|zed|release|channel|log|config|cache|state' \
 
 ## 验收命令
 
-~~~text
+```text
 git diff --check
 cargo +stable metadata --no-deps --format-version 1
 cargo +stable fmt --all -- --check
 cargo +stable test -p paths
 cargo +stable test -p zed_env_vars
 cargo +stable test -p release_channel
-~~~
+```
 
 如果某个 package 没有测试 target，运行对应的 cargo check，并在交接中写明原因。
 最后确认：
 
-~~~text
+```text
 git diff --name-only
 git status --short --branch
-~~~
+```
 
 ## 验收标准
 
@@ -146,4 +146,3 @@ git status --short --branch
 - 哪些旧常量作为兼容输入保留。
 - 哪些测试通过/跳过。
 - S04 是否可以开始。
-

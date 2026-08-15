@@ -15,8 +15,8 @@ import os
 
 # GitHub API configuration
 GITHUB_API_BASE = "https://api.github.com"
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "orion-agents"
+REPO_NAME = "orion-studio"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 def make_github_request(url, params=None):

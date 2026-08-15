@@ -1,4 +1,4 @@
-# CODEOWNERS for orion-agents/zed
+# CODEOWNERS for orion-agents/orion-studio
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ WARNING: This file is auto-generated. DO NOT EDIT MANUALLY.                │
@@ -319,11 +319,11 @@
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # zed-dev-team
-# Zed website, marketing, documentation site
+# Orion Studio website, marketing, documentation site
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # SUGGESTED: Review needed - based on Joseph T. Lyons (1 commits)
-/crates/open_path_prompt/ @orion-agents/zed-dev-team
+/crates/open_path_prompt/ @orion-agents/orion-studio-dev-team
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DIRECT OVERRIDES

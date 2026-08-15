@@ -5,9 +5,38 @@ const consentInstance = document.querySelector(
   'meta[name="consent-io-instance"]',
 )?.content;
 
+const isConfiguredValue = (value) => {
+  if (typeof value !== "string") return false;
+  const normalizedValue = value.trim();
+  return (
+    normalizedValue.length > 0 && !/^#[a-z0-9_-]+#$/i.test(normalizedValue)
+  );
+};
+
 document.addEventListener("DOMContentLoaded", () => {
-  if (!consentInstance || consentInstance.length === 0) return;
+  if (
+    !isConfiguredValue(consentInstance) ||
+    typeof window.c15t?.getOrCreateConsentRuntime !== "function"
+  ) {
+    return;
+  }
+
   const { getOrCreateConsentRuntime } = window.c15t;
+
+  const scripts = [];
+  if (isConfiguredValue(amplitudeKey)) {
+    scripts.push({
+      id: "amplitude",
+      src: `https://cdn.amplitude.com/script/${amplitudeKey}.js`,
+      category: "measurement",
+      onLoad: () => {
+        window.amplitude.init(amplitudeKey, {
+          fetchRemoteConfig: true,
+          autocapture: true,
+        });
+      },
+    });
+  }
 
   const { consentStore } = getOrCreateConsentRuntime({
     mode: "c15t",
@@ -16,19 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
     storageConfig: {
       crossSubdomain: true,
     },
-    scripts: [
-      {
-        id: "amplitude",
-        src: `https://cdn.amplitude.com/script/${amplitudeKey}.js`,
-        category: "measurement",
-        onLoad: () => {
-          window.amplitude.init(amplitudeKey, {
-            fetchRemoteConfig: true,
-            autocapture: true,
-          });
-        },
-      },
-    ],
+    scripts,
   });
 
   let previousActiveUI = consentStore.getState().activeUI;

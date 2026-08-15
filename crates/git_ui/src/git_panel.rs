@@ -8597,7 +8597,7 @@ impl Component for PanelRepoFooter {
                 is_head: true,
                 ref_name: branch_name.to_string().into(),
                 upstream: upstream.map(|tracking| Upstream {
-                    ref_name: format!("zed/{}", branch_name).into(),
+                    ref_name: format!("orion/{}", branch_name).into(),
                     tracking,
                 }),
                 most_recent_commit: Some(CommitSummary {
@@ -8713,7 +8713,7 @@ impl Component for PanelRepoFooter {
                                 .w(example_width)
                                 .overflow_hidden()
                                 .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed"),
+                                    SharedString::from("orion-studio"),
                                     Some(custom("main", behind_upstream)),
                                 ))
                                 .into_any_element(),
@@ -8724,7 +8724,7 @@ impl Component for PanelRepoFooter {
                                 .w(example_width)
                                 .overflow_hidden()
                                 .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed"),
+                                    SharedString::from("orion-studio"),
                                     Some(custom(
                                         "redesign-and-update-git-ui-list-entry-style",
                                         behind_upstream,
@@ -8738,7 +8738,7 @@ impl Component for PanelRepoFooter {
                                 .w(example_width)
                                 .overflow_hidden()
                                 .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed-industries-community-examples"),
+                                    SharedString::from("orion-studio-community-examples"),
                                     Some(custom("gpui", ahead_of_upstream)),
                                 ))
                                 .into_any_element(),
@@ -8749,7 +8749,7 @@ impl Component for PanelRepoFooter {
                                 .w(example_width)
                                 .overflow_hidden()
                                 .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed-industries-community-examples"),
+                                    SharedString::from("orion-studio-community-examples"),
                                     Some(custom(
                                         "redesign-and-update-git-ui-list-entry-style",
                                         behind_upstream,
@@ -8774,7 +8774,7 @@ impl Component for PanelRepoFooter {
                                 .w(example_width)
                                 .overflow_hidden()
                                 .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed"),
+                                    SharedString::from("orion-studio"),
                                     Some(custom("update-README", behind_upstream)),
                                 ))
                                 .into_any_element(),

@@ -8,10 +8,10 @@ on:
 permissions: {}
 jobs:
   deploy_docs:
-    if: (github.repository_owner == 'orion-agents' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
-    uses: orion-agents/orion-studio/.github/workflows/deploy_docs.yml@3f16f7b9082f8828e4d6ae207d2349b1ef932517
+    uses: ./.github/workflows/deploy_docs.yml
     secrets:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
       DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}
@@ -19,7 +19,6 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     with:
       channel: nightly
-      checkout_ref: ${{ github.sha }}
 defaults:
   run:
     shell: bash -euxo pipefail {0}

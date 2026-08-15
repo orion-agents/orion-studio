@@ -279,7 +279,7 @@ impl HttpClientWithUrl {
     }
 
     /// Builds an Orion Cloud URL using the given path.
-    pub fn build_zed_cloud_url(&self, path: &str) -> Result<Url> {
+    pub fn build_orion_cloud_url(&self, path: &str) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
             "https://orion.dev" => "https://cloud.orion.dev",
@@ -292,7 +292,11 @@ impl HttpClientWithUrl {
     }
 
     /// Builds an Orion Cloud URL using the given path and query params.
-    pub fn build_zed_cloud_url_with_query(&self, path: &str, query: impl Serialize) -> Result<Url> {
+    pub fn build_orion_cloud_url_with_query(
+        &self,
+        path: &str,
+        query: impl Serialize,
+    ) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
             "https://orion.dev" => "https://cloud.orion.dev",

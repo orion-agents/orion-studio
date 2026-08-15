@@ -1,4 +1,4 @@
-# Brand Voice Rubric
+# Orion Studio Brand Voice Rubric
 
 Score each criterion 1-5. Copy must score **4+ on ALL criteria** to pass.
 
@@ -53,7 +53,7 @@ Does the copy state facts without hype or emotional manipulation?
 
 **Examples:**
 
-- ✅ "Zed renders every frame on the GPU. You'll notice the difference when you scroll."
+- ✅ "Orion Studio uses GPU-accelerated rendering. Current benchmarks document the measured frame rate."
 - ❌ "Experience the revolutionary speed that will absolutely transform how you code!"
 
 ---

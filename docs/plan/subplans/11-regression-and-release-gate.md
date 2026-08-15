@@ -28,13 +28,13 @@
 
 运行：
 
-~~~text
+```text
 git status --short --branch
 git diff --stat
 git diff --name-only
 git diff --check
 git log --oneline --decorate -10
-~~~
+```
 
 检查每个文件是否能映射到某个 S01-S10。发现无主文件、未解释的用户改动或
 计划外文件时 BLOCKED。
@@ -43,12 +43,12 @@ git log --oneline --decorate -10
 
 扫描跟踪文件和工作树文件，排除构建输出与计划/研究材料：
 
-~~~text
+```text
 git grep -n -I -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
 rg --hidden --glob '!.git/**' --glob '!target/**' --glob '!.workbuddy/**' \
   --glob '!docs/plan/**' --glob '!docs/research/**' \
   -n -E 'Zed|zed\.dev|zed-industries|ZED_|dev\.zed|zed://'
-~~~
+```
 
 逐个命中填写：
 
@@ -63,13 +63,13 @@ rg --hidden --glob '!.git/**' --glob '!target/**' --glob '!.workbuddy/**' \
 
 至少运行：
 
-~~~text
+```text
 cargo +stable metadata --no-deps --format-version 1
 cargo +stable fmt --all -- --check
 ./script/check-todos
 ./script/check-keymaps
 ./script/clippy
-~~~
+```
 
 按改动范围运行主 package、paths、client、collab、CLI、extension API 和新增迁移
 测试。记录实际 package 名和完整命令。
@@ -108,15 +108,15 @@ cargo +stable fmt --all -- --check
 
 建议状态表：
 
-| Gate | 条件 | 证据 | 状态 |
-| --- | --- | --- | --- |
-| G0 | 产品和身份契约批准 | S02 |  |
-| G1 | 运行时路径和迁移安全 | S03/S04 |  |
-| G2 | package/CLI/API 可用 | S05/S06 |  |
-| G3 | UI/文档/资源无未解释残留 | S07 |  |
-| G4 | 客户端/服务端契约一致 | S08/S09 |  |
-| G5 | 平台安装和 CI 可发布 | S10 |  |
-| G6 | 回归、扫描、回滚证据完整 | 本报告 |  |
+| Gate | 条件                     | 证据    | 状态 |
+| ---- | ------------------------ | ------- | ---- |
+| G0   | 产品和身份契约批准       | S02     |      |
+| G1   | 运行时路径和迁移安全     | S03/S04 |      |
+| G2   | package/CLI/API 可用     | S05/S06 |      |
+| G3   | UI/文档/资源无未解释残留 | S07     |      |
+| G4   | 客户端/服务端契约一致    | S08/S09 |      |
+| G5   | 平台安装和 CI 可发布     | S10     |      |
+| G6   | 回归、扫描、回滚证据完整 | 本报告  |      |
 
 ### 6. 发布边界
 
@@ -163,4 +163,3 @@ S11 本身默认不改源码。若只生成报告，回滚就是删除本次新�
 - GO/GO WITH CONDITIONS/NO-GO。
 - 所有阻塞项、责任人和下一步。
 - 是否满足“可以交给发布负责人”的条件。
-

@@ -35,7 +35,7 @@ fn scheduled_compliance_check() -> steps::NamedJob {
     let tag_output = StepOutput::new(&determine_version_step, "tag");
 
     let job = Job::default()
-        .with_repository_owner_guard()
+        .with_repository_guard()
         .runs_on(runners::LINUX_SMALL)
         .add_step(steps::checkout_repo().with_full_history())
         .add_step(steps::cache_rust_dependencies_namespace())

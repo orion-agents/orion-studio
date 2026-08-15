@@ -13,10 +13,13 @@ pub(crate) trait WithAppSecrets: Sized {
 impl WithAppSecrets for Job<UsesJob> {
     fn with_app_secrets(self) -> Self {
         self.secrets(IndexMap::from([
-            ("app-id".to_owned(), vars::ZED_ZIPPY_APP_ID.to_owned()),
+            (
+                "app-id".to_owned(),
+                vars::ORION_STUDIO_AUTOMATION_APP_ID.to_owned(),
+            ),
             (
                 "app-secret".to_owned(),
-                vars::ZED_ZIPPY_APP_PRIVATE_KEY.to_owned(),
+                vars::ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY.to_owned(),
             ),
         ]))
     }

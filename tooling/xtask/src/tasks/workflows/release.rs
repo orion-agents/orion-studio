@@ -4,6 +4,7 @@ use gh_workflow::{
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
+    production_environment,
     run_bundling::{build_static_bwrap, bundle_linux, bundle_mac, bundle_windows, upload_artifact},
     run_tests,
     runners::{self, Arch, Platform},
@@ -16,57 +17,145 @@ use crate::tasks::workflows::{
 
 const CURRENT_ACTION_RUN_URL: &str =
     "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}";
+const RELEASE_ENABLED_GUARD: &str = "github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_RELEASE_ENABLED == 'true'";
+const PRODUCTION_SIDE_EFFECT_JOBS: &[&str] = &[
+    "create_draft_release",
+    "compliance_check",
+    "bundle_linux_aarch64",
+    "bundle_linux_x86_64",
+    "build_static_bwrap_linux_aarch64",
+    "build_static_bwrap_linux_x86_64",
+    "bundle_mac_aarch64",
+    "bundle_mac_x86_64",
+    "bundle_windows_aarch64",
+    "bundle_windows_x86_64",
+    "upload_release_assets",
+    "release_compliance_check",
+    "auto_release_preview",
+    "push_release_update_notification",
+];
+
+pub(super) fn add_production_environments(workflow: &mut serde_yaml::Value) -> anyhow::Result<()> {
+    production_environment::add_to_jobs(workflow, PRODUCTION_SIDE_EFFECT_JOBS)
+}
 
 pub(crate) fn release() -> Workflow {
-    let macos_tests = run_tests::run_platform_tests_no_filter(Platform::Mac);
-    let linux_tests = run_tests::run_platform_tests_no_filter(Platform::Linux);
-    let windows_tests = run_tests::run_platform_tests_no_filter(Platform::Windows);
-    let macos_clippy = run_tests::clippy(Platform::Mac, None, false);
-    let linux_clippy = run_tests::clippy(Platform::Linux, None, false);
-    let windows_clippy = run_tests::clippy(Platform::Windows, None, false);
-    let check_scripts = run_tests::check_scripts(false);
+    let validate_release_ref = validate_release_ref();
+    let macos_tests = with_dependency(
+        run_tests::run_platform_tests_no_filter(Platform::Mac),
+        &validate_release_ref,
+    );
+    let linux_tests = with_dependency(
+        run_tests::run_platform_tests_no_filter(Platform::Linux),
+        &validate_release_ref,
+    );
+    let windows_tests = with_dependency(
+        run_tests::run_platform_tests_no_filter(Platform::Windows),
+        &validate_release_ref,
+    );
+    let macos_clippy = with_dependency(
+        run_tests::clippy(Platform::Mac, None, false),
+        &validate_release_ref,
+    );
+    let linux_clippy = with_dependency(
+        run_tests::clippy(Platform::Linux, None, false),
+        &validate_release_ref,
+    );
+    let windows_clippy = with_dependency(
+        run_tests::clippy(Platform::Windows, None, false),
+        &validate_release_ref,
+    );
+    let check_scripts = with_dependency(run_tests::check_scripts(false), &validate_release_ref);
 
-    let create_draft_release = create_draft_release();
-    let (non_blocking_compliance_run, job_output) = compliance_check();
+    let create_draft_release = create_draft_release(&[&validate_release_ref]);
+    let (non_blocking_compliance_run, job_output) = compliance_check(&[&validate_release_ref]);
 
     let bundle = ReleaseBundleJobs {
         linux_aarch64: bundle_linux(
             Arch::AARCH64,
             None,
-            &[&linux_tests, &linux_clippy, &check_scripts],
+            true,
+            &[
+                &validate_release_ref,
+                &linux_tests,
+                &linux_clippy,
+                &check_scripts,
+            ],
         ),
         linux_x86_64: bundle_linux(
             Arch::X86_64,
             None,
-            &[&linux_tests, &linux_clippy, &check_scripts],
+            true,
+            &[
+                &validate_release_ref,
+                &linux_tests,
+                &linux_clippy,
+                &check_scripts,
+            ],
         ),
         bwrap_linux_aarch64: build_static_bwrap(
             Arch::AARCH64,
-            &[&linux_tests, &linux_clippy, &check_scripts],
+            true,
+            &[
+                &validate_release_ref,
+                &linux_tests,
+                &linux_clippy,
+                &check_scripts,
+            ],
         ),
         bwrap_linux_x86_64: build_static_bwrap(
             Arch::X86_64,
-            &[&linux_tests, &linux_clippy, &check_scripts],
+            true,
+            &[
+                &validate_release_ref,
+                &linux_tests,
+                &linux_clippy,
+                &check_scripts,
+            ],
         ),
         mac_aarch64: bundle_mac(
             Arch::AARCH64,
             None,
-            &[&macos_tests, &macos_clippy, &check_scripts],
+            true,
+            &[
+                &validate_release_ref,
+                &macos_tests,
+                &macos_clippy,
+                &check_scripts,
+            ],
         ),
         mac_x86_64: bundle_mac(
             Arch::X86_64,
             None,
-            &[&macos_tests, &macos_clippy, &check_scripts],
+            true,
+            &[
+                &validate_release_ref,
+                &macos_tests,
+                &macos_clippy,
+                &check_scripts,
+            ],
         ),
         windows_aarch64: bundle_windows(
             Arch::AARCH64,
             None,
-            &[&windows_tests, &windows_clippy, &check_scripts],
+            true,
+            &[
+                &validate_release_ref,
+                &windows_tests,
+                &windows_clippy,
+                &check_scripts,
+            ],
         ),
         windows_x86_64: bundle_windows(
             Arch::X86_64,
             None,
-            &[&windows_tests, &windows_clippy, &check_scripts],
+            true,
+            &[
+                &validate_release_ref,
+                &windows_tests,
+                &windows_clippy,
+                &check_scripts,
+            ],
         ),
     };
 
@@ -106,6 +195,7 @@ pub(crate) fn release() -> Workflow {
         .with_minimal_permissions()
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", "1"))
+        .add_job(validate_release_ref.name, validate_release_ref.job)
         .add_job(macos_tests.name, macos_tests.job)
         .add_job(linux_tests.name, linux_tests.job)
         .add_job(windows_tests.name, windows_tests.job)
@@ -129,6 +219,58 @@ pub(crate) fn release() -> Workflow {
         .add_job(release_compliance.name, release_compliance.job)
         .add_job(auto_release_preview.name, auto_release_preview.job)
         .add_job(push_slack_notification.name, push_slack_notification.job)
+}
+
+fn with_dependency(mut job: NamedJob, dependency: &NamedJob) -> NamedJob {
+    job.job = job.job.needs([dependency.name.clone()]);
+    job
+}
+
+fn validate_release_ref() -> NamedJob {
+    let validate = named::bash(indoc::indoc! {r#"
+        set -euo pipefail
+
+        if [[ "${GITHUB_REF:-}" != refs/tags/* ]]; then
+            echo "::error::release workflow requires a tag ref"
+            exit 1
+        fi
+        if [[ ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-pre)?$ ]]; then
+            echo "::error::release tag must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-pre"
+            exit 1
+        fi
+        if [[ ! "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GITHUB_SHA is not an immutable commit SHA"
+            exit 1
+        fi
+
+        git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+        checked_out_sha=$(git rev-parse 'HEAD^{commit}')
+        tag_sha=$(git rev-parse "${GITHUB_REF}^{commit}")
+        main_sha=$(git rev-parse 'refs/remotes/origin/main^{commit}')
+        if [[ "$checked_out_sha" != "$GITHUB_SHA" || "$tag_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::checked-out source does not match the triggering tag commit"
+            exit 1
+        fi
+        if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main_sha"; then
+            echo "::error::release tag commit is not reachable from protected main"
+            exit 1
+        fi
+    "#});
+
+    named::job(
+        release_job(&[])
+            .cond(Expression::new(RELEASE_ENABLED_GUARD))
+            .runs_on(runners::LINUX_SMALL)
+            .timeout_minutes(5u32)
+            .add_step(
+                steps::checkout_repo()
+                    .with_full_history()
+                    .with_fetch_tags()
+                    .with_ref(Context::github().ref_())
+                    .without_persisted_credentials(),
+            )
+            .add_step(validate),
+    )
 }
 
 pub(crate) struct ReleaseBundleJobs {
@@ -176,8 +318,8 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
         "action-release",
         "526942b68292201ac6bbb99b9a0747d4abee354c", // v3
     )
-    .add_env(("SENTRY_ORG", "zed-dev"))
-    .add_env(("SENTRY_PROJECT", "zed"))
+    .add_env(("SENTRY_ORG", vars::ORION_STUDIO_SENTRY_ORGANIZATION))
+    .add_env(("SENTRY_PROJECT", vars::ORION_STUDIO_SENTRY_PROJECT))
     .add_env(("SENTRY_AUTH_TOKEN", vars::SENTRY_AUTH_TOKEN))
     .add_with(("environment", "production"))
 }
@@ -216,8 +358,27 @@ pub(crate) fn add_compliance_steps(
             }
         )
         .id(COMPLIANCE_STEP_ID)
-        .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
-        .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+        .add_env((
+            "GITHUB_APP_ID",
+            vars::ORION_STUDIO_AUTOMATION_APP_ID,
+        ))
+        .add_env((
+            "GITHUB_APP_KEY",
+            vars::ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY,
+        ))
+        .add_env((
+            "ORION_STUDIO_AUTOMATION_BOT_LOGIN",
+            vars::ORION_STUDIO_AUTOMATION_BOT_LOGIN,
+        ))
+        .add_env((
+            "ORION_STUDIO_AUTOMATION_GIT_EMAIL",
+            vars::ORION_STUDIO_AUTOMATION_GIT_EMAIL,
+        ))
+        .add_env((
+            "ORION_STUDIO_AUTOMATION_GIT_NAME",
+            vars::ORION_STUDIO_AUTOMATION_GIT_NAME,
+        ))
+        .add_env(("ORION_STUDIO_RELEASE_COMPLIANCE", "1"))
         .when_some(context.tag_source(), |step, tag_source| {
             step.add_env(("LATEST_TAG", tag_source.to_string()))
         })
@@ -315,8 +476,9 @@ pub(crate) fn add_compliance_steps(
     )
 }
 
-fn compliance_check() -> (NamedJob, JobOutput) {
-    let job = release_job(&[])
+fn compliance_check(deps: &[&NamedJob]) -> (NamedJob, JobOutput) {
+    let job = release_job(deps)
+        .cond(Expression::new(RELEASE_ENABLED_GUARD))
         .runs_on(runners::LINUX_SMALL)
         .add_step(
             steps::checkout_repo()
@@ -369,6 +531,7 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
 
 fn release_compliance_check(deps: &[&NamedJob], non_blocking_outcome: JobOutput) -> NamedJob {
     let job = dependant_job(deps)
+        .cond(Expression::new(RELEASE_ENABLED_GUARD))
         .runs_on(runners::LINUX_LARGE)
         .add_step(
             steps::checkout_repo()
@@ -427,7 +590,7 @@ fn auto_release_preview(deps: &[&NamedJob]) -> (NamedJob, JobOutput) {
         .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy()
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
         .for_repository(steps::RepositoryTarget::current())
         .with_permissions([(steps::TokenPermissions::Contents, Level::Write)])
         .into();
@@ -437,8 +600,8 @@ fn auto_release_preview(deps: &[&NamedJob]) -> (NamedJob, JobOutput) {
     let job = named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
-            .cond(Expression::new(indoc::indoc!(
-                r#"startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre')"#
+            .cond(Expression::new(format!(
+                "{RELEASE_ENABLED_GUARD} && startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre')"
             )))
             .add_step(authenticate)
             .add_step(
@@ -476,6 +639,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle: &ReleaseBundleJobs) -> Name
 
     named::job(
         dependant_job(&deps)
+            .cond(Expression::new(RELEASE_ENABLED_GUARD))
             .runs_on(runners::LINUX_MEDIUM)
             .permissions(Permissions::default().contents(Level::Write))
             .add_step(download_workflow_artifacts())
@@ -488,7 +652,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle: &ReleaseBundleJobs) -> Name
     )
 }
 
-fn create_draft_release() -> NamedJob {
+fn create_draft_release(deps: &[&NamedJob]) -> NamedJob {
     fn generate_release_notes() -> Step<Run> {
         named::bash(
             r#"node --redirect-warnings=/dev/null ./script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md"#,
@@ -500,13 +664,14 @@ fn create_draft_release() -> NamedJob {
             .add_env(("GITHUB_TOKEN", token.to_string()))
     }
 
-    let (authenticate_step, token) = steps::authenticate_as_zippy()
+    let (authenticate_step, token) = steps::authenticate_as_orion_automation()
         .for_repository(steps::RepositoryTarget::current())
         .with_permissions([(TokenPermissions::Contents, Level::Write)])
         .into();
 
     named::job(
-        release_job(&[])
+        release_job(deps)
+            .cond(Expression::new(RELEASE_ENABLED_GUARD))
             .runs_on(runners::LINUX_SMALL)
             // We need to fetch more than one commit so that `script/draft-release-notes`
             // is able to diff between the current and previous tag.
@@ -519,6 +684,7 @@ fn create_draft_release() -> NamedJob {
                     .with_ref(Context::github().ref_()),
             )
             .add_step(steps::script("script/determine-release-channel"))
+            .add_step(create_sentry_release())
             .add_step(steps::script("mkdir -p target/"))
             .add_step(generate_release_notes())
             .add_step(create_release(token)),
@@ -643,7 +809,9 @@ pub(crate) fn push_release_update_notification(
 
     let mut job = dependant_job(&all_deps)
         .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new("always()"));
+        .cond(Expression::new(format!(
+            "{RELEASE_ENABLED_GUARD} && always()"
+        )));
 
     for step in notify_slack(MessageType::Evaluated {
         script: notification_script,
@@ -736,4 +904,96 @@ fn send_slack_message(message_source: MessageSource) -> Step<Run> {
     })
     .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
     .add_env(("SLACK_MESSAGE", message_source.message()))
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Context as _, Result, ensure};
+    use serde_yaml::{Mapping, Value};
+
+    use super::*;
+
+    fn yaml_key(key: &str) -> Value {
+        Value::String(key.to_owned())
+    }
+
+    fn generated_jobs() -> Result<Mapping> {
+        let content = release()
+            .to_string()
+            .map_err(|error| anyhow::anyhow!("Unable to serialize release workflow: {error:?}"))?;
+        let mut workflow: Value =
+            serde_yaml::from_str(&content).context("Unable to parse generated release workflow")?;
+        add_production_environments(&mut workflow)?;
+        workflow
+            .as_mapping()
+            .and_then(|workflow| workflow.get(&yaml_key("jobs")))
+            .and_then(Value::as_mapping)
+            .cloned()
+            .context("Generated release workflow has no jobs mapping")
+    }
+
+    fn job_condition<'a>(jobs: &'a Mapping, job_id: &str) -> Result<&'a str> {
+        jobs.get(&yaml_key(job_id))
+            .and_then(Value::as_mapping)
+            .and_then(|job| job.get(&yaml_key("if")))
+            .and_then(Value::as_str)
+            .with_context(|| format!("Generated release job {job_id:?} has no condition"))
+    }
+
+    fn job_environment<'a>(jobs: &'a Mapping, job_id: &str) -> Result<&'a str> {
+        jobs.get(&yaml_key(job_id))
+            .and_then(Value::as_mapping)
+            .and_then(|job| job.get(&yaml_key("environment")))
+            .and_then(Value::as_str)
+            .with_context(|| {
+                format!("Generated release job {job_id:?} has no job-level environment")
+            })
+    }
+
+    #[test]
+    fn release_writes_and_notifications_require_explicit_enablement() -> Result<()> {
+        let jobs = generated_jobs()?;
+
+        for job_id in [
+            "validate_release_ref",
+            "create_draft_release",
+            "compliance_check",
+            "upload_release_assets",
+            "release_compliance_check",
+        ] {
+            ensure!(
+                job_condition(&jobs, job_id)? == RELEASE_ENABLED_GUARD,
+                "{job_id} is not fail-closed on ORION_STUDIO_RELEASE_ENABLED"
+            );
+        }
+
+        ensure!(
+            job_condition(&jobs, "auto_release_preview")?
+                == format!(
+                    "{RELEASE_ENABLED_GUARD} && startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre')"
+                ),
+            "Preview publication lost its release enablement or tag guard"
+        );
+        ensure!(
+            job_condition(&jobs, "push_release_update_notification")?
+                == format!("{RELEASE_ENABLED_GUARD} && always()"),
+            "Release announcement lost its release enablement or terminal status guard"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn release_side_effect_jobs_use_the_protected_production_environment() -> Result<()> {
+        let jobs = generated_jobs()?;
+
+        for job_id in PRODUCTION_SIDE_EFFECT_JOBS {
+            ensure!(
+                job_environment(&jobs, job_id)? == production_environment::PRODUCTION_ENVIRONMENT,
+                "{job_id} is not protected by the production environment"
+            );
+        }
+
+        Ok(())
+    }
 }

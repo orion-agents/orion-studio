@@ -5,6 +5,22 @@ set -euo pipefail
 CARGO_ABOUT_VERSION="0.8.2"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 TEMPLATE_FILE="script/licenses/template.md.hbs"
+OUTPUT_DIRECTORY=$(dirname "$OUTPUT_FILE")
+
+if [[ ! -d "$OUTPUT_DIRECTORY" || -L "$OUTPUT_DIRECTORY" ]]; then
+    echo "License output directory must be a regular directory: $OUTPUT_DIRECTORY" >&2
+    exit 1
+fi
+if [[ -L "$OUTPUT_FILE" ]]; then
+    echo "License output must not be a symlink: $OUTPUT_FILE" >&2
+    exit 1
+fi
+
+GENERATED_FILE=$(mktemp "${OUTPUT_FILE}.tmp.XXXXXX")
+cleanup() {
+    rm -f "$GENERATED_FILE" "${GENERATED_FILE}.bak"
+}
+trap cleanup EXIT
 
 fail_on_stderr() {
     local tmpfile=$(mktemp)
@@ -15,7 +31,7 @@ fail_on_stderr() {
     return $rc
 }
 
-echo -n "" >"$OUTPUT_FILE"
+echo -n "" >"$GENERATED_FILE"
 
 {
     echo -e "# ###### THEME LICENSES ######\n"
@@ -25,7 +41,7 @@ echo -n "" >"$OUTPUT_FILE"
     cat assets/icons/LICENSES
 
     echo -e "\n# ###### CODE LICENSES ######\n"
-} >>"$OUTPUT_FILE"
+} >>"$GENERATED_FILE"
 
 if ! cargo about --version | grep "cargo-about $CARGO_ABOUT_VERSION" &>/dev/null; then
     echo "Installing cargo-about@$CARGO_ABOUT_VERSION..."
@@ -41,16 +57,23 @@ set -x
 $WRAPPER cargo about generate \
     $FAIL_FLAG \
     -c script/licenses/zed-licenses.toml \
-    "$TEMPLATE_FILE" >>"$OUTPUT_FILE"
+    "$TEMPLATE_FILE" >>"$GENERATED_FILE"
 set +x
 
-sed -i.bak 's/&quot;/"/g' "$OUTPUT_FILE"
-sed -i.bak 's/&#x27;/'\''/g' "$OUTPUT_FILE" # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string
-sed -i.bak 's/&#x3D;/=/g' "$OUTPUT_FILE"
-sed -i.bak 's/&#x60;/`/g' "$OUTPUT_FILE"
-sed -i.bak 's/&lt;/</g' "$OUTPUT_FILE"
-sed -i.bak 's/&gt;/>/g' "$OUTPUT_FILE"
+sed -i.bak 's/&quot;/"/g' "$GENERATED_FILE"
+sed -i.bak 's/&#x27;/'\''/g' "$GENERATED_FILE" # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string
+sed -i.bak 's/&#x3D;/=/g' "$GENERATED_FILE"
+sed -i.bak 's/&#x60;/`/g' "$GENERATED_FILE"
+sed -i.bak 's/&lt;/</g' "$GENERATED_FILE"
+sed -i.bak 's/&gt;/>/g' "$GENERATED_FILE"
 
-rm -rf "${OUTPUT_FILE}.bak"
+rm -f "${GENERATED_FILE}.bak"
+
+if [[ -f "$OUTPUT_FILE" ]] && cmp -s "$GENERATED_FILE" "$OUTPUT_FILE"; then
+    echo "License content is unchanged; preserving $OUTPUT_FILE"
+else
+    chmod 0644 "$GENERATED_FILE"
+    mv -f "$GENERATED_FILE" "$OUTPUT_FILE"
+fi
 
 echo "generate-licenses completed. See $OUTPUT_FILE"

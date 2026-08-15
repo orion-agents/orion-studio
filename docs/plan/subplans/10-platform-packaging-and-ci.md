@@ -16,9 +16,9 @@
 ## 允许修改
 
 - crates/zed/Cargo.toml 中的平台 bundle metadata 部分。
-- crates/zed/resources/**
-- script/bundle-*
-- script/flatpak/**
+- crates/zed/resources/\*\*
+- script/bundle-\*
+- script/flatpak/\*\*
 - Windows installer、Linux desktop/Flatpak 元数据和 macOS bundle 配置。
 - .github/workflows/run_bundling.yml
 - .github/workflows/release.yml
@@ -37,12 +37,12 @@
 
 针对每个平台记录：
 
-| 平台 | 展示名 | executable | App/Bundle ID | URL scheme | artifact | 更新源 |
-| --- | --- | --- | --- | --- | --- | --- |
-| macOS |  |  |  |  |  |  |
-| Windows |  |  |  |  |  |  |
-| Linux desktop |  |  |  |  |  |  |
-| Flatpak |  |  |  |  |  |  |
+| 平台          | 展示名 | executable | App/Bundle ID | URL scheme | artifact | 更新源 |
+| ------------- | ------ | ---------- | ------------- | ---------- | -------- | ------ |
+| macOS         |        |            |               |            |          |        |
+| Windows       |        |            |               |            |          |        |
+| Linux desktop |        |            |               |            |          |        |
+| Flatpak       |        |            |               |            |          |        |
 
 每一格必须来自 S02；空值为 BLOCKED，不得自行补值。
 
@@ -85,7 +85,7 @@
 
 - workflow owner/repository 条件。
 - artifact、release repository、cache、bucket、secret 名。
-- ZED_* 构建环境变量。
+- ZED\_\* 构建环境变量。
 - 签名、notarization、更新 manifest 和发布说明。
 - 旧组织条件是否导致 Orion workflow 静默跳过。
 
@@ -107,12 +107,12 @@
 
 ## 验收命令
 
-~~~text
+```text
 git diff --check
 cargo +stable fmt --all -- --check
 cargo +stable metadata --no-deps --format-version 1
 ./script/check-keymaps
-~~~
+```
 
 按平台执行仓库已有的 bundle/installer 命令；不能用不存在的命令代替。
 对所有产物记录：
@@ -124,10 +124,10 @@ cargo +stable metadata --no-deps --format-version 1
 
 静态扫描：
 
-~~~text
+```text
 rg -n -i 'Zed|zed\.dev|dev\.zed|zed://|ZED_' \
   crates/zed/Cargo.toml crates/zed/resources script .github/workflows
-~~~
+```
 
 剩余命中必须是兼容、历史、法律或上游归属，并有理由。
 
@@ -162,4 +162,3 @@ artifact，不删除用户配置和注册信息。任何 schema forward-only 迁
 - artifact hash/signature 结果。
 - CI 是否真实触发。
 - 未完成平台和外部依赖。
-
