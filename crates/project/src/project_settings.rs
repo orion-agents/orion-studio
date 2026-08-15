@@ -1270,12 +1270,12 @@ impl SettingsObserver {
                                     let zed_tasks = TaskTemplates::try_from(vscode_tasks)
                                         .with_context(|| {
                                             format!(
-                                        "converting VSCode tasks into Zed ones, file {abs_path:?}"
+                                        "converting VS Code tasks into Orion Studio tasks, file {abs_path:?}"
                                     )
                                         })?;
                                     serde_json::to_string(&zed_tasks).with_context(|| {
                                         format!(
-                                            "serializing Zed tasks into JSON, file {abs_path:?}"
+                                            "serializing Orion Studio tasks into JSON, file {abs_path:?}"
                                         )
                                     })
                                 } else if abs_path.ends_with(local_vscode_launch_file_relative_path().as_std_path()) {
@@ -1287,12 +1287,12 @@ impl SettingsObserver {
                                     let zed_tasks = DebugTaskFile::try_from(vscode_tasks)
                                         .with_context(|| {
                                             format!(
-                                        "converting VSCode debug tasks into Zed ones, file {abs_path:?}"
+                                        "converting VS Code debug tasks into Orion Studio tasks, file {abs_path:?}"
                                     )
                                         })?;
                                     serde_json::to_string(&zed_tasks).with_context(|| {
                                         format!(
-                                            "serializing Zed tasks into JSON, file {abs_path:?}"
+                                            "serializing Orion Studio tasks into JSON, file {abs_path:?}"
                                         )
                                     })
                                 } else {

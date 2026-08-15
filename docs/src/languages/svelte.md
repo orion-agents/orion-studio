@@ -1,11 +1,11 @@
 ---
 title: Svelte
-description: "Configure Svelte language support in Zed, including language servers, formatting, and debugging."
+description: "Configure Svelte language support in Orion Studio, including language servers, formatting, and debugging."
 ---
 
 # Svelte
 
-Svelte support is available through the [Svelte extension](https://github.com/zed-extensions/svelte).
+Svelte support is available through the upstream-Zed [Svelte extension](https://github.com/zed-extensions/svelte), which Orion Studio consumes through extension compatibility.
 
 - Tree-sitter: [tree-sitter-grammars/tree-sitter-svelte](https://github.com/tree-sitter-grammars/tree-sitter-svelte)
 - Language Server: [sveltejs/language-tools](https://github.com/sveltejs/language-tools)
@@ -29,7 +29,7 @@ You can modify how certain styles, such as directives and modifiers, appear in a
 
 ## Inlay Hints
 
-When inlay hints are enabled in Zed, to make the language server send them back, Zed sets the following initialization options:
+When inlay hints are enabled in Orion Studio, to make the language server send them back, Orion Studio sets the following initialization options:
 
 ```json
 "inlayHints": {

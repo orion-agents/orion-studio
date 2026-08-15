@@ -799,7 +799,7 @@ pub mod outline {
 actions!(
     zed_predict_onboarding,
     [
-        /// Opens the Zed Predict onboarding modal.
+        /// Opens the edit prediction onboarding modal.
         OpenZedPredictOnboarding
     ]
 );

@@ -26,22 +26,22 @@ secret!(AZURE_SIGNING_CLIENT_ID);
 secret!(AZURE_SIGNING_CLIENT_SECRET);
 secret!(AZURE_SIGNING_TENANT_ID);
 secret!(CACHIX_AUTH_TOKEN);
-secret!(CLUSTER_NAME);
 secret!(DIGITALOCEAN_ACCESS_TOKEN);
 secret!(DIGITALOCEAN_SPACES_ACCESS_KEY);
 secret!(DIGITALOCEAN_SPACES_SECRET_KEY);
 secret!(GITHUB_TOKEN);
 secret!(MACOS_CERTIFICATE);
 secret!(MACOS_CERTIFICATE_PASSWORD);
+secret!(ORION_STUDIO_CLIENT_CHECKSUM_SEED);
+secret!(ORION_STUDIO_AUTOMATION_APP_ID);
+secret!(ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY);
+secret!(ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
+secret!(ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64);
+secret!(ORION_STUDIO_REVALIDATE_TOKEN);
+secret!(ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT);
 secret!(SENTRY_AUTH_TOKEN);
-secret!(ZED_CLIENT_CHECKSUM_SEED);
-secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
-secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
-secret!(ZED_ZIPPY_APP_ID);
-secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
 secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
-secret!(ZED_DEV_REVALIDATE_TOKEN);
 secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
 secret!(R2_ACCOUNT_ID);
 secret!(R2_ACCESS_KEY_ID);
@@ -55,12 +55,69 @@ secret!(DOCS_CONSENT_IO_INSTANCE);
 var!(AZURE_SIGNING_ACCOUNT_NAME);
 var!(AZURE_SIGNING_CERT_PROFILE_NAME);
 var!(AZURE_SIGNING_ENDPOINT);
+var!(ORION_STUDIO_DOCS_NIGHTLY_ORIGIN);
+var!(ORION_STUDIO_DOCS_NIGHTLY_PROJECT);
+var!(ORION_STUDIO_DOCS_PREVIEW_ORIGIN);
+var!(ORION_STUDIO_DOCS_PREVIEW_PROJECT);
+var!(ORION_STUDIO_DOCS_ROUTE_PATTERN);
+var!(ORION_STUDIO_DOCS_STABLE_ORIGIN);
+var!(ORION_STUDIO_DOCS_STABLE_PROJECT);
+var!(ORION_STUDIO_AUTOMATION_BOT_LOGIN);
+var!(ORION_STUDIO_AUTOMATION_GIT_EMAIL);
+var!(ORION_STUDIO_AUTOMATION_GIT_NAME);
+var!(ORION_STUDIO_CACHIX_CACHE_NAME);
+var!(ORION_STUDIO_DANGER_GITHUB_API_BASE_URL);
+var!(ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME);
+var!(ORION_STUDIO_EXTENSION_ORGANIZATION);
+var!(ORION_STUDIO_EXTENSION_REGISTRY_ENABLED);
+var!(ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY);
+var!(ORION_STUDIO_MACOS_SIGNING_IDENTITY);
+var!(ORION_STUDIO_MACOS_TEAM_ID);
+var!(ORION_STUDIO_NIGHTLY_BUCKET);
+var!(ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME);
+var!(ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_ROUTE_PATTERN);
+var!(ORION_STUDIO_SENTRY_ORGANIZATION);
+var!(ORION_STUDIO_SENTRY_PROJECT);
+var!(ORION_STUDIO_SCCACHE_R2_BUCKET);
+var!(ORION_STUDIO_WEBSITE_ORIGIN);
+var!(ORION_STUDIO_WINDOWS_APPX_PUBLISHER);
+var!(ORION_STUDIO_WINDOWS_PUBLISHER);
 
-pub fn bundle_envs(platform: Platform) -> Env {
-    let env = Env::default()
-        .add("CARGO_INCREMENTAL", 0)
-        .add("ZED_CLIENT_CHECKSUM_SEED", ZED_CLIENT_CHECKSUM_SEED)
-        .add("ZED_MINIDUMP_ENDPOINT", ZED_SENTRY_MINIDUMP_ENDPOINT);
+pub fn bundle_job_envs() -> Env {
+    Env::default().add("CARGO_INCREMENTAL", 0)
+}
+
+pub fn bundle_step_envs(platform: Platform, release_build: bool) -> Env {
+    let env = Env::default();
+    if !release_build {
+        return match platform {
+            Platform::Windows => env
+                .add("ORION_STUDIO_WINDOWS_PUBLISHER", "Orion Studio Development")
+                .add(
+                    "ORION_STUDIO_WINDOWS_APPX_PUBLISHER",
+                    "CN=Orion Studio Development",
+                )
+                .add("ORION_STUDIO_WINDOWS_ALLOW_UNSIGNED_DEV", "1")
+                .add("ORION_STUDIO_REQUIRE_SIGNED_RELEASE", "0"),
+            Platform::Linux | Platform::Mac => env,
+        };
+    }
+
+    let env = env
+        .add(
+            "ORION_STUDIO_CLIENT_CHECKSUM_SEED",
+            ORION_STUDIO_CLIENT_CHECKSUM_SEED,
+        )
+        .add(
+            "ORION_STUDIO_MINIDUMP_ENDPOINT",
+            ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT,
+        )
+        .add(
+            "ORION_STUDIO_SENTRY_ORGANIZATION",
+            ORION_STUDIO_SENTRY_ORGANIZATION,
+        )
+        .add("ORION_STUDIO_SENTRY_PROJECT", ORION_STUDIO_SENTRY_PROJECT)
+        .add("SENTRY_AUTH_TOKEN", SENTRY_AUTH_TOKEN);
 
     match platform {
         Platform::Linux => env,
@@ -69,7 +126,16 @@ pub fn bundle_envs(platform: Platform) -> Env {
             .add("MACOS_CERTIFICATE_PASSWORD", MACOS_CERTIFICATE_PASSWORD)
             .add("APPLE_NOTARIZATION_KEY", APPLE_NOTARIZATION_KEY)
             .add("APPLE_NOTARIZATION_KEY_ID", APPLE_NOTARIZATION_KEY_ID)
-            .add("APPLE_NOTARIZATION_ISSUER_ID", APPLE_NOTARIZATION_ISSUER_ID),
+            .add("APPLE_NOTARIZATION_ISSUER_ID", APPLE_NOTARIZATION_ISSUER_ID)
+            .add(
+                "ORION_STUDIO_MACOS_SIGNING_IDENTITY",
+                ORION_STUDIO_MACOS_SIGNING_IDENTITY,
+            )
+            .add("ORION_STUDIO_MACOS_TEAM_ID", ORION_STUDIO_MACOS_TEAM_ID)
+            .add(
+                "ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64",
+                ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64,
+            ),
         Platform::Windows => env
             .add("AZURE_TENANT_ID", AZURE_SIGNING_TENANT_ID)
             .add("AZURE_CLIENT_ID", AZURE_SIGNING_CLIENT_ID)
@@ -79,7 +145,15 @@ pub fn bundle_envs(platform: Platform) -> Env {
             .add("ENDPOINT", AZURE_SIGNING_ENDPOINT)
             .add("FILE_DIGEST", "SHA256")
             .add("TIMESTAMP_DIGEST", "SHA256")
-            .add("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com"),
+            .add("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com")
+            .add(
+                "ORION_STUDIO_WINDOWS_PUBLISHER",
+                ORION_STUDIO_WINDOWS_PUBLISHER,
+            )
+            .add(
+                "ORION_STUDIO_WINDOWS_APPX_PUBLISHER",
+                ORION_STUDIO_WINDOWS_APPX_PUBLISHER,
+            ),
     }
 }
 
@@ -370,21 +444,22 @@ impl serde::Serialize for WorkflowSecret {
 
 pub mod assets {
     // NOTE: these asset names also exist in the zed.dev codebase.
-    pub const MAC_AARCH64: &str = "Zed-aarch64.dmg";
-    pub const MAC_X86_64: &str = "Zed-x86_64.dmg";
-    pub const LINUX_AARCH64: &str = "zed-linux-aarch64.tar.gz";
-    pub const LINUX_X86_64: &str = "zed-linux-x86_64.tar.gz";
+    pub const MAC_AARCH64: &str = "Orion-Studio-aarch64.dmg";
+    pub const MAC_X86_64: &str = "Orion-Studio-x86_64.dmg";
+    pub const LINUX_AARCH64: &str = "orion-studio-linux-aarch64.tar.gz";
+    pub const LINUX_X86_64: &str = "orion-studio-linux-x86_64.tar.gz";
     pub const BWRAP_LINUX_AARCH64: &str = "bwrap-linux-aarch64.gz";
     pub const BWRAP_LINUX_X86_64: &str = "bwrap-linux-x86_64.gz";
-    pub const WINDOWS_X86_64: &str = "Zed-x86_64.exe";
-    pub const WINDOWS_AARCH64: &str = "Zed-aarch64.exe";
+    pub const WINDOWS_X86_64: &str = "Orion-Studio-x86_64.exe";
+    pub const WINDOWS_AARCH64: &str = "Orion-Studio-aarch64.exe";
 
-    pub const REMOTE_SERVER_MAC_AARCH64: &str = "zed-remote-server-macos-aarch64.gz";
-    pub const REMOTE_SERVER_MAC_X86_64: &str = "zed-remote-server-macos-x86_64.gz";
-    pub const REMOTE_SERVER_LINUX_AARCH64: &str = "zed-remote-server-linux-aarch64.gz";
-    pub const REMOTE_SERVER_LINUX_X86_64: &str = "zed-remote-server-linux-x86_64.gz";
-    pub const REMOTE_SERVER_WINDOWS_AARCH64: &str = "zed-remote-server-windows-aarch64.zip";
-    pub const REMOTE_SERVER_WINDOWS_X86_64: &str = "zed-remote-server-windows-x86_64.zip";
+    pub const REMOTE_SERVER_MAC_AARCH64: &str = "orion-studio-remote-server-macos-aarch64.gz";
+    pub const REMOTE_SERVER_MAC_X86_64: &str = "orion-studio-remote-server-macos-x86_64.gz";
+    pub const REMOTE_SERVER_LINUX_AARCH64: &str = "orion-studio-remote-server-linux-aarch64.gz";
+    pub const REMOTE_SERVER_LINUX_X86_64: &str = "orion-studio-remote-server-linux-x86_64.gz";
+    pub const REMOTE_SERVER_WINDOWS_AARCH64: &str =
+        "orion-studio-remote-server-windows-aarch64.zip";
+    pub const REMOTE_SERVER_WINDOWS_X86_64: &str = "orion-studio-remote-server-windows-x86_64.zip";
 
     pub fn all() -> Vec<&'static str> {
         vec![

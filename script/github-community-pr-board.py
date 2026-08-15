@@ -56,8 +56,8 @@ MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
 
 GITHUB_API_URL = "https://api.github.com"
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "orion-agents"
+REPO_NAME = "orion-studio"
 STAFF_TEAM_SLUG = "staff"
 
 SKIP_LABELS = {"staff", "bot"}

@@ -1,6 +1,6 @@
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderState, ORION_CLOUD_PROVIDER_ID,
 };
 use collections::{BTreeMap, HashSet};
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
@@ -104,7 +104,7 @@ impl ConfiguredModel {
     }
 
     pub fn is_provided_by_zed(&self) -> bool {
-        self.provider.id() == ZED_CLOUD_PROVIDER_ID
+        self.provider.id() == ORION_CLOUD_PROVIDER_ID
     }
 }
 
@@ -187,13 +187,13 @@ impl LanguageModelRegistry {
     }
 
     pub fn providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
-        let zed_provider_id = LanguageModelProviderId("zed.dev".into());
+        let orion_provider_id = ORION_CLOUD_PROVIDER_ID;
         let mut providers = Vec::with_capacity(self.providers.len());
-        if let Some(provider) = self.providers.get(&zed_provider_id) {
+        if let Some(provider) = self.providers.get(&orion_provider_id) {
             providers.push(provider.clone());
         }
         providers.extend(self.providers.values().filter_map(|p| {
-            if p.id() != zed_provider_id {
+            if p.id() != orion_provider_id {
                 Some(p.clone())
             } else {
                 None
@@ -458,7 +458,7 @@ impl LanguageModelRegistry {
 
     pub fn default_model(&self) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+        if simulate_no_llm_provider() {
             return None;
         }
 
@@ -482,7 +482,7 @@ impl LanguageModelRegistry {
 
     pub fn inline_assistant_model(&self) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+        if simulate_no_llm_provider() {
             return None;
         }
 
@@ -493,7 +493,7 @@ impl LanguageModelRegistry {
 
     pub fn commit_message_model(&self, cx: &App) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+        if simulate_no_llm_provider() {
             return None;
         }
 
@@ -505,7 +505,7 @@ impl LanguageModelRegistry {
 
     pub fn thread_summary_model(&self, cx: &App) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+        if simulate_no_llm_provider() {
             return None;
         }
 
@@ -520,7 +520,7 @@ impl LanguageModelRegistry {
     /// the thread's primary model should handle `None` themselves.
     pub fn compaction_model(&self) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+        if simulate_no_llm_provider() {
             return None;
         }
 
@@ -533,6 +533,19 @@ impl LanguageModelRegistry {
     pub fn inline_alternative_models(&self) -> &[Arc<dyn LanguageModel>] {
         &self.inline_alternatives
     }
+}
+
+#[cfg(debug_assertions)]
+fn simulate_no_llm_provider() -> bool {
+    std::env::var("ORION_STUDIO_SIMULATE_NO_LLM_PROVIDER")
+        .or_else(|error| {
+            if matches!(error, std::env::VarError::NotPresent) {
+                std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER")
+            } else {
+                Err(error)
+            }
+        })
+        .is_ok()
 }
 
 #[cfg(test)]

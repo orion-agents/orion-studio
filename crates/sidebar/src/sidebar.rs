@@ -2,7 +2,7 @@ mod thread_switcher;
 
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
-use agent::{ThreadStore, ZED_AGENT_ID};
+use agent::{ThreadStore, is_native_agent_id};
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
@@ -1376,10 +1376,10 @@ impl Sidebar {
         let resolve_agent_icon = |agent_id: &AgentId| -> (IconName, Option<SharedString>) {
             let agent = Agent::from(agent_id.clone());
             let icon = match agent {
-                Agent::NativeAgent => IconName::ZedAgent,
+                Agent::NativeAgent => IconName::Sparkle,
                 Agent::Custom { .. } => IconName::Terminal,
 
-                _ => IconName::ZedAgent,
+                _ => IconName::Sparkle,
             };
             let icon_from_external_svg = agent_server_store
                 .as_ref()
@@ -6347,8 +6347,8 @@ impl Sidebar {
             ThreadEntryWorkspace::Closed { .. } => None,
         };
 
-        let is_zed_thread = thread.metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref();
-        let can_open_as_markdown = thread.is_live || is_zed_thread;
+        let is_native_thread = is_native_agent_id(thread.metadata.agent_id.as_ref());
+        let can_open_as_markdown = thread.is_live || is_native_thread;
         let folder_paths = thread.metadata.folder_paths().clone();
 
         right_click_menu(context_menu_id)
@@ -6384,7 +6384,7 @@ impl Sidebar {
                             }
                         });
 
-                        if is_zed_thread {
+                        if is_native_thread {
                             menu = menu.entry("Regenerate Thread Title", None, {
                                 let session_id = session_id.clone();
                                 let sidebar = sidebar.clone();
@@ -6429,7 +6429,7 @@ impl Sidebar {
                                         }
                                     }
 
-                                    if is_zed_thread
+                                    if is_native_thread
                                         && let Some(active_workspace) = &active_workspace
                                     {
                                         Self::open_closed_native_thread_as_markdown(
@@ -7450,7 +7450,7 @@ impl Sidebar {
         render_import_onboarding_banner(
             "acp",
             "Looking for threads from external agents?",
-            "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client.",
+            "Import threads from agents like Claude Agent, Codex, and more, whether started in Orion Studio or another client.",
             if verbose_labels {
                 "Import Threads from External Agents"
             } else {

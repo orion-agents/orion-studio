@@ -1,11 +1,11 @@
 ---
 title: Proto
-description: "Configure Proto language support in Zed, including language servers, formatting, and debugging."
+description: "Configure Proto language support in Orion Studio, including language servers, formatting, and debugging."
 ---
 
 # Proto
 
-Proto/proto3 (Protocol Buffers definition language) support is available through the [Proto extension](https://github.com/zed-industries/zed/tree/main/extensions/proto).
+Proto/proto3 (Protocol Buffers definition language) support is available through the [Proto extension](https://github.com/orion-agents/orion-studio/tree/main/extensions/proto).
 
 - Tree-sitter: [coder3101/tree-sitter-proto](https://github.com/coder3101/tree-sitter-proto)
 - Language Servers: [protobuf-language-server](https://github.com/lasorda/protobuf-language-server)
@@ -19,7 +19,7 @@ TBD: Clarify which language server(s) to use / Feature support.
 
 Install protobuf-language-server and make sure it's in your PATH:
 
-```
+```sh
 go install github.com/lasorda/protobuf-language-server@latest
 which protobuf-language-server
 ```
@@ -28,7 +28,7 @@ which protobuf-language-server
 
 Install protols and make sure it's in your PATH:
 
-```
+```sh
 cargo install protols
 which protols
 ```
@@ -65,7 +65,7 @@ IndentWidth: 4
 ColumnLimit: 120
 ```
 
-Or you can have zed directly invoke `clang-format` by specifying it as a [formatter](https://zed.dev/docs/reference/all-settings#formatter) in your settings:
+Or you can have Orion Studio directly invoke `clang-format` by specifying it as a [formatter](../reference/all-settings.md#formatter) in your settings:
 
 ```json [settings]
   "languages": {

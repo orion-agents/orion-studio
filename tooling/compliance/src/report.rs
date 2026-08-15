@@ -13,7 +13,7 @@ use crate::{
     git::CommitDetails,
 };
 
-const PULL_REQUEST_BASE_URL: &str = "https://github.com/zed-industries/zed/pull";
+const PULL_REQUEST_BASE_URL: &str = "https://github.com/orion-agents/orion-studio/pull";
 
 #[derive(Debug)]
 pub struct ReportEntry<R> {
@@ -55,14 +55,17 @@ impl<R: ToString> ReportEntry<R> {
 
 impl ReportEntry<ReviewResult> {
     pub fn is_unknown_error(&self) -> bool {
-        matches!(self.reason, Err(ReviewFailure::Other(_)))
+        matches!(
+            self.reason,
+            Err(ReviewFailure::AutomationConfiguration(_) | ReviewFailure::Other(_))
+        )
     }
 }
 
 impl ReportEntry<ReviewFailure> {
     fn issue_kind(&self) -> IssueKind {
         match self.reason {
-            ReviewFailure::Other(_) => IssueKind::Error,
+            ReviewFailure::AutomationConfiguration(_) | ReviewFailure::Other(_) => IssueKind::Error,
             _ => IssueKind::NotReviewed,
         }
     }
@@ -115,7 +118,7 @@ impl ReportSummary {
                         entry.reason,
                         Err(ReviewFailure::NoPullRequestFound
                             | ReviewFailure::Unreviewed
-                            | ReviewFailure::UnexpectedZippyAction(_))
+                            | ReviewFailure::UnexpectedAutomationAction(_))
                     )
                 })
                 .count(),
@@ -400,7 +403,7 @@ mod tests {
         );
         report.add(
             make_commit("ddd", "Dave", "dave@test.com", "Bump Version", ""),
-            Ok(ReviewSuccess::ZedZippyCommit(
+            Ok(ReviewSuccess::AutomationCommit(
                 AutomatedChangeKind::VersionBump,
                 GithubLogin::new("dave".to_string()),
             )),
@@ -468,6 +471,26 @@ mod tests {
         );
 
         let summary = report.summary();
+        assert!(matches!(
+            summary.review_summary(),
+            ReportReviewSummary::MissingReviewsWithErrors
+        ));
+    }
+
+    #[test]
+    fn report_summary_treats_automation_configuration_failure_as_error() {
+        let mut report = Report::new();
+
+        report.add(
+            make_commit("aaa", "Alice", "alice@test.com", "Reviewed (#100)", ""),
+            Err(ReviewFailure::AutomationConfiguration(
+                "missing automation identity".to_owned(),
+            )),
+        );
+
+        let summary = report.summary();
+        assert_eq!(summary.not_reviewed, 0);
+        assert_eq!(summary.errors, 1);
         assert!(matches!(
             summary.review_summary(),
             ReportReviewSummary::MissingReviewsWithErrors

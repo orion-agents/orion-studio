@@ -172,7 +172,14 @@ impl TerminalToolTest {
         });
 
         let agent_model = SelectedModel::from_str(
-            &std::env::var("ZED_AGENT_MODEL")
+            &std::env::var("ORION_STUDIO_AGENT_MODEL")
+                .or_else(|error| {
+                    if matches!(error, std::env::VarError::NotPresent) {
+                        std::env::var("ZED_AGENT_MODEL")
+                    } else {
+                        Err(error)
+                    }
+                })
                 .unwrap_or("anthropic/claude-sonnet-4-6-latest".into()),
         )
         .unwrap();

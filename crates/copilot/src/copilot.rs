@@ -703,9 +703,18 @@ impl Copilot {
         this.update(cx, |this, cx| {
             cx.notify();
 
-            if env::var("ZED_FORCE_COPILOT_ERROR").is_ok() {
+            if env::var("ORION_STUDIO_FORCE_COPILOT_ERROR")
+                .or_else(|error| {
+                    if matches!(error, env::VarError::NotPresent) {
+                        env::var("ZED_FORCE_COPILOT_ERROR")
+                    } else {
+                        Err(error)
+                    }
+                })
+                .is_ok()
+            {
                 this.server = CopilotServer::Error(
-                    "Forced error for testing (ZED_FORCE_COPILOT_ERROR)".into(),
+                    "Forced error for testing (ORION_STUDIO_FORCE_COPILOT_ERROR)".into(),
                 );
                 return;
             }

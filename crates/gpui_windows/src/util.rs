@@ -87,6 +87,10 @@ pub(crate) unsafe fn set_window_long(
 }
 
 pub(crate) fn windows_credentials_target_name(url: &str) -> String {
+    format!("orion-studio:url={}", url)
+}
+
+pub(crate) fn legacy_windows_credentials_target_name(url: &str) -> String {
     format!("zed:url={}", url)
 }
 
@@ -188,4 +192,23 @@ where
             .log_err();
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_target_names_distinguish_canonical_and_legacy_keys() {
+        let url = "https://example.com";
+
+        assert_eq!(
+            windows_credentials_target_name(url),
+            "orion-studio:url=https://example.com"
+        );
+        assert_eq!(
+            legacy_windows_credentials_target_name(url),
+            "zed:url=https://example.com"
+        );
+    }
 }

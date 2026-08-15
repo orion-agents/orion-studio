@@ -3,8 +3,11 @@ use cloud_llm_client::predict_edits_v3::{RawCompletionRequest, RawCompletionResp
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Entity, Global, SharedString, Task, http_client};
 use language::language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings};
-use language_model::{ApiKeyState, EnvVar, env_var};
-use std::sync::Arc;
+use language_model::{ApiKeyState, EnvVar};
+use std::{
+    env::VarError,
+    sync::{Arc, LazyLock},
+};
 
 pub fn open_ai_compatible_api_url(cx: &App) -> SharedString {
     all_language_settings(None, cx)
@@ -17,8 +20,40 @@ pub fn open_ai_compatible_api_url(cx: &App) -> SharedString {
 }
 
 pub const OPEN_AI_COMPATIBLE_CREDENTIALS_USERNAME: &str = "openai-compatible-api-token";
-pub static OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> =
-    env_var!("ZED_OPEN_AI_COMPATIBLE_EDIT_PREDICTION_API_KEY");
+const OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME: &str =
+    "ORION_STUDIO_OPEN_AI_COMPATIBLE_EDIT_PREDICTION_API_KEY";
+const LEGACY_OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME: &str =
+    "ZED_OPEN_AI_COMPATIBLE_EDIT_PREDICTION_API_KEY";
+
+fn env_var_value(name: &str, value: Option<String>) -> EnvVar {
+    EnvVar {
+        name: name.to_string().into(),
+        value: value.filter(|value| !value.is_empty()),
+    }
+}
+
+fn resolve_compatible_env_var(
+    canonical_value: Result<String, VarError>,
+    legacy_value: impl FnOnce() -> Result<String, VarError>,
+) -> EnvVar {
+    match canonical_value {
+        Ok(value) => env_var_value(OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME, Some(value)),
+        Err(VarError::NotUnicode(_)) => env_var_value(OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME, None),
+        Err(VarError::NotPresent) => match legacy_value() {
+            Ok(value) => env_var_value(LEGACY_OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME, Some(value)),
+            Err(VarError::NotUnicode(_)) => {
+                env_var_value(LEGACY_OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME, None)
+            }
+            Err(VarError::NotPresent) => env_var_value(OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME, None),
+        },
+    }
+}
+
+pub static OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR: LazyLock<EnvVar> = LazyLock::new(|| {
+    resolve_compatible_env_var(std::env::var(OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME), || {
+        std::env::var(LEGACY_OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME)
+    })
+});
 
 struct GlobalOpenAiCompatibleApiKey(Entity<ApiKeyState>);
 
@@ -130,5 +165,52 @@ pub(crate) async fn send_custom_server_request(
                 .unwrap_or_default();
             Ok((text, parsed.id))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn compatible_token_environment_variable_preserves_canonical_precedence() {
+        let legacy_was_read = Cell::new(false);
+        let canonical = resolve_compatible_env_var(Ok(String::new()), || {
+            legacy_was_read.set(true);
+            Ok("legacy-token".to_owned())
+        });
+        assert_eq!(
+            canonical.name.as_ref(),
+            OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME
+        );
+        assert_eq!(canonical.value, None);
+        assert!(!legacy_was_read.get());
+
+        let legacy =
+            resolve_compatible_env_var(
+                Err(VarError::NotPresent),
+                || Ok("legacy-token".to_string()),
+            );
+        assert_eq!(
+            legacy.name.as_ref(),
+            LEGACY_OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME
+        );
+        assert_eq!(legacy.value.as_deref(), Some("legacy-token"));
+
+        legacy_was_read.set(false);
+        let non_unicode = resolve_compatible_env_var(
+            Err(VarError::NotUnicode(std::ffi::OsString::from("invalid"))),
+            || {
+                legacy_was_read.set(true);
+                Ok("legacy-token".to_owned())
+            },
+        );
+        assert_eq!(
+            non_unicode.name.as_ref(),
+            OPEN_AI_COMPATIBLE_TOKEN_ENV_VAR_NAME
+        );
+        assert_eq!(non_unicode.value, None);
+        assert!(!legacy_was_read.get());
     }
 }

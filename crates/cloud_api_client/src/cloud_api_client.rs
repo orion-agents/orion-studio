@@ -99,10 +99,10 @@ impl CloudApiClient {
 
     pub fn cloud_host(&self) -> String {
         self.http_client
-            .build_zed_cloud_url("/")
+            .build_orion_cloud_url("/")
             .ok()
             .and_then(|url| url.host_str().map(String::from))
-            .unwrap_or_else(|| "cloud.zed.dev".into())
+            .unwrap_or_else(|| "cloud.orion.dev".into())
     }
 
     pub async fn get_authenticated_user(
@@ -113,7 +113,7 @@ impl CloudApiClient {
             .method(Method::GET)
             .uri(
                 self.http_client
-                    .build_zed_cloud_url("/client/users/me")
+                    .build_orion_cloud_url("/client/users/me")
                     .map_err(ClientApiError::RequestBuildFailed)?
                     .as_ref(),
             )
@@ -134,7 +134,7 @@ impl CloudApiClient {
             .method(Method::POST)
             .uri(
                 self.http_client
-                    .build_zed_cloud_url("/client/llm_tokens")
+                    .build_orion_cloud_url("/client/llm_tokens")
                     .map_err(ClientApiError::RequestBuildFailed)?
                     .as_ref(),
             )
@@ -158,7 +158,7 @@ impl CloudApiClient {
             .method(Method::PATCH)
             .uri(
                 self.http_client
-                    .build_zed_cloud_url("/client/system_settings")
+                    .build_orion_cloud_url("/client/system_settings")
                     .map_err(ClientApiError::RequestBuildFailed)?
                     .as_ref(),
             )
@@ -241,7 +241,7 @@ impl CloudApiClient {
         let request = build_request(
             Request::builder().method(Method::GET).uri(
                 self.http_client
-                    .build_zed_cloud_url("/client/users/me")?
+                    .build_orion_cloud_url("/client/users/me")?
                     .as_ref(),
             ),
             AsyncBody::default(),
@@ -272,7 +272,7 @@ impl CloudApiClient {
     pub async fn submit_agent_feedback(&self, body: SubmitAgentThreadFeedbackBody) -> Result<()> {
         let request = Request::builder().method(Method::POST).uri(
             self.http_client
-                .build_zed_cloud_url("/client/feedback/agent_thread")?
+                .build_orion_cloud_url("/client/feedback/agent_thread")?
                 .as_ref(),
         );
 
@@ -287,7 +287,7 @@ impl CloudApiClient {
     ) -> Result<()> {
         let request = Request::builder().method(Method::POST).uri(
             self.http_client
-                .build_zed_cloud_url("/client/feedback/agent_thread_comments")?
+                .build_orion_cloud_url("/client/feedback/agent_thread_comments")?
                 .as_ref(),
         );
 
@@ -302,7 +302,7 @@ impl CloudApiClient {
     ) -> Result<()> {
         let request = Request::builder().method(Method::POST).uri(
             self.http_client
-                .build_zed_cloud_url("/client/feedback/edit_prediction")?
+                .build_orion_cloud_url("/client/feedback/edit_prediction")?
                 .as_ref(),
         );
 
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn build_session_authenticated_request_without_authorization_header() -> Result<()> {
         let request = build_request(
-            Request::builder().uri("https://cloud.zed.dev/client/users/me"),
+            Request::builder().uri("https://cloud.orion.dev/client/users/me"),
             AsyncBody::default(),
             None,
         )?;
@@ -354,7 +354,7 @@ mod tests {
     #[test]
     fn build_credentials_authenticated_request_with_authorization_header() -> Result<()> {
         let request = build_request(
-            Request::builder().uri("https://cloud.zed.dev/client/users/me"),
+            Request::builder().uri("https://cloud.orion.dev/client/users/me"),
             AsyncBody::default(),
             Some(&Credentials {
                 user_id: 123,

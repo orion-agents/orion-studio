@@ -54,7 +54,7 @@ def modal_secret_names() -> set[str]:
 
 def command_doctor(args: argparse.Namespace) -> int:
     namespace = default_namespace(args)
-    print("zed-eval doctor")
+    print("Orion Studio eval doctor")
     print(f"  namespace:          {namespace}")
     print(f"  app:                {args.app_name}")
     print(f"  volume:             {args.volume}")
@@ -226,11 +226,14 @@ def add_build_source_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--clean-source",
         action="store_true",
-        help="Build exactly --base-sha/--zed-version with no local patch",
+        help="Build exactly --base-sha/--orion-studio-version with no local patch",
     )
+    # `--zed-version` remains an input alias for existing automation.
     parser.add_argument(
+        "--orion-studio-version",
         "--zed-version",
-        help="Git ref/tag/SHA of Zed to build as a clean source snapshot",
+        dest="zed_version",
+        help="Git ref/tag/SHA of Orion Studio to build as a clean source snapshot",
     )
 
 
@@ -254,7 +257,7 @@ def add_model_options(parser: argparse.ArgumentParser) -> None:
         "--model-provider",
         choices=("zed", "baseten"),
         default="zed",
-        help="Use 'zed' for built-in provider/model ids, or 'baseten' for Baseten Model APIs",
+        help="Use provider id 'zed' for Orion Studio built-in models, or 'baseten' for Baseten Model APIs",
     )
     advanced.add_argument(
         "--baseten-model",
@@ -422,7 +425,7 @@ def add_command_parser(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zed-eval",
-        description="Launch, monitor, and fetch remote SWE-Atlas agent evals on Modal.",
+        description="Launch, monitor, and fetch Orion Studio SWE-Atlas agent evals on Modal.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Common workflows:\n"

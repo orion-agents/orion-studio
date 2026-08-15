@@ -1,6 +1,6 @@
 ---
-title: Agent Settings - Zed
-description: Map the AI settings pages to Zed AI setup for LLM providers, External Agents, MCP servers, and related settings.
+title: Agent Settings - Orion Studio
+description: Map the AI settings pages to Orion Studio AI setup for LLM providers, External Agents, MCP servers, and related settings.
 ---
 
 # Agent Settings
@@ -16,11 +16,11 @@ Within the AI page, LLM Providers, External Agents, and MCP Servers each open as
 | Settings Editor | {#action agent::OpenSettings}   | AI settings: LLM providers, External Agents, MCP servers, and related pages |
 | Settings file   | {#action zed::OpenSettingsFile} | Direct JSON edits and settings not exposed in UI                            |
 
-For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
+For general settings mechanics, see [Configuring Orion Studio](../configuring-zed.md).
 
 ## LLM Providers {#llm-providers}
 
-The `LLM Providers` section configures model providers for Zed AI features, including Zed Agent, Inline Assistant, Git commit generation, thread summaries, and similar model-backed features.
+The `LLM Providers` section configures model providers for Orion Studio AI features, including Orion Studio Agent, Inline Assistant, Git commit generation, thread summaries, and similar model-backed features.
 
 Use this section to:
 
@@ -33,7 +33,7 @@ For the model-access paths and provider-specific setup, see [LLM Providers](./ll
 
 ## Feature-Specific Settings {#feature-specific-settings}
 
-Some Zed AI features have their own model or prompt settings in `settings.json`, including:
+Some Orion Studio AI features have their own model or prompt settings in `settings.json`, including:
 
 - `agent.inline_assistant_model`
 - `agent.commit_message_model`
@@ -57,7 +57,7 @@ For feature-specific model examples, see [Feature-specific Models](#feature-spec
 
 ## Automatic Compaction {#automatic-compaction}
 
-Zed Agent can automatically compact long threads before they reach the selected model's context window. Compaction summarizes earlier messages and keeps the conversation usable without starting a new thread.
+Orion Studio Agent can automatically compact long threads before they reach the selected model's context window. Compaction summarizes earlier messages and keeps the conversation usable without starting a new thread.
 
 Automatic compaction is enabled by default and runs when the thread reaches `90%` of the model's context window. You can change the threshold or disable automatic compaction in `settings.json`:
 
@@ -80,9 +80,9 @@ The `threshold` value can be one of:
 | Positive integer, like `100000` | Compact after that many tokens have been used.                                 |
 | Negative integer, like `-20000` | Compact once fewer than that many tokens remain in the model's context window. |
 
-`0` is not a valid threshold. If the threshold is invalid, Zed falls back to `90%`.
+`0` is not a valid threshold. If the threshold is invalid, Orion Studio falls back to `90%`.
 
-You can compact a Zed Agent thread manually at any time by typing `/compact` in the Agent Panel message editor. For more on thread token usage and compaction behavior, see [Token Usage and Compaction](./agent-panel.md#token-usage).
+You can compact an Orion Studio Agent thread manually at any time by typing `/compact` in the Agent Panel message editor. For more on thread token usage and compaction behavior, see [Token Usage and Compaction](./agent-panel.md#token-usage).
 
 ## Compaction Model {#compaction-model}
 
@@ -120,7 +120,7 @@ For setup details and support boundaries, see [External Agents](./external-agent
 
 ## MCP Servers {#mcp-servers}
 
-The `MCP Servers` page configures Model Context Protocol servers connected to Zed.
+The `MCP Servers` page configures Model Context Protocol servers connected to Orion Studio.
 
 Use `Add Server` (in the page header) to:
 
@@ -140,25 +140,25 @@ For MCP setup, auth, server status, and agent-path boundaries, see [MCP](./mcp.m
 
 Some AI settings are not configured on the AI settings pages:
 
-| Task                                                         | Go to                                          |
-| ------------------------------------------------------------ | ---------------------------------------------- |
-| Choose which tools are available in a Zed Agent thread       | [Agent Profiles](./agent-profiles.md)          |
-| Control whether tool calls are allowed, denied, or confirmed | [Tool Permissions](./tool-permissions.md)      |
-| Configure reusable task instructions                         | [Skills](./skills.md)                          |
-| Configure always-on personal or project instructions         | [Instructions](./instructions.md)              |
-| Configure edit prediction providers                          | [Edit Prediction](./edit-prediction.md)        |
-| Turn AI off                                                  | [AI Quick Start](./quick-start.md#turn-ai-off) |
-| Edit raw settings JSON                                       | [Configuring Zed](../configuring-zed.md)       |
+| Task                                                             | Go to                                             |
+| ---------------------------------------------------------------- | ------------------------------------------------- |
+| Choose which tools are available in an Orion Studio Agent thread | [Agent Profiles](./agent-profiles.md)             |
+| Control whether tool calls are allowed, denied, or confirmed     | [Tool Permissions](./tool-permissions.md)         |
+| Configure reusable task instructions                             | [Skills](./skills.md)                             |
+| Configure always-on personal or project instructions             | [Instructions](./instructions.md)                 |
+| Configure edit prediction providers                              | [Edit Prediction](./edit-prediction.md)           |
+| Turn AI off                                                      | [AI Quick Start](./quick-start.md#turn-ai-off)    |
+| Edit raw settings JSON                                           | [Configuring Orion Studio](../configuring-zed.md) |
 
 ## Feature-Specific Models {#feature-specific-models}
 
-Zed supports feature-specific model settings for Inline Assistant, Git commit generation, thread summaries, and subagents. Configure these in settings when you need a different model for a specific workflow.
+Orion Studio supports feature-specific model settings for Inline Assistant, Git commit generation, thread summaries, and subagents. Configure these in settings when you need a different model for a specific workflow.
 
 See [LLM Providers](./llm-providers.md) for model access, and [All Settings](../reference/all-settings.md) for the complete settings reference.
 
 ## Model Temperature {#model-temperature}
 
-Most Zed AI features use the selected model's default generation behavior.
+Most Orion Studio AI features use the selected model's default generation behavior.
 Use `agent.model_parameters` when you need to set a temperature for a provider,
 a model, or a specific provider/model pair.
 
@@ -176,7 +176,7 @@ a model, or a specific provider/model pair.
 }
 ```
 
-Zed checks matching entries from last to first. An entry can omit `provider` or
+Orion Studio checks matching entries from last to first. An entry can omit `provider` or
 `model` to apply more broadly. For provider-specific model configuration such as
 custom model entries, context windows, or gateway routing, see
 [LLM Providers](./llm-providers.md) and the provider setup pages.

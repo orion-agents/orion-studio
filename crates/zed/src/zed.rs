@@ -108,9 +108,9 @@ use zed_actions::{
     OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
 };
 
-const DOCS_URL: &str = "https://zed.dev/docs/";
-const STATUS_URL: &str = "https://status.zed.dev";
-const MERCH_URL: &str = "https://merch.zed.dev/";
+const DOCS_URL: &str = "https://orion.dev/docs/";
+const STATUS_URL: &str = "https://status.orion.dev";
+const MERCH_URL: &str = "https://merch.orion.dev/";
 
 pub struct CrashHandler(pub Arc<crashes::Client>);
 
@@ -219,7 +219,7 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    // When Zed logs to stdout rather than the log file, avoid registering
+    // When Orion Studio logs to stdout rather than the log file, avoid registering
     // handlers for both `OpenLog` and `RevealLogInFileManager`, as the log file
     // does not exist in that scenario and these actions would error.
     if !crate::stdout_is_a_pty() {
@@ -355,6 +355,14 @@ fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
     }
 }
 
+fn canonical_env_value<T>(canonical: Option<T>, legacy: Option<T>) -> Option<T> {
+    canonical.or(legacy)
+}
+
+fn orion_studio_env_var(canonical: &str, legacy: &str) -> Option<std::ffi::OsString> {
+    canonical_env_value(std::env::var_os(canonical), std::env::var_os(legacy))
+}
+
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowOptions {
     let display = display_uuid.and_then(|uuid| {
         cx.displays()
@@ -362,14 +370,18 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             .find(|display| display.uuid().ok() == Some(uuid))
     });
     let app_id = ReleaseChannel::global(cx).app_id();
-    let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
-        Ok(val) if val == "server" => gpui::WindowDecorations::Server,
-        Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-        _ => match WorkspaceSettings::get_global(cx).window_decorations {
-            settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
-            settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
-        },
-    };
+    let window_decorations =
+        match orion_studio_env_var("ORION_STUDIO_WINDOW_DECORATIONS", "ZED_WINDOW_DECORATIONS")
+            .as_deref()
+            .and_then(std::ffi::OsStr::to_str)
+        {
+            Some("server") => gpui::WindowDecorations::Server,
+            Some("client") => gpui::WindowDecorations::Client,
+            _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+            },
+        };
 
     let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
 
@@ -399,7 +411,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         show: false,
         kind: WindowKind::Normal,
         is_movable: true,
-        // Zed draws its own titlebar and moves the window via [`Window::start_window_move`],
+        // Orion Studio draws its own titlebar and moves the window via [`Window::start_window_move`],
         // so on macOS AppKit should not own titlebar dragging. This avoids the titlebar
         // click delay from AppKit's drag disambiguation (first observed on macOS 27) while
         // keeping the window movable and the Window-menu tiling items enabled. No-op on
@@ -416,7 +428,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             height: px(240.0),
         }),
         tabbing_identifier: if use_system_window_tabs {
-            Some(String::from("zed"))
+            Some(String::from("orion-studio"))
         } else {
             None
         },
@@ -667,7 +679,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             db::indoc! {r#"
             inotify_init returned {}
 
-            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://zed.dev/docs/linux
+            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://orion.dev/docs/linux
             "#},
             e
         );
@@ -681,7 +693,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
         cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
-                    cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
+                    cx.open_url("https://orion.dev/docs/linux#could-not-start-inotify");
                     cx.quit();
                 });
             }
@@ -698,7 +710,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             db::indoc! {r#"
             ReadDirectoryChangesW initialization failed: {}
 
-            This may occur on network filesystems and WSL paths. For troubleshooting see: https://zed.dev/docs/windows
+            This may occur on network filesystems and WSL paths. For troubleshooting see: https://orion.dev/docs/windows
             "#},
             e
         );
@@ -712,7 +724,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
         cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
-                    cx.open_url("https://zed.dev/docs/windows");
+                    cx.open_url("https://orion.dev/docs/windows");
                     cx.quit()
                 });
             }
@@ -726,29 +738,32 @@ fn show_software_emulation_warning_if_needed(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
+    if specs.is_software_emulated
+        && orion_studio_env_var("ORION_STUDIO_ALLOW_EMULATED_GPU", "ZED_ALLOW_EMULATED_GPU")
+            .is_none()
+    {
         let (graphics_api, docs_url, open_url) = if cfg!(target_os = "windows") {
             (
                 "DirectX",
-                "https://zed.dev/docs/windows",
-                "https://zed.dev/docs/windows",
+                "https://orion.dev/docs/windows",
+                "https://orion.dev/docs/windows",
             )
         } else {
             (
                 "Vulkan",
-                "https://zed.dev/docs/linux",
-                "https://zed.dev/docs/linux#zed-fails-to-open-windows",
+                "https://orion.dev/docs/linux",
+                "https://orion.dev/docs/linux#orion-studio-fails-to-open-windows",
             )
         };
         let message = format!(
             db::indoc! {r#"
-            Zed uses {} for rendering and requires a compatible GPU.
+            Orion Studio uses {} for rendering and requires a compatible GPU.
 
             Currently you are using a software emulated GPU ({}) which
             will result in awful performance.
 
             For troubleshooting see: {}
-            Set ZED_ALLOW_EMULATED_GPU=1 env var to permanently override.
+            Set ORION_STUDIO_ALLOW_EMULATED_GPU=1 env var to permanently override.
             "#},
             graphics_api, specs.device_name, docs_url
         );
@@ -1705,7 +1720,7 @@ fn open_about_window(cx: &mut App) {
     cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some("About Zed".into()),
+                title: Some("About Orion Studio".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.), px(12.))),
             }),
@@ -2499,12 +2514,12 @@ fn open_worktree_setup_tasks_file(
     // Kept harmless on purpose: tasks with the `create_worktree` hook run automatically
     // when a worktree is created, so the example must be safe to save unedited.
     const WORKTREE_SETUP_TASK_EXAMPLE: &str = r#"  {
-    // Runs automatically after Zed creates a new git worktree.
-    // $ZED_WORKTREE_ROOT is the new worktree's root directory, and
-    // $ZED_MAIN_GIT_WORKTREE is the original repository's working directory.
+    // Runs automatically after Orion Studio creates a new git worktree.
+    // $ORION_STUDIO_WORKTREE_ROOT is the new worktree's root directory, and
+    // $ORION_STUDIO_MAIN_GIT_WORKTREE is the original repository's working directory.
     "label": "Set up new worktree",
-    "command": "echo \"Setting up $ZED_WORKTREE_ROOT — edit this command\"",
-    "cwd": "$ZED_WORKTREE_ROOT",
+    "command": "echo \"Setting up $ORION_STUDIO_WORKTREE_ROOT — edit this command\"",
+    "cwd": "$ORION_STUDIO_WORKTREE_ROOT",
     "hooks": ["create_worktree"]
   }"#;
 
@@ -2896,6 +2911,20 @@ mod tests {
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
     };
+
+    #[test]
+    fn canonical_environment_value_has_presence_precedence() {
+        assert_eq!(
+            canonical_env_value(Some(String::new()), Some("legacy".to_string())),
+            Some(String::new())
+        );
+        assert_eq!(
+            canonical_env_value(Some("canonical"), Some("legacy")),
+            Some("canonical")
+        );
+        assert_eq!(canonical_env_value(None, Some("legacy")), Some("legacy"));
+        assert_eq!(canonical_env_value::<&str>(None, None), None);
+    }
 
     async fn flush_workspace_serialization(
         window: &WindowHandle<MultiWorkspace>,
@@ -5842,6 +5871,7 @@ mod tests {
                 "worktree_picker",
                 "zed",
                 "zed_actions",
+                // Legacy public action namespace retained for keymap compatibility.
                 "zed_predict_onboarding",
                 "zeta",
             ];

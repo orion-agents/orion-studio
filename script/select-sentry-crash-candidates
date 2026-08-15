@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 
 SENTRY_BASE_URL = "https://sentry.io/api/0"
-DEFAULT_SENTRY_ORG = "zed-dev"
+DEFAULT_SENTRY_ORG = os.environ.get("ORION_STUDIO_SENTRY_ORGANIZATION")
 DEFAULT_QUERY = "is:unresolved issue.category:error"
 
 
@@ -152,7 +152,7 @@ def solvable_factor(issue, event) -> tuple[float, list[str]]:
     return max(0.2, min(1.5, factor)), reasons
 
 
-def candidate_payload(issue, event):
+def candidate_payload(issue, event, organization):
     issue_id = str(issue.get("id"))
     short_id = issue.get("shortId") or issue_id
     issue_count = parse_int(issue.get("count"), 0)
@@ -161,7 +161,7 @@ def candidate_payload(issue, event):
     solvability, reasons = solvable_factor(issue, event)
 
     score = int(math.floor(population_score * solvability))
-    issue_url = f"https://sentry.io/organizations/{DEFAULT_SENTRY_ORG}/issues/{issue_id}/"
+    issue_url = f"https://sentry.io/organizations/{organization}/issues/{issue_id}/"
 
     return {
         "issue_id": issue_id,
@@ -193,6 +193,11 @@ def main() -> int:
     parser.add_argument("--output", required=True, help="Output JSON file path")
     args = parser.parse_args()
 
+    if not args.org:
+        parser.error(
+            "--org or ORION_STUDIO_SENTRY_ORGANIZATION is required; no upstream default is used"
+        )
+
     token = find_auth_token()
     if not token:
         print(
@@ -218,7 +223,7 @@ def main() -> int:
         except FetchError:
             continue
 
-        candidates.append(candidate_payload(issue, event))
+        candidates.append(candidate_payload(issue, event, args.org))
 
     candidates.sort(key=lambda candidate: candidate["score"], reverse=True)
     selected = candidates[: max(1, args.top)]

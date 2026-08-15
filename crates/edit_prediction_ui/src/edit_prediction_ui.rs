@@ -72,6 +72,7 @@ pub fn init(cx: &mut App) {
 }
 
 fn feature_gate_predict_edits_actions(cx: &mut App) {
+    // Keep the public Zed-named action type for legacy keymaps and extensions.
     let rate_completion_action_types = [TypeId::of::<RatePredictions>()];
     let reset_onboarding_action_types = [TypeId::of::<ResetOnboarding>()];
     let all_action_types = [

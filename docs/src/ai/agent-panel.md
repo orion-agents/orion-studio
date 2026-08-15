@@ -1,20 +1,20 @@
 ---
-title: AI Coding Agent - Zed Agent Panel
-description: Use Zed's AI coding agent to generate, refactor, and debug code with tool calling, checkpoints, and multi-model support.
+title: AI Coding Agent - Orion Studio Agent Panel
+description: Use Orion Studio's AI coding agent to generate, refactor, and debug code with tool calling, checkpoints, and multi-model support.
 ---
 
 # Agent Panel
 
 The Agent Panel is where you interact with AI agents that can read, write, and run code in your project.
-It's the core of Zed's AI code editing experience — use it for code generation, refactoring, debugging, documentation, and general questions.
+It's the core of Orion Studio's AI code editing experience — use it for code generation, refactoring, debugging, documentation, and general questions.
 
 Open it with {#action agent::NewThread} from [the Command Palette](../command-palette.md) or click the ✨ icon in the status bar.
 
 ## Getting Started {#getting-started}
 
-If you're using the Agent Panel for the first time, configure either a model for the [Zed Agent](./zed-agent.md) or an [External Agent](./external-agents.md).
+If you're using the Agent Panel for the first time, configure either a model for the [Orion Studio Agent](./zed-agent.md) or an [External Agent](./external-agents.md).
 
-- Use [LLM Providers](./llm-providers.md) for Zed-hosted models, API access, subscriptions, gateways, and local models.
+- Use [LLM Providers](./llm-providers.md) for API access, subscriptions, gateways, local models, and operator-deployed Orion model services.
 - Use [External Agents](./external-agents.md) for ACP-integrated agents.
 - Use [AI Quick Start](./quick-start.md) if you are not sure which path to choose.
 
@@ -31,14 +31,14 @@ The sections below cover what you can do from here.
 
 ### Creating New Threads {#new-thread}
 
-By default, the Agent Panel uses Zed's first-party agent.
+By default, the Agent Panel uses Orion Studio's first-party agent.
 
 Start a new thread with {#kb agent::NewThread}, or open the "New Thread…" menu using the agent selector button on the left (in the empty state) or the `+` icon in the top-right of the panel toolbar. You can also open that menu with {#kb agent::ToggleNewThreadMenu}.
 
 From the "New Thread…" menu you can:
 
-- Pick **Zed Agent** or any installed [External Agent](./external-agents.md) to start a new thread with that agent.
-- Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
+- Pick **Orion Studio Agent** or any installed [External Agent](./external-agents.md) to start a new thread with that agent.
+- Choose **New From Summary** to start a fresh Orion Studio Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
 - Choose **Terminal** to open a terminal thread directly in the Agent Panel — see [Terminal Threads](#terminal-threads) for details.
 
 {#action agent::NewExternalAgentThread} creates a new thread with the specified External Agent id.
@@ -64,7 +64,7 @@ You can click on the card that contains your message and re-submit it with an ad
 
 Messages sent while the agent is in the generating state get, by default, queued.
 
-By default, queued messages get sent once the agent finishes generating. If you want a queued message to reach the Zed Agent sooner—interrupting it at its next step (usually between a tool call and a response) rather than waiting for it to finish—toggle "Steer" on that message. Steering is only available for the Zed Agent, since Zed can't detect turn boundaries for external agents.
+By default, queued messages get sent once the agent finishes generating. If you want a queued message to reach the Orion Studio Agent sooner—interrupting it at its next step (usually between a tool call and a response) rather than waiting for it to finish—toggle "Steer" on that message. Steering is only available for the Orion Studio Agent, since Orion Studio can't detect turn boundaries for external agents.
 
 You can edit or remove (an individual or all) queued messages.
 You can also still interrupt the agent immediately if you want by either clicking on the stop button or by clicking the "Send Now" (double-enter) on a queued message.
@@ -104,7 +104,7 @@ You can also hold `cmd`/`ctrl` when submitting a message to automatically follow
 
 ### Get Notified {#get-notified}
 
-If you send a prompt to the Agent and then put Zed in the background, you can choose to be notified when its generation wraps up via:
+If you send a prompt to the Agent and then put Orion Studio in the background, you can choose to be notified when its generation wraps up via:
 
 - a visual desktop notification from your operating system
 - a sound notification
@@ -133,7 +133,7 @@ The agent can search your codebase to find relevant context, but providing it ex
 Add context by typing `@` in the message editor.
 You can mention files, directories, symbols, previous threads, skills, diagnostics, branch diffs, and URLs to fetch.
 
-When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
+When you paste multi-line code selections copied from a buffer, Orion Studio automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
 
 ### Selection as Context
@@ -150,9 +150,9 @@ Copying an image and pasting it is also supported.
 
 ## Token Usage and Compaction {#token-usage}
 
-Zed surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor.
+Orion Studio surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor.
 
-Zed automatically compacts long Zed Agent threads as they approach the configured token threshold. Compaction summarizes earlier messages and replaces them in the model context with that summary, leaving more room for the next turn. The thread shows a **Context Compacted** entry that you can expand to inspect the summary. You can compact manually by typing `/compact` in the message editor.
+Orion Studio automatically compacts long Orion Studio Agent threads as they approach the configured token threshold. Compaction summarizes earlier messages and replaces them in the model context with that summary, leaving more room for the next turn. The thread shows a **Context Compacted** entry that you can expand to inspect the summary. You can compact manually by typing `/compact` in the message editor.
 
 If the selected model's context window is too small for automatic compaction (less than 80000 tokens), a banner appears above the message editor as you approach the token limit. Use **Start New Thread** from that banner, or choose **New From Summary** from the New Thread menu (the `+` button on the top right), to continue in a new thread seeded with a summary. You can also @-mention a past thread in a new one.
 
@@ -160,9 +160,9 @@ Configure automatic compaction with `agent.auto_compact`. See [Agent Settings](.
 
 ## Changing Models {#changing-models}
 
-After you've configured your LLM providers—either via [API access](./use-api-access.md) or through [Zed-hosted models](../account/zed-hosted-models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—through [API access](./use-api-access.md), subscriptions, gateways, local models, or an [operator-deployed Orion model service](../account/zed-hosted-models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
-> The same model can be offered via multiple providers - for example, Claude Sonnet 4.5 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
+> The same model can be offered through multiple configured providers—for example, through OpenRouter, Anthropic directly, or an operator-deployed Orion service.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
 ### Favoriting Models
@@ -173,9 +173,9 @@ Cycle through your favorites with {#kb agent::CycleFavoriteModels} without openi
 
 ## Using Tools and Profiles {#using-tools}
 
-The Agent Panel supports tool calling, which enables agentic editing. Zed includes [built-in tools](./tools.md) for searching your codebase, editing files, running terminal commands, and more.
+The Agent Panel supports tool calling, which enables agentic editing. Orion Studio includes [built-in tools](./tools.md) for searching your codebase, editing files, running terminal commands, and more.
 
-Use [Agent Profiles](./agent-profiles.md) to choose which built-in tools and MCP tools are available in a Zed Agent thread. Use [Tool Permissions](./tool-permissions.md) to control whether permission-gated tool calls are allowed, denied, or confirmed.
+Use [Agent Profiles](./agent-profiles.md) to choose which built-in tools and MCP tools are available in an Orion Studio Agent thread. Use [Tool Permissions](./tool-permissions.md) to control whether permission-gated tool calls are allowed, denied, or confirmed.
 
 You can add external tools with [MCP Servers](./mcp.md).
 
@@ -185,12 +185,12 @@ Tool calling needs to be individually supported by each model and model provider
 Therefore, despite the presence of built-in tools, some models may not have the ability to pick them up.
 You should see a "No tools" label if you select a model that falls into this case.
 
-All [Zed-hosted models](../account/zed-hosted-models.md) support tool calling out-of-the-box.
+[Operator-deployed Orion model services](../account/zed-hosted-models.md) can expose tool-capable models. Availability depends on the deployed models and routing configuration.
 
 ### MCP Servers {#mcp-servers}
 
 Similarly to the built-in tools, some models may not support all tools included in a given MCP Server.
-Zed's UI will inform you about this via a warning icon that appears close to the model selector.
+Orion Studio's UI will inform you about this via a warning icon that appears close to the model selector.
 
 ## Errors and Debugging {#errors-and-debugging}
 
@@ -200,17 +200,19 @@ You can also open threads as Markdown by clicking on the file icon button, to th
 
 ## Feedback {#feedback}
 
-You can rate agent responses to help improve Zed's system prompt and tools.
+If the build operator has configured a feedback endpoint, you can rate agent
+responses to provide feedback on the system prompt and tools.
 
-> **Warning:** Rating an AI response sends the conversation thread to Zed. The
-> conversation thread includes your messages, AI responses, and thread metadata.
+> **Warning:** On a deployment with feedback enabled, rating an AI response can
+> send the conversation thread to the endpoint configured by that deployment's
+> operator. The conversation thread can include your messages, AI responses,
+> thread metadata, and installation metadata.
 > See [Feedback and Training Data](./ai-improvement.md) and
 > [AI Privacy](./privacy-and-security.md) for more information.
-> **_If you don't want data persisted on Zed's servers, don't rate_**.
-> We will not collect data for improving Zed's agent experience without you
-> explicitly rating responses.
+> Verify the endpoint, privacy policy, and retention terms before rating. No
+> public Orion feedback service is assumed to be deployed.
 
-To help improve Zed's system prompt and tools, rate responses with the thumbs up/down controls at the end of each response.
+When feedback is configured, rate responses with the thumbs up/down controls at the end of each response.
 In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
 
 You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.

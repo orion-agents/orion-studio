@@ -1,19 +1,19 @@
 [package]
-description = "The fast, collaborative code editor."
+description = "Orion Studio — the fast, collaborative code editor."
 edition.workspace = true
-name = "zed"
+name = "orion-studio"
 version = "1.16.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
-authors = ["Zed Team <hi@zed.dev>"]
-default-run = "zed"
+authors = ["Orion Studio Contributors"]
+default-run = "orion-studio"
 
 [lints]
 workspace = true
 
 [features]
 tracy = ["ztracing/tracy"]
-# LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
+# LEAK_BACKTRACE=1 cargo run --features orion-studio/track-project-leak --profile release-fast
 track-project-leak = ["gpui/leak-detection"]
 test-support = [
     "gpui/test-support",
@@ -54,11 +54,11 @@ visual-tests = [
 ]
 
 [[bin]]
-name = "zed"
+name = "orion-studio"
 path = "src/main.rs"
 
 [[bin]]
-name = "zed_visual_test_runner"
+name = "orion_studio_visual_test_runner"
 path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 
@@ -282,35 +282,35 @@ repl = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
-identifier = "dev.zed.Zed-Dev"
-name = "Zed Dev"
-osx_minimum_system_version = "10.15.7"
+identifier = "dev.orion.OrionStudio-Dev"
+name = "Orion Studio Dev"
+osx_minimum_system_version = "11.0"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed"]
+osx_url_schemes = ["orion", "zed"]
 
 [package.metadata.bundle-nightly]
 icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
-identifier = "dev.zed.Zed-Nightly"
-name = "Zed Nightly"
-osx_minimum_system_version = "10.15.7"
+identifier = "dev.orion.OrionStudio-Nightly"
+name = "Orion Studio Nightly"
+osx_minimum_system_version = "11.0"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed"]
+osx_url_schemes = ["orion", "zed"]
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
-identifier = "dev.zed.Zed-Preview"
-name = "Zed Preview"
-osx_minimum_system_version = "10.15.7"
+identifier = "dev.orion.OrionStudio-Preview"
+name = "Orion Studio Preview"
+osx_minimum_system_version = "11.0"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed"]
+osx_url_schemes = ["orion", "zed"]
 
 [package.metadata.bundle-stable]
 icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
-identifier = "dev.zed.Zed"
-name = "Zed"
-osx_minimum_system_version = "10.15.7"
+identifier = "dev.orion.OrionStudio"
+name = "Orion Studio"
+osx_minimum_system_version = "11.0"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed"]
+osx_url_schemes = ["orion", "zed"]
 
 [package.metadata.cargo-machete]
 ignored = ["profiling", "zstd", "tracing"]

@@ -20,12 +20,20 @@ use release_channel::ReleaseChannel;
 /// Only works in development. Setting this environment variable in other
 /// release channels is a no-op.
 static ZED_DEVELOPMENT_USE_KEYCHAIN: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("ZED_DEVELOPMENT_USE_KEYCHAIN").is_ok_and(|value| !value.is_empty())
+    std::env::var("ORION_STUDIO_DEVELOPMENT_USE_KEYCHAIN")
+        .or_else(|error| {
+            if matches!(error, std::env::VarError::NotPresent) {
+                std::env::var("ZED_DEVELOPMENT_USE_KEYCHAIN")
+            } else {
+                Err(error)
+            }
+        })
+        .is_ok_and(|value| !value.is_empty())
 });
 
-pub struct ZedCredentialsProvider(pub Arc<dyn CredentialsProvider>);
+pub struct OrionCredentialsProvider(pub Arc<dyn CredentialsProvider>);
 
-impl Global for ZedCredentialsProvider {}
+impl Global for OrionCredentialsProvider {}
 
 /// Returns the global [`CredentialsProvider`].
 pub fn init_global(cx: &mut App) {
@@ -33,11 +41,11 @@ pub fn init_global(cx: &mut App) {
     // seems like this is a false positive from Clippy.
     #[allow(clippy::arc_with_non_send_sync)]
     let provider = new(cx);
-    cx.set_global(ZedCredentialsProvider(provider));
+    cx.set_global(OrionCredentialsProvider(provider));
 }
 
 pub fn global(cx: &App) -> Arc<dyn CredentialsProvider> {
-    cx.try_global::<ZedCredentialsProvider>()
+    cx.try_global::<OrionCredentialsProvider>()
         .map(|provider| provider.0.clone())
         .unwrap_or_else(|| new(cx))
 }
@@ -49,7 +57,7 @@ fn new(cx: &App) -> Arc<dyn CredentialsProvider> {
             // credentials provider to avoid getting spammed by relentless
             // keychain access prompts.
             //
-            // However, if the `ZED_DEVELOPMENT_USE_KEYCHAIN` environment
+            // However, if the `ORION_STUDIO_DEVELOPMENT_USE_KEYCHAIN` environment
             // variable is set, we will use the actual keychain.
             !*ZED_DEVELOPMENT_USE_KEYCHAIN
         }

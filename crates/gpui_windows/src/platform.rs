@@ -371,6 +371,96 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     (result.0 == 0).then_some(())
 }
 
+fn write_windows_credentials(target_name: &str, username: &str, password: &[u8]) -> Result<()> {
+    let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
+    let mut target_name = target_name.encode_utf16().chain(Some(0)).collect_vec();
+    let credentials = CREDENTIALW {
+        LastWritten: unsafe { GetSystemTimeAsFileTime() },
+        Flags: CRED_FLAGS(0),
+        Type: CRED_TYPE_GENERIC,
+        TargetName: PWSTR::from_raw(target_name.as_mut_ptr()),
+        CredentialBlobSize: password.len() as u32,
+        CredentialBlob: password.as_ptr() as *mut _,
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        UserName: PWSTR::from_raw(username.as_mut_ptr()),
+        ..CREDENTIALW::default()
+    };
+    unsafe {
+        CredWriteW(&credentials, 0).map_err(|error| {
+            anyhow!(
+                "Failed to write credentials to Windows Credential Manager: {}",
+                error,
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn read_windows_credentials(target_name: &str) -> Result<Option<(String, Vec<u8>)>> {
+    let target_name = target_name.encode_utf16().chain(Some(0)).collect_vec();
+    let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
+    let result = unsafe {
+        CredReadW(
+            PCWSTR::from_raw(target_name.as_ptr()),
+            CRED_TYPE_GENERIC,
+            None,
+            &mut credentials,
+        )
+    };
+
+    if let Err(error) = result {
+        if error.code() == ERROR_NOT_FOUND.to_hresult() {
+            return Ok(None);
+        }
+        return Err(anyhow!(
+            "Failed to read credentials from Windows Credential Manager: {}",
+            error,
+        ));
+    }
+
+    if credentials.is_null() {
+        return Ok(None);
+    }
+
+    let parsed_credentials = (|| -> Result<(String, Vec<u8>)> {
+        let username = unsafe { (*credentials).UserName.to_string()? };
+        let credential_blob_size = unsafe { (*credentials).CredentialBlobSize as usize };
+        let credential_blob = unsafe { (*credentials).CredentialBlob };
+        let password = if credential_blob_size == 0 {
+            Vec::new()
+        } else {
+            if credential_blob.is_null() {
+                return Err(anyhow!(
+                    "Windows Credential Manager returned a null credential blob"
+                ));
+            }
+            unsafe { std::slice::from_raw_parts(credential_blob, credential_blob_size) }.to_vec()
+        };
+        Ok((username, password))
+    })();
+
+    unsafe { CredFree(credentials as *const _ as _) };
+    parsed_credentials.map(Some)
+}
+
+fn delete_windows_credentials(target_name: &str) -> Result<()> {
+    let target_name = target_name.encode_utf16().chain(Some(0)).collect_vec();
+    match unsafe {
+        CredDeleteW(
+            PCWSTR::from_raw(target_name.as_ptr()),
+            CRED_TYPE_GENERIC,
+            None,
+        )
+    } {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == ERROR_NOT_FOUND.to_hresult() => Ok(()),
+        Err(error) => Err(anyhow!(
+            "Failed to delete credentials from Windows Credential Manager: {}",
+            error,
+        )),
+    }
+}
+
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
@@ -795,92 +885,54 @@ impl Platform for WindowsPlatform {
                 password.len()
             )));
         }
+        let url = url.to_string();
         let password = password.to_vec();
-        let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
-        let mut target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
+        let username = username.to_string();
         self.foreground_executor().spawn(async move {
-            let credentials = CREDENTIALW {
-                LastWritten: unsafe { GetSystemTimeAsFileTime() },
-                Flags: CRED_FLAGS(0),
-                Type: CRED_TYPE_GENERIC,
-                TargetName: PWSTR::from_raw(target_name.as_mut_ptr()),
-                CredentialBlobSize: password.len() as u32,
-                CredentialBlob: password.as_ptr() as *mut _,
-                Persist: CRED_PERSIST_LOCAL_MACHINE,
-                UserName: PWSTR::from_raw(username.as_mut_ptr()),
-                ..CREDENTIALW::default()
-            };
-            unsafe {
-                CredWriteW(&credentials, 0).map_err(|err| {
-                    anyhow!(
-                        "Failed to write credentials to Windows Credential Manager: {}",
-                        err,
-                    )
-                })?;
-            }
-            Ok(())
+            let target_name = windows_credentials_target_name(&url);
+            write_windows_credentials(&target_name, &username, &password)
         })
     }
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        let target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
+        let url = url.to_string();
         self.foreground_executor().spawn(async move {
-            let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
-            let result = unsafe {
-                CredReadW(
-                    PCWSTR::from_raw(target_name.as_ptr()),
-                    CRED_TYPE_GENERIC,
-                    None,
-                    &mut credentials,
-                )
+            let target_name = windows_credentials_target_name(&url);
+            if let Some(credentials) = read_windows_credentials(&target_name)? {
+                return Ok(Some(credentials));
+            }
+
+            let legacy_target_name = legacy_windows_credentials_target_name(&url);
+            let Some(credentials) = read_windows_credentials(&legacy_target_name)? else {
+                return Ok(None);
             };
 
-            if let Err(err) = result {
-                // ERROR_NOT_FOUND means the credential doesn't exist.
-                // Return Ok(None) to match macOS and Linux behavior.
-                if err.code() == ERROR_NOT_FOUND.to_hresult() {
-                    return Ok(None);
-                }
-                return Err(err.into());
-            }
+            write_windows_credentials(&target_name, &credentials.0, &credentials.1)
+                .context("Failed to migrate legacy Windows credentials to the canonical key")?;
+            delete_windows_credentials(&legacy_target_name)
+                .context("Failed to remove the legacy Windows credential after migration")?;
 
-            if credentials.is_null() {
-                Ok(None)
-            } else {
-                let username: String = unsafe { (*credentials).UserName.to_string()? };
-                let credential_blob = unsafe {
-                    std::slice::from_raw_parts(
-                        (*credentials).CredentialBlob,
-                        (*credentials).CredentialBlobSize as usize,
-                    )
-                };
-                let password = credential_blob.to_vec();
-                unsafe { CredFree(credentials as *const _ as _) };
-                Ok(Some((username, password)))
-            }
+            Ok(Some(credentials))
         })
     }
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        let target_name = windows_credentials_target_name(url)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect_vec();
+        let url = url.to_string();
         self.foreground_executor().spawn(async move {
-            unsafe {
-                CredDeleteW(
-                    PCWSTR::from_raw(target_name.as_ptr()),
-                    CRED_TYPE_GENERIC,
-                    None,
-                )?
-            };
-            Ok(())
+            let target_name = windows_credentials_target_name(&url);
+            let legacy_target_name = legacy_windows_credentials_target_name(&url);
+            let canonical_result = delete_windows_credentials(&target_name)
+                .context("Failed to delete the canonical Windows credential");
+            let legacy_result = delete_windows_credentials(&legacy_target_name)
+                .context("Failed to delete the legacy Windows credential");
+
+            match (canonical_result, legacy_result) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+                (Err(canonical_error), Err(legacy_error)) => Err(anyhow!(
+                    "Failed to delete canonical and legacy Windows credentials: canonical: {canonical_error:#}; legacy: {legacy_error:#}"
+                )),
+            }
         })
     }
 
@@ -1418,7 +1470,7 @@ fn handle_gpu_device_lost(
     Ok(())
 }
 
-const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
+const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("OrionStudio::PlatformWindow");
 
 fn register_platform_window_class() {
     let wc = WNDCLASSW {

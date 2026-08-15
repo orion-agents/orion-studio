@@ -311,7 +311,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
-    /// Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
+    /// Command to automatically run when Orion Studio creates a Terminal Thread shell in the agent panel.
     /// The command is sent to the shell as if typed, so it is interpreted by your
     /// configured shell (including on Windows and remote/WSL projects).
     /// An empty string disables this behavior.
@@ -350,7 +350,7 @@ pub struct AgentSettingsContent {
     /// The global `default` applies when no tool-specific rules match.
     /// For external agent servers (e.g. Claude Agent) that define their own
     /// permission modes, "deny" and "confirm" still take precedence — the
-    /// external agent's permission system is only used when Zed would allow
+    /// external agent's permission system is only used when Orion Studio would allow
     /// the action. Per-tool regex patterns (`always_allow`, `always_deny`,
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
@@ -614,8 +614,22 @@ pub struct LanguageModelParameters {
     pub temperature: Option<f32>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, MergeFrom)]
+#[derive(Clone, Debug, Serialize, PartialEq, MergeFrom)]
 pub struct LanguageModelProviderSetting(pub String);
+
+impl<'de> Deserialize<'de> for LanguageModelProviderSetting {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let provider = String::deserialize(deserializer)?;
+        Ok(Self(if provider == "zed.dev" {
+            "orion.dev".to_string()
+        } else {
+            provider
+        }))
+    }
+}
 
 impl JsonSchema for LanguageModelProviderSetting {
     fn schema_name() -> Cow<'static, str> {
@@ -642,7 +656,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "openrouter",
                         "vercel_ai_gateway",
                         "x_ai",
-                        "zed.dev"
+                        "orion.dev"
                     ]
                 },
                 {
@@ -802,7 +816,7 @@ pub enum CustomAgentServerSettings {
 /// path string (`"/tmp/x"`, a legacy/hand-authored entry with no resolved
 /// target) or an object (`{ "requested": "/tmp/x", "resolved": "/tmp/real" }`).
 /// Serializes back as a bare string when `resolved` is `None` and as an object
-/// otherwise, so hand-authored bare strings round-trip and Zed-written grants
+/// otherwise, so hand-authored bare strings round-trip and Orion Studio-written grants
 /// are objects.
 #[derive(Clone, Debug, Default, PartialEq, MergeFrom)]
 pub struct GrantedWritePathContent {
@@ -935,9 +949,9 @@ pub struct SandboxPermissionsContent {
 
     /// Directory subtrees that sandboxed terminal commands may always write
     /// to without prompting. Each entry is either a bare path string or an
-    /// object `{requested, resolved}`; Zed writes objects (the canonical,
+    /// object `{requested, resolved}`; Orion Studio writes objects (the canonical,
     /// symlink-resolved target established at approval time), while
-    /// hand-authored entries may be bare path strings. Paths written by Zed
+    /// hand-authored entries may be bare path strings. Paths written by Orion Studio
     /// are absolute.
     /// Default: []
     pub write_paths: Option<ExtendingVec<GrantedWritePathContent>>,
@@ -1051,6 +1065,31 @@ impl std::fmt::Display for ToolPermissionMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_cloud_provider_is_normalized_in_agent_model_settings() {
+        let selection: LanguageModelSelection = serde_json::from_value(serde_json::json!({
+            "provider": "zed.dev",
+            "model": "claude-sonnet-4"
+        }))
+        .expect("deserialize legacy model selection");
+        assert_eq!(selection.provider.0, "orion.dev");
+
+        let parameters: LanguageModelParameters = serde_json::from_value(serde_json::json!({
+            "provider": "zed.dev",
+            "model": "claude-sonnet-4",
+            "temperature": 0.5
+        }))
+        .expect("deserialize legacy model parameters");
+        assert_eq!(
+            parameters.provider.expect("provider should be present").0,
+            "orion.dev"
+        );
+
+        let serialized =
+            serde_json::to_value(selection.provider).expect("serialize normalized model provider");
+        assert_eq!(serialized, serde_json::json!("orion.dev"));
+    }
 
     #[test]
     fn agent_config_option_value_serializes_value_id_as_string() {

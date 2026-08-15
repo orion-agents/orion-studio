@@ -1,23 +1,25 @@
 ---
-title: Zed Agent
-description: Use Zed's native AI agent with Zed-configured models, tools, profiles, skills, instructions, and MCP servers.
+title: Orion Studio Agent
+description: Use Orion Studio's native AI agent with Orion Studio-configured models, tools, profiles, skills, instructions, and MCP servers.
 ---
 
-# Zed Agent
+# Orion Studio Agent
 
-Zed Agent is Zed's native agent path. It runs in the [Agent Panel](./agent-panel.md) and [Threads Sidebar](./parallel-agents.md#threads-sidebar), uses models configured through [LLM Providers](./llm-providers.md), and integrates with Zed's project, editor, terminal, and review surfaces.
+Orion Studio Agent is Orion Studio's native agent path. It runs in the [Agent Panel](./agent-panel.md) and [Threads Sidebar](./parallel-agents.md#threads-sidebar), uses models configured through [LLM Providers](./llm-providers.md), and integrates with Orion Studio's project, editor, terminal, and review surfaces.
 
-Use Zed Agent when you want the agent to:
+Use Orion Studio Agent when you want the agent to:
 
 - read and search your project
 - edit files
 - run terminal commands
-- use Zed-managed MCP tools
+- use Orion Studio-managed MCP tools
 - follow [Agent Profiles](./agent-profiles.md)
-- use Zed [Skills](./skills.md) and [Instructions](./instructions.md)
-- show changes in Zed's review UI
+- use Orion Studio [Skills](./skills.md) and [Instructions](./instructions.md)
+- show changes in Orion Studio's review UI
 
-## What Zed Agent Uses {#what-zed-agent-uses}
+## What Orion Studio Agent Uses {#what-zed-agent-uses}
+
+The section anchor and this page's filename retain their historical Zed names so incoming links continue to work.
 
 | Capability                 | Source of truth                           |
 | -------------------------- | ----------------------------------------- |
@@ -34,7 +36,7 @@ Use Zed Agent when you want the agent to:
 
 | Agent path                                | Main difference                                                                              |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [Zed Agent](./zed-agent.md)               | Uses Zed's model, tool, profile, skill, instruction, and MCP configuration                   |
+| [Orion Studio Agent](./zed-agent.md)      | Uses Orion Studio's model, tool, profile, skill, instruction, and MCP configuration          |
 | [External Agents](./external-agents.md)   | Use an ACP integration and often own auth, model, tool, and native instruction configuration |
 | [Terminal Threads](./terminal-threads.md) | Run a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration               |
 

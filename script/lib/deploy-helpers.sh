@@ -5,19 +5,30 @@ function export_vars_for_environment {
     echo "Invalid environment name '${environment}'" >&2
     exit 1
   fi
-  export $(grep -v '^#' $env_file | grep -v '^[[:space:]]*$')
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    if [[ ! "$line" =~ ^[A-Z][A-Z0-9_]*=[A-Za-z0-9._:/-]+$ ]]; then
+      echo "Invalid environment assignment in '$env_file'" >&2
+      exit 1
+    fi
+    export "$line"
+  done < "$env_file"
 }
 
-function target_zed_kube_cluster {
-  if [[ $(kubectl config current-context 2> /dev/null) != do-nyc1-zed-1 ]]; then
-    doctl kubernetes cluster kubeconfig save zed-1
+function target_orion_kube_cluster {
+  if [[ $(kubectl config current-context 2> /dev/null) != do-nyc1-orion-1 ]]; then
+    doctl kubernetes cluster kubeconfig save orion-1
   fi
 }
 
 function tag_for_environment {
-  if [[ "$1" == "production" ]]; then
+  local environment=$1
+  if [[ "$environment" == "production" ]]; then
     echo "collab-production"
-  elif [[ "$1" == "staging" ]]; then
+  elif [[ "$environment" == "staging" ]]; then
     echo "collab-staging"
   else
     echo "Invalid environment name '${environment}'" >&2
@@ -26,10 +37,11 @@ function tag_for_environment {
 }
 
 function url_for_environment {
-  if [[ "$1" == "production" ]]; then
-    echo "https://collab.zed.dev"
-  elif [[ "$1" == "staging" ]]; then
-    echo "https://collab-staging.zed.dev"
+  local environment=$1
+  if [[ "$environment" == "production" ]]; then
+    echo "https://collab.orion.dev"
+  elif [[ "$environment" == "staging" ]]; then
+    echo "https://collab-staging.orion.dev"
   else
     echo "Invalid environment name '${environment}'" >&2
     exit 1

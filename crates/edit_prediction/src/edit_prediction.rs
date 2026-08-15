@@ -100,7 +100,7 @@ use crate::example_spec::RecentFile;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 pub use crate::metrics::{KeptRateResult, compute_kept_rate};
-use crate::onboarding_modal::ZedPredictModal;
+use crate::onboarding_modal::OrionPredictModal;
 use crate::prediction::EditPredictionResult;
 pub use crate::prediction::{EditPrediction, EditPredictionId, EditPredictionInputs};
 pub use language_model::ApiKeyState;
@@ -125,7 +125,8 @@ const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 2048 * 3; // ~2048 tokens or ~50% of
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
 const GIT_CHANGED_FILE_SETS_COMMIT_LIMIT: usize = 100;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
-const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
+// Keep reading the pre-Orion key so existing data-collection choices survive migration.
+const LEGACY_ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT_BACKOFF: Duration = Duration::from_secs(10);
 
@@ -1061,10 +1062,34 @@ impl EditPredictionStore {
     }
 
     fn zeta2_raw_config_from_env() -> Option<Zeta2RawConfig> {
-        let version_str = env::var("ZED_ZETA_FORMAT").ok()?;
+        let version_str = env::var("ORION_STUDIO_ZETA_FORMAT")
+            .or_else(|error| {
+                if matches!(error, env::VarError::NotPresent) {
+                    env::var("ZED_ZETA_FORMAT")
+                } else {
+                    Err(error)
+                }
+            })
+            .ok()?;
         let format = ZetaFormat::parse(&version_str).ok()?;
-        let model_id = env::var("ZED_ZETA_MODEL").ok();
-        let environment = env::var("ZED_ZETA_ENVIRONMENT").ok();
+        let model_id = env::var("ORION_STUDIO_ZETA_MODEL")
+            .or_else(|error| {
+                if matches!(error, env::VarError::NotPresent) {
+                    env::var("ZED_ZETA_MODEL")
+                } else {
+                    Err(error)
+                }
+            })
+            .ok();
+        let environment = env::var("ORION_STUDIO_ZETA_ENVIRONMENT")
+            .or_else(|error| {
+                if matches!(error, env::VarError::NotPresent) {
+                    env::var("ZED_ZETA_ENVIRONMENT")
+                } else {
+                    Err(error)
+                }
+            })
+            .ok();
         Some(Zeta2RawConfig {
             model_id,
             environment,
@@ -1188,11 +1213,11 @@ impl EditPredictionStore {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::Inception)
             }
             EditPredictionModel::Zeta => {
-                edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
-                    .with_disabled(IconName::ZedPredictDisabled)
-                    .with_up(IconName::ZedPredictUp)
-                    .with_down(IconName::ZedPredictDown)
-                    .with_error(IconName::ZedPredictError)
+                edit_prediction_types::EditPredictionIconSet::new(IconName::OrionPredict)
+                    .with_disabled(IconName::OrionPredictDisabled)
+                    .with_up(IconName::OrionPredictUp)
+                    .with_down(IconName::OrionPredictDown)
+                    .with_error(IconName::OrionPredictError)
             }
             EditPredictionModel::Fim { .. } | EditPredictionModel::SweepPrompt => {
                 let settings = &all_language_settings(None, cx).edit_predictions;
@@ -2494,7 +2519,7 @@ fn currently_following(project: &Entity<Project>, cx: &App) -> bool {
 
 fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
     match provider {
-        EditPredictionProvider::Zed
+        EditPredictionProvider::Orion
         | EditPredictionProvider::Mercury
         | EditPredictionProvider::Ollama
         | EditPredictionProvider::OpenAiCompatibleApi => true,
@@ -2518,7 +2543,7 @@ impl EditPredictionStore {
     ) {
         let (needs_acceptance_tracking, max_pending_predictions) =
             match all_language_settings(None, cx).edit_predictions.provider {
-                EditPredictionProvider::Zed | EditPredictionProvider::Mercury => (true, 2),
+                EditPredictionProvider::Orion | EditPredictionProvider::Mercury => (true, 2),
                 EditPredictionProvider::Ollama => (false, 1),
                 EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
                 EditPredictionProvider::None
@@ -3257,7 +3282,7 @@ impl EditPredictionStore {
 
     fn load_legacy_data_collection_enabled(cx: &App) -> bool {
         KeyValueStore::global(cx)
-            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .read_kvp(LEGACY_ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
             .flatten()
             .as_deref()
@@ -3464,7 +3489,7 @@ fn merge_anchor_ranges(
 
 #[derive(Error, Debug)]
 #[error(
-    "You must update to Zed version {minimum_version} or higher to continue using edit predictions."
+    "You must update to Orion Studio version {minimum_version} or higher to continue using edit predictions."
 )]
 pub struct ZedUpdateRequiredError {
     minimum_version: Version,
@@ -3474,28 +3499,28 @@ pub struct ZedUpdateRequiredError {
 #[error("Cloud request timed out")]
 pub(crate) struct CloudRequestTimeoutError;
 
-struct ZedPredictUpsell;
+struct OrionPredictUpsell;
 
 fn is_upsell_dismissed(cx: &App) -> bool {
-    // To make this backwards compatible with older versions of Zed, we
+    // To make this backwards compatible with older versions of Orion Studio, we
     // check if the user has seen the previous Edit Prediction Onboarding
     // before, by checking the data collection choice which was written to
     // the database once the user clicked on "Accept and Enable"
     let kvp = KeyValueStore::global(cx);
     if kvp
-        .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+        .read_kvp(LEGACY_ZED_PREDICT_DATA_COLLECTION_CHOICE)
         .log_err()
         .is_some_and(|s| s.is_some())
     {
         return true;
     }
 
-    kvp.read_kvp(ZedPredictUpsell::KEY)
+    kvp.read_kvp(OrionPredictUpsell::KEY)
         .log_err()
         .is_some_and(|s| s.is_some())
 }
 
-impl Dismissable for ZedPredictUpsell {
+impl Dismissable for OrionPredictUpsell {
     const KEY: &'static str = "dismissed-edit-predict-upsell";
 
     fn dismissed(cx: &App) -> bool {
@@ -3509,9 +3534,10 @@ pub fn should_show_upsell_modal(cx: &App) -> bool {
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+        // This public action name is retained for legacy keymaps and extensions.
         workspace.register_action(
             move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
-                ZedPredictModal::toggle(
+                OrionPredictModal::toggle(
                     workspace,
                     workspace.user_store().clone(),
                     workspace.client().clone(),
@@ -3549,7 +3575,7 @@ pub fn init(cx: &mut App) {
 fn is_zed_industries_repo(url: &str) -> bool {
     url.strip_prefix("https://github.com/zed-industries/")
         .or_else(|| url.strip_prefix("http://github.com/zed-industries/"))
-        .or_else(|| url.strip_prefix("git@github.com:zed-industries/"))
+        .or_else(|| url.strip_prefix("git@github.com:orion-agents/"))
         .or_else(|| url.strip_prefix("ssh://git@github.com/zed-industries/"))
         .is_some_and(|repo| !repo.is_empty())
 }

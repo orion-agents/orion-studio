@@ -1,75 +1,45 @@
 ---
 title: Telemetry
-description: "What data Zed collects and how to control telemetry settings."
+description: Orion Studio telemetry defaults, controls, and deployment boundaries.
 ---
 
-# Telemetry in Zed
+# Telemetry in Orion Studio
 
-Zed collects anonymous telemetry to understand usage patterns and diagnose issues.
+Client diagnostics and metrics are disabled by default. No public Orion
+telemetry or crash-reporting endpoint is assumed to be deployed.
 
-Telemetry falls into two categories:
-
-- **Client-side**: Usage metrics and crash reports. You can disable these in settings.
-- **Server-side**: Collected when using hosted services like AI or Collaboration. Required for these features to function.
-
-## Configuring Telemetry Settings
-
-You have full control over what data is sent out by Zed.
-To enable or disable some or all telemetry types, open Settings ({#kb zed::OpenSettings}) and search for "telemetry", or add the following to your settings file:
+Open Settings with {#kb zed::OpenSettings} and search for **telemetry**, or edit
+your settings file:
 
 ```json [settings]
-"telemetry": {
+{
+  "telemetry": {
     "diagnostics": false,
     "metrics": false
-},
+  }
+}
 ```
 
-## Dataflow
+`zed::OpenSettings` is an internal action identifier retained for compatibility;
+it does not identify the product shown in the UI.
 
-Telemetry is sent from the application to our servers every 5 minutes (or when 50 events accumulate), then routed to the appropriate service. We currently use:
+## Enabling telemetry in a deployment
 
-- [Sentry](https://sentry.io): Crash-monitoring service - stores diagnostic events
-- [Snowflake](https://snowflake.com): Data warehouse - stores both diagnostic and metric events
-- [Hex](https://www.hex.tech): Dashboards and data exploration - accesses data stored in Snowflake
-- [Amplitude](https://www.amplitude.com): Dashboards and data exploration - accesses data stored in Snowflake
+An operator must configure an Orion-owned endpoint and publish the data fields,
+purpose, retention, subprocessors, regional handling, deletion process, and
+contact information before enabling telemetry. The application must not send
+Orion Studio diagnostics to a Zed endpoint.
 
-## Types of Telemetry
+When diagnostics are enabled and a compatible endpoint is configured, crash
+reports may include a minidump and debug metadata. Metrics may include feature
+usage and project statistics, but should not include source code or secrets.
+Review the implementation and deployment policy rather than relying on this
+summary alone.
 
-### Diagnostics
+Use {#action zed::OpenTelemetryLog} to inspect locally recorded telemetry
+events. Source-level event definitions live in
+[`crates/telemetry_events`](https://github.com/orion-agents/orion-studio/tree/main/crates/telemetry_events).
 
-Crash reports consist of a [minidump](https://learn.microsoft.com/en-us/windows/win32/debug/minidump-files) and debug metadata. Reports are sent on the next launch after a crash, allowing Zed to identify and fix issues without requiring you to file a bug report.
-
-You can inspect what data is sent in the `CrashInfo` struct in [crates/crashes/src/crashes.rs](https://github.com/zed-industries/zed/blob/main/crates/crashes/src/crashes.rs). See also: [Debugging Crashes](./development/debugging-crashes.md).
-
-### Client-Side Metrics
-
-Client-side telemetry includes:
-
-- File extensions of opened files
-- Features and tools used within the editor
-- Project statistics (e.g., number of files)
-- Frameworks detected in your projects
-
-This data does not include your code or sensitive project details. Events are sent over HTTPS and rate-limited.
-
-Usage data is tied to a random telemetry ID. If you've authenticated, this ID may be linked to your email so Zed can analyze patterns over time and reach out for feedback.
-
-To audit what Zed has reported, run {#action zed::OpenTelemetryLog} from the command palette or click `Help > View Telemetry Log`.
-
-For the full list of event types, see the `Event` enum in [telemetry_events.rs](https://github.com/zed-industries/zed/blob/main/crates/telemetry_events/src/telemetry_events.rs).
-
-### Server-Side Metrics
-
-When using Zed's hosted services, we collect metadata for rate limiting and billing (e.g., token usage). Zed does not store your prompts or code unless you explicitly share feedback or opt into Edit Prediction training data collection.
-
-For details on AI request paths and opt-in data sharing, see [AI Privacy](./ai/privacy-and-security.md) and [Feedback and Training Data](./ai/ai-improvement.md).
-
-## Zed Business
-
-Administrators on Zed Business can enforce a no-sharing policy org-wide; members can't opt into [Edit Prediction training data sharing](./ai/ai-improvement.md#edit-predictions) or [AI feedback ratings](./ai/ai-improvement.md#ai-feedback-with-ratings). See [Data Sharing](./business/admin-controls.md#data-sharing) in Admin Controls.
-
-<!-- TODO: link to telemetry org-wide disable control once it ships (currently planned for a future release) -->
-
-## Concerns and Questions
-
-If you have concerns about telemetry, you can [open an issue](https://github.com/zed-industries/zed/issues/new/choose) or email hi@zed.dev.
+Service-side metering for hosted models or collaboration is separate from
+client telemetry and applies only after those services are deployed. See
+[AI Privacy and Security](./ai/privacy-and-security.md).

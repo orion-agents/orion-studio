@@ -1298,16 +1298,17 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
         };
     }
 
-    let git_binary_path =
-        if cfg!(target_os = "macos") && option_env!("ZED_BUNDLE").as_deref() == Some("true") {
-            cx.update(|cx| {
-                cx.path_for_auxiliary_executable("git")
-                    .context("could not find git binary path")
-                    .log_err()
-            })
-        } else {
-            None
-        };
+    let git_binary_path = if cfg!(target_os = "macos")
+        && option_env!("ORION_STUDIO_BUNDLE").or(option_env!("ZED_BUNDLE")) == Some("true")
+    {
+        cx.update(|cx| {
+            cx.path_for_auxiliary_executable("git")
+                .context("could not find git binary path")
+                .log_err()
+        })
+    } else {
+        None
+    };
 
     let git = GitBinary::new(
         git_binary_path.unwrap_or(PathBuf::from("git")),
@@ -3879,7 +3880,10 @@ async fn run_git_command(
         }
 
         #[cfg(target_os = "windows")]
-        command.env("ZED_ASKPASS_SOCKET", ask_pass.socket_path());
+        command.env(
+            askpass::ORION_STUDIO_ASKPASS_SOCKET_ENV_VAR,
+            ask_pass.socket_path(),
+        );
         let git_process = command.spawn()?;
 
         run_askpass_command(ask_pass, git_process).await

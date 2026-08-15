@@ -15,13 +15,14 @@ permissions:
   contents: read
 jobs:
   publish_job:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.ref == 'refs/heads/main'
+    if: github.repository == 'orion-agents/orion-studio' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        persist-credentials: false
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -36,12 +37,13 @@ jobs:
       env:
         DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
         DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+        ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME: ${{ vars.ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME }}
     - id: generate-token
-      name: steps::authenticate_as_zippy
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
@@ -57,18 +59,18 @@ jobs:
               force: true
           })
         github-token: ${{ steps.generate-token.outputs.token }}
-  update_sha_in_zed:
+  update_sha_in_orion_studio:
     needs:
     - publish_job
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.ref == 'refs/heads/main'
+    if: github.repository == 'orion-agents/orion-studio' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token
-      name: steps::generate_token
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
@@ -78,6 +80,7 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        persist-credentials: false
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -87,16 +90,21 @@ jobs:
       name: publish_extension_cli::get_short_sha
       run: |
         echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
-    - name: publish_extension_cli::update_sha_in_zed::replace_sha
+    - name: publish_extension_cli::update_sha_in_orion_studio::replace_sha
       run: |
-        sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"$GITHUB_SHA\"/" \
+        if ! grep -Eq 'EXTENSION_CLI_SHA: &str = "[a-f0-9]{40}"' tooling/xtask/src/tasks/workflows/extension_tests.rs; then
+            echo "::error::Could not find the extension CLI compatibility SHA"
+            exit 1
+        fi
+        sed -i "s/EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/EXTENSION_CLI_SHA: \&str = \"$GITHUB_SHA\"/" \
             tooling/xtask/src/tasks/workflows/extension_tests.rs
-    - name: publish_extension_cli::update_sha_in_zed::regenerate_workflows
+        grep -Fq "EXTENSION_CLI_SHA: &str = \"$GITHUB_SHA\"" tooling/xtask/src/tasks/workflows/extension_tests.rs
+    - name: publish_extension_cli::update_sha_in_orion_studio::regenerate_workflows
       run: cargo xtask workflows
     - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
-        title: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
+        title: 'Extension CI: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         body: |
           This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
 
@@ -105,29 +113,47 @@ jobs:
           Release Notes:
 
           - N/A
-        commit-message: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
+        commit-message: 'Extension CI: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         branch: update-extension-cli-sha
-        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
-        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        committer: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
+        author: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
         assignees: ${{ github.actor }}
-  update_sha_in_extensions:
+  update_sha_in_registry:
     needs:
     - publish_job
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.ref == 'refs/heads/main'
+    if: github.repository == 'orion-agents/orion-studio' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY != ''
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: publish_extension_cli::update_sha_in_registry::validate_registry_config
+      run: |
+        if [[ "$EXTENSION_REGISTRY_ENABLED" != "true" ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED must be true"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_ORGANIZATION" =~ ^orion(-[a-z0-9]+)*$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_REGISTRY_REPOSITORY" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY must be a repository name without an owner"
+            exit 1
+        fi
+      env:
+        EXTENSION_REGISTRY_ENABLED: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED }}
+        EXTENSION_ORGANIZATION: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
+        EXTENSION_REGISTRY_REPOSITORY: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY }}
     - id: generate-token
-      name: steps::generate_token
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-        owner: zed-industries
-        repositories: extensions
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
+        owner: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
+        repositories: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY }}
         permission-contents: write
         permission-pull-requests: write
         permission-workflows: write
@@ -135,27 +161,37 @@ jobs:
       name: publish_extension_cli::get_short_sha
       run: |
         echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
-    - name: publish_extension_cli::update_sha_in_extensions::checkout_extensions_repo
+    - name: publish_extension_cli::update_sha_in_registry::checkout_registry_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
-        repository: zed-industries/extensions
+        repository: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}/${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY }}
         token: ${{ steps.generate-token.outputs.token }}
-    - name: publish_extension_cli::update_sha_in_extensions::replace_sha
+        persist-credentials: false
+    - name: publish_extension_cli::update_sha_in_registry::replace_sha
       run: |
-        sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
-            .github/workflows/ci.yml
+        if grep -Eq 'ORION_STUDIO_EXTENSION_CLI_SHA: [a-f0-9]{40}' .github/workflows/ci.yml; then
+            sed -i "s/ORION_STUDIO_EXTENSION_CLI_SHA: [a-f0-9]*/ORION_STUDIO_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
+                .github/workflows/ci.yml
+        elif grep -Eq 'ZED_EXTENSION_CLI_SHA: [a-f0-9]{40}' .github/workflows/ci.yml; then
+            sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ORION_STUDIO_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
+                .github/workflows/ci.yml
+        else
+            echo "::error::Could not find the Orion Studio or legacy extension CLI SHA in the registry workflow"
+            exit 1
+        fi
+        grep -Fq "ORION_STUDIO_EXTENSION_CLI_SHA: $GITHUB_SHA" .github/workflows/ci.yml
     - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
         title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
-          This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
+          This PR bumps the extension CLI version to https://github.com/orion-agents/orion-studio/commit/${{ github.sha }}.
 
           ${{ inputs.message }}
         commit-message: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         branch: update-extension-cli-sha
-        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
-        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        committer: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
+        author: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}

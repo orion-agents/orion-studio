@@ -18,14 +18,15 @@ permissions:
   contents: read
 jobs:
   fetch_extension_repos:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && (github.ref == 'refs/tags/extension-workflows' || github.ref == 'refs/heads/main')
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: checkout_zed_repo
+    - name: checkout_orion_studio_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
+        persist-credentials: false
     - id: prev-tag
       name: extension_workflow_rollout::fetch_extension_repos::get_previous_tag_commit
       run: |
@@ -62,8 +63,13 @@ jobs:
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
+          const organization = process.env.EXTENSION_ORGANIZATION.trim();
+          if (!/^orion(?:-[a-z0-9]+)*$/.test(organization)) {
+              throw new Error('ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization');
+          }
+
           const repos = await github.paginate(github.rest.repos.listForOrg, {
-              org: 'zed-extensions',
+              org: organization,
               type: 'public',
               per_page: 100,
           });
@@ -83,6 +89,7 @@ jobs:
           return filteredRepos;
         result-encoding: json
       env:
+        EXTENSION_ORGANIZATION: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
         FILTER_REPOS: ${{ inputs.filter-repos }}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
@@ -109,7 +116,7 @@ jobs:
   rollout_workflows_to_extension:
     needs:
     - fetch_extension_repos
-    if: needs.fetch_extension_repos.outputs.repos != '[]'
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && needs.fetch_extension_repos.outputs.repos != '[]'
     runs-on: namespace-profile-2x4-ubuntu-2404
     strategy:
       matrix:
@@ -117,13 +124,31 @@ jobs:
       fail-fast: false
       max-parallel: 10
     steps:
+    - name: extension_workflow_rollout::rollout_workflows_to_extension::validate_extension_target
+      run: |
+        if [[ "$EXTENSION_REGISTRY_ENABLED" != "true" ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED must be true"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_ORGANIZATION" =~ ^orion(-[a-z0-9]+)*$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_REPOSITORY" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo "::error::The extension repository name is invalid"
+            exit 1
+        fi
+      env:
+        EXTENSION_REGISTRY_ENABLED: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED }}
+        EXTENSION_ORGANIZATION: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
+        EXTENSION_REPOSITORY: ${{ matrix.repo }}
     - id: generate-token
-      name: steps::generate_token
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-        owner: zed-extensions
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
+        owner: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
         repositories: ${{ matrix.repo }}
         permission-pull-requests: write
         permission-contents: write
@@ -133,7 +158,8 @@ jobs:
       with:
         clean: false
         path: extension
-        repository: zed-extensions/${{ matrix.repo }}
+        persist-credentials: false
+        repository: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}/${{ matrix.repo }}
         token: ${{ steps.generate-token.outputs.token }}
     - name: extension_workflow_rollout::rollout_workflows_to_extension::download_workflow_files
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -181,14 +207,14 @@ jobs:
       with:
         title: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
-          This PR updates the CI workflow files from the main Zed repository
-          based on the commit zed-industries/zed@${{ github.sha }}
+          This PR updates the CI workflow files from the main Orion Studio repository
+          based on the commit orion-agents/orion-studio@${{ github.sha }}
 
           ${{ inputs.change-description }}
         commit-message: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         branch: update-workflows
-        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
-        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        committer: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
+        author: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
@@ -208,15 +234,15 @@ jobs:
   create_rollout_tag:
     needs:
     - rollout_workflows_to_extension
-    if: inputs.filter-repos == ''
+    if: github.repository == 'orion-agents/orion-studio' && vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.ref == 'refs/heads/main' && inputs.filter-repos == ''
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: steps::generate_token
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
@@ -225,6 +251,7 @@ jobs:
       with:
         clean: false
         fetch-depth: 0
+        persist-credentials: false
         token: ${{ steps.generate-token.outputs.token }}
     - name: steps::update_tag
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b

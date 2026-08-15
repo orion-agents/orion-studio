@@ -223,19 +223,28 @@ where
 ///
 /// This function checks if the current process is running with root privileges
 /// and terminates the program with an error message unless explicitly allowed via the
-/// `ZED_ALLOW_ROOT` environment variable.
+/// `ORION_STUDIO_ALLOW_ROOT` environment variable. `ZED_ALLOW_ROOT` remains a
+/// compatibility fallback.
 #[cfg(unix)]
 pub fn prevent_root_execution() {
     let is_root = nix::unistd::geteuid().is_root();
-    let allow_root = std::env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
+    let allow_root = std::env::var("ORION_STUDIO_ALLOW_ROOT")
+        .or_else(|error| {
+            if matches!(error, std::env::VarError::NotPresent) {
+                std::env::var("ZED_ALLOW_ROOT")
+            } else {
+                Err(error)
+            }
+        })
+        .is_ok_and(|val| val == "true");
 
     if is_root && !allow_root {
         eprintln!(
             "\
-Error: Running Zed as root or via sudo is unsupported.
-       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
+Error: Running Orion Studio as root or via sudo is unsupported.
+       Doing so (even once) may subtly break things for all subsequent non-root usage of Orion Studio.
        It is untested and not recommended, don't complain when things break.
-       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
+       If you wish to proceed anyways, set `ORION_STUDIO_ALLOW_ROOT=true` in your environment."
         );
         std::process::exit(1);
     }
@@ -296,52 +305,57 @@ fn load_shell_from_passwd() -> Result<()> {
     Ok(())
 }
 
-/// Returns a shell escaped path for the current zed executable
+/// Returns a shell-escaped path for the current Orion Studio executable.
 #[cfg(not(target_family = "wasm"))]
-pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
+pub fn get_shell_safe_orion_studio_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
     use anyhow::Context as _;
     use paths::PathExt;
-    let mut zed_path =
-        std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    let mut orion_studio_path = std::env::current_exe()
+        .context("failed to determine current Orion Studio executable path")?;
     if cfg!(target_os = "linux")
-        && !zed_path.is_file()
-        && let Some(truncated) = zed_path
+        && !orion_studio_path.is_file()
+        && let Some(truncated) = orion_studio_path
             .clone()
             .file_name()
             .and_then(|s| s.to_str())
             .and_then(|n| n.strip_suffix(" (deleted)"))
     {
         // Might have been deleted during update; let's use the new binary if there is one.
-        zed_path.set_file_name(truncated);
+        orion_studio_path.set_file_name(truncated);
     }
 
-    zed_path
+    orion_studio_path
         .try_shell_safe(shell_kind)
-        .context("Failed to shell-escape Zed executable path.")
+        .context("failed to shell-escape Orion Studio executable path")
 }
 
-/// Returns a path for the zed cli executable, this function
-/// should be called from the zed executable, not zed-cli.
-pub fn get_zed_cli_path() -> Result<PathBuf> {
+const WINDOWS_CLI_LOCATIONS: &[&str] = &[
+    "bin/orion-studio.exe",
+    "bin/orion.exe",
+    "./cli.exe",
+    "bin/zed.exe",
+];
+const LINUX_AND_FREEBSD_CLI_LOCATIONS: &[&str] =
+    &["../bin/orion-studio", "../bin/orion", "./cli", "../bin/zed"];
+
+/// Returns the bundled Orion Studio CLI path.
+pub fn get_orion_studio_cli_path() -> Result<PathBuf> {
     use anyhow::Context as _;
-    let zed_path =
-        std::env::current_exe().context("Failed to determine current zed executable path.")?;
-    let parent = zed_path
+    let orion_studio_path = std::env::current_exe()
+        .context("failed to determine current Orion Studio executable path")?;
+    let parent = orion_studio_path
         .parent()
-        .context("Failed to determine parent directory of zed executable path.")?;
+        .context("failed to determine Orion Studio executable parent directory")?;
 
     let possible_locations: &[&str] = if cfg!(target_os = "macos") {
-        // On macOS, the zed executable and zed-cli are inside the app bundle,
-        // so here ./cli is for both installed and development builds.
+        // The app bundle keeps the helper binary at this fixed internal path.
         &["./cli"]
     } else if cfg!(target_os = "windows") {
-        // bin/zed.exe is for installed builds, ./cli.exe is for development builds.
-        &["bin/zed.exe", "./cli.exe"]
+        WINDOWS_CLI_LOCATIONS
     } else if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {
-        // bin is the standard, ./cli is for the target directory in development builds.
-        &["../bin/zed", "./cli"]
+        LINUX_AND_FREEBSD_CLI_LOCATIONS
     } else {
-        anyhow::bail!("unsupported platform for determining zed-cli path");
+        anyhow::bail!("unsupported platform for determining the Orion Studio CLI path");
     };
 
     possible_locations
@@ -351,11 +365,11 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
                 .join(p)
                 .canonicalize()
                 .ok()
-                .filter(|p| p != &zed_path)
+                .filter(|path| path != &orion_studio_path)
         })
         .with_context(|| {
             format!(
-                "could not find zed-cli from any of: {}",
+                "could not find the Orion Studio CLI in any of: {}",
                 possible_locations.join(", ")
             )
         })
@@ -770,6 +784,23 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_cli_locations_are_canonical_first() {
+        assert_eq!(
+            WINDOWS_CLI_LOCATIONS,
+            &[
+                "bin/orion-studio.exe",
+                "bin/orion.exe",
+                "./cli.exe",
+                "bin/zed.exe",
+            ]
+        );
+        assert_eq!(
+            LINUX_AND_FREEBSD_CLI_LOCATIONS,
+            &["../bin/orion-studio", "../bin/orion", "./cli", "../bin/zed"]
+        );
+    }
 
     #[test]
     fn test_parse_os_release() {

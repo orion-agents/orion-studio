@@ -123,11 +123,13 @@ impl Component for CollabNotification {
                             Button::new("decline", "Decline"),
                         )
                         .child(Label::new(
-                            "a_very_long_username_that_might_overflow is sharing a project in Zed:",
+                            "a_very_long_username_that_might_overflow is sharing a project in Orion Studio:",
                         ))
                         .child(
-                            Label::new("zed-cloud, zed, edit-prediction-bench, zed.dev")
-                                .color(Color::Muted),
+                            Label::new(
+                                "cloud.orion.dev, orion.dev, edit-prediction-bench, orion.dev",
+                            )
+                            .color(Color::Muted),
                         ),
                     )
                     .into_any_element(),

@@ -22,7 +22,7 @@ INTERACTIVE_MODEL_CHOICES = [
     "opus-4.5",
     "baseten:kimi-k2.7-code",
     "baseten:deepseek-v4-pro",
-    "custom-zed-model",
+    "custom-orion-studio-model",
     "custom-baseten-model",
 ]
 
@@ -147,8 +147,8 @@ def configure_interactive_suite(args: argparse.Namespace) -> None:
             args.build = choose_existing_build(args)
 
     model_choice = prompt_choice("Base model", INTERACTIVE_MODEL_CHOICES, "sonnet-4.6")
-    if model_choice == "custom-zed-model":
-        args.model = prompt("Zed model id (provider/model)", args.model)
+    if model_choice == "custom-orion-studio-model":
+        args.model = prompt("Orion Studio model id (provider/model)", args.model)
     elif model_choice == "custom-baseten-model":
         args.model_provider = "baseten"
         args.baseten_model = prompt_required("Baseten model id")

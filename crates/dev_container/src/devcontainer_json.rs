@@ -127,12 +127,13 @@ impl std::fmt::Display for FeatureOptionValue {
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq, Default)]
-pub(crate) struct ZedCustomizationsWrapper {
-    pub(crate) zed: ZedCustomization,
+pub(crate) struct OrionStudioCustomizations {
+    #[serde(rename = "orion-studio")]
+    pub(crate) orion_studio: OrionStudioCustomization,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Default)]
-pub(crate) struct ZedCustomization {
+pub(crate) struct OrionStudioCustomization {
     #[serde(default)]
     pub(crate) extensions: Vec<String>,
 }
@@ -221,7 +222,7 @@ pub(crate) struct DevContainer {
     pub(crate) mounts: Option<Vec<MountDefinition>>,
     pub(crate) features: Option<HashMap<String, FeatureOptions>>,
     pub(crate) override_feature_install_order: Option<Vec<String>>,
-    pub(crate) customizations: Option<ZedCustomizationsWrapper>,
+    pub(crate) customizations: Option<OrionStudioCustomizations>,
     pub(crate) build: Option<ContainerBuild>,
     #[serde(default, deserialize_with = "deserialize_app_port")]
     pub(crate) app_port: Vec<String>,
@@ -312,23 +313,31 @@ impl DevContainer {
     }
 }
 
+const ORION_STUDIO_CUSTOMIZATIONS_KEY: &str = "orion-studio";
+const LEGACY_ZED_CUSTOMIZATIONS_KEY: &str = "zed";
+
 // Custom deserializer that parses the entire customizations object as a
-// serde_json_lenient::Value first, then extracts the "zed" portion.
+// serde_json_lenient::Value first, then extracts the Orion Studio portion.
 // This avoids a bug in serde_json_lenient's `ignore_value` codepath which
 // does not handle trailing commas in skipped values.
-impl<'de> Deserialize<'de> for ZedCustomizationsWrapper {
+impl<'de> Deserialize<'de> for OrionStudioCustomizations {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let value = Value::deserialize(deserializer)?;
-        let zed = value
-            .get("zed")
-            .map(|zed_value| serde_json_lenient::from_value::<ZedCustomization>(zed_value.clone()))
+        let customization = value
+            .get(ORION_STUDIO_CUSTOMIZATIONS_KEY)
+            .or_else(|| value.get(LEGACY_ZED_CUSTOMIZATIONS_KEY))
+            .map(|customization| {
+                serde_json_lenient::from_value::<OrionStudioCustomization>(customization.clone())
+            })
             .transpose()
             .map_err(serde::de::Error::custom)?
             .unwrap_or_default();
-        Ok(ZedCustomizationsWrapper { zed })
+        Ok(OrionStudioCustomizations {
+            orion_studio: customization,
+        })
     }
 }
 
@@ -635,8 +644,8 @@ mod test {
         devcontainer_json::{
             ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
             HostRequirements, LifecycleCommand, LifecycleScript, MountDefinition, OnAutoForward,
-            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe, ZedCustomization,
-            ZedCustomizationsWrapper, deserialize_devcontainer_json,
+            OrionStudioCustomization, OrionStudioCustomizations, PortAttributeProtocol,
+            PortAttributes, ShutdownAction, UserEnvProbe, deserialize_devcontainer_json,
         },
     };
 
@@ -685,7 +694,7 @@ mod test {
                       "GitHub.vscode-pull-request-github",
                     ],
                   },
-                  "zed": {
+                  "orion-studio": {
                     "extensions": ["vue", "ruby"],
                   },
                   "codespaces": {
@@ -712,8 +721,8 @@ mod test {
         let devcontainer = result.expect("ok");
         assert_eq!(
             devcontainer.customizations,
-            Some(ZedCustomizationsWrapper {
-                zed: ZedCustomization {
+            Some(OrionStudioCustomizations {
+                orion_studio: OrionStudioCustomization {
                     extensions: vec!["vue".to_string(), "ruby".to_string()]
                 }
             })
@@ -721,8 +730,8 @@ mod test {
     }
 
     #[test]
-    fn should_deserialize_customizations_without_zed_key() {
-        let json_without_zed = r#"
+    fn should_deserialize_customizations_without_orion_studio_key() {
+        let json_without_orion_studio = r#"
             {
                 "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
                 "customizations": {
@@ -733,20 +742,94 @@ mod test {
             }
         "#;
 
-        let result = deserialize_devcontainer_json(json_without_zed);
+        let result = deserialize_devcontainer_json(json_without_orion_studio);
 
         assert!(
             result.is_ok(),
-            "Should handle missing zed key in customizations, but got: {:?}",
+            "Should handle a missing Orion Studio key in customizations, but got: {:?}",
             result.err()
         );
         let devcontainer = result.expect("ok");
         assert_eq!(
             devcontainer.customizations,
-            Some(ZedCustomizationsWrapper {
-                zed: ZedCustomization { extensions: vec![] }
+            Some(OrionStudioCustomizations {
+                orion_studio: OrionStudioCustomization { extensions: vec![] }
             })
         );
+    }
+
+    #[test]
+    fn should_fall_back_to_legacy_zed_customization() -> Result<(), DevContainerError> {
+        let devcontainer = deserialize_devcontainer_json(
+            r#"{
+                "image": "ubuntu",
+                "customizations": {
+                    "zed": { "extensions": ["legacy-extension"] }
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            devcontainer.customizations,
+            Some(OrionStudioCustomizations {
+                orion_studio: OrionStudioCustomization {
+                    extensions: vec!["legacy-extension".to_string()]
+                }
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_customization_takes_precedence_over_legacy() -> Result<(), DevContainerError> {
+        let devcontainer = deserialize_devcontainer_json(
+            r#"{
+                "image": "ubuntu",
+                "customizations": {
+                    "orion-studio": { "extensions": [] },
+                    "zed": { "extensions": ["must-not-load"] }
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            devcontainer.customizations,
+            Some(OrionStudioCustomizations {
+                orion_studio: OrionStudioCustomization { extensions: vec![] }
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn customization_serialization_uses_canonical_key() -> Result<(), serde_json::Error> {
+        let serialized = serde_json::to_value(OrionStudioCustomizations {
+            orion_studio: OrionStudioCustomization {
+                extensions: vec!["orion.extension".to_string()],
+            },
+        })?;
+
+        assert_eq!(
+            serialized["orion-studio"]["extensions"][0],
+            "orion.extension"
+        );
+        assert!(serialized.get("zed").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_canonical_customization_does_not_fall_back_to_legacy() {
+        let result = deserialize_devcontainer_json(
+            r#"{
+                "image": "ubuntu",
+                "customizations": {
+                    "orion-studio": null,
+                    "zed": { "extensions": ["must-not-load"] }
+                }
+            }"#,
+        );
+
+        assert!(result.is_err());
     }
 
     #[test]
@@ -854,7 +937,7 @@ mod test {
                     "vscode": {
                         // Just confirm that this can be included and ignored
                     },
-                    "zed": {
+                    "orion-studio": {
                         "extensions": [
                             "html"
                         ]
@@ -995,8 +1078,8 @@ mod test {
                     target: "/workspaces/app".to_string(),
                     mount_type: Some("bind".to_string())
                 }),
-                customizations: Some(ZedCustomizationsWrapper {
-                    zed: ZedCustomization {
+                customizations: Some(OrionStudioCustomizations {
+                    orion_studio: OrionStudioCustomization {
                         extensions: vec!["html".to_string()]
                     }
                 }),
@@ -1657,7 +1740,7 @@ mod test {
                     "vscode": {
                         // Just confirm that this can be included and ignored
                     },
-                    "zed": {
+                    "orion-studio": {
                         "extensions": [
                             "html"
                         ]
@@ -1695,7 +1778,7 @@ mod test {
                     "vscode": {
                         // Just confirm that this can be included and ignored
                     },
-                    "zed": {
+                    "orion-studio": {
                         "extensions": [
                             "html"
                         ]
@@ -1732,7 +1815,7 @@ mod test {
                     "vscode": {
                         // Just confirm that this can be included and ignored
                     },
-                    "zed": {
+                    "orion-studio": {
                         "extensions": [
                             "html"
                         ]

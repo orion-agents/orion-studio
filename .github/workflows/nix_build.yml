@@ -13,12 +13,12 @@ permissions:
   contents: read
 jobs:
   build_nix_linux_x86_64:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && ((github.event.action == 'labeled' && (github.event.label.name == 'run-nix' || github.event.label.name == 'run-bundling')) || (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-nix') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))))
+    if: github.repository == 'orion-agents/orion-studio' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-nix' || github.event.label.name == 'run-bundling')) || (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-nix') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))))
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+      ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+      ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
     - name: steps::checkout_repo
@@ -36,7 +36,7 @@ jobs:
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
-        name: zed
+        name: ${{ vars.ORION_STUDIO_CACHIX_CACHE_NAME }}
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
         pushFilter: -zed-editor-[0-9.]*
@@ -45,12 +45,12 @@ jobs:
     timeout-minutes: 60
     continue-on-error: true
   build_nix_mac_aarch64:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && ((github.event.action == 'labeled' && (github.event.label.name == 'run-nix' || github.event.label.name == 'run-bundling')) || (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-nix') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))))
+    if: github.repository == 'orion-agents/orion-studio' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-nix' || github.event.label.name == 'run-bundling')) || (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-nix') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))))
     runs-on: namespace-profile-mac-large
     env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+      ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+      ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
     - name: steps::checkout_repo
@@ -74,7 +74,7 @@ jobs:
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
-        name: zed
+        name: ${{ vars.ORION_STUDIO_CACHIX_CACHE_NAME }}
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
         pushFilter: -zed-editor-[0-9.]*

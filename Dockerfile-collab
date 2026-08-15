@@ -1,11 +1,19 @@
 # syntax = docker/dockerfile:1.2
 
-FROM rust:1.94-bookworm as builder
-WORKDIR app
-COPY . .
+FROM rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS builder
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY .cargo/collab-config.toml ./.cargo/collab-config.toml
+COPY crates ./crates
+COPY extensions ./extensions
+COPY tooling ./tooling
+COPY assets ./assets
+COPY script ./script
+COPY LICENSE-APACHE LICENSE-GPL ./
 
 # Replace the Cargo configuration with the one used by collab.
-COPY ./.cargo/collab-config.toml ./.cargo/config.toml
+RUN cp ./.cargo/collab-config.toml ./.cargo/config.toml
 
 # Compile collab server
 ARG CARGO_PROFILE_RELEASE_PANIC=abort
@@ -16,7 +24,8 @@ ENV GITHUB_SHA=$GITHUB_SHA
 # Also add `cmake`, since we need it to build `wasmtime`.
 # clang is needed because `webrtc-sys` uses Clang-specific compiler flags.
 RUN apt-get update; \
-    apt-get install -y --no-install-recommends cmake clang
+    apt-get install -y --no-install-recommends cmake clang; \
+    rm -rf /var/lib/apt/lists/*
 
 ENV CC=clang
 ENV CXX=clang++
@@ -32,10 +41,14 @@ RUN --mount=type=cache,target=./target \
     cp /app/target/release/collab /app/collab
 
 # Copy collab server binary to the runtime image
-FROM debian:bookworm-slim as runtime
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS runtime
 RUN apt-get update; \
-    apt-get install -y --no-install-recommends libcurl4-openssl-dev ca-certificates \
-    linux-perf binutils
-WORKDIR app
-COPY --from=builder /app/collab /app/collab
+    apt-get install -y --no-install-recommends ca-certificates libcurl4; \
+    groupadd --gid 10001 orion; \
+    useradd --no-log-init --uid 10001 --gid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin orion; \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=builder --chown=10001:10001 /app/collab /app/collab
+ENV TMPDIR=/tmp
+USER 10001:10001
 ENTRYPOINT ["/app/collab"]

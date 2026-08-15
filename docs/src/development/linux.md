@@ -1,13 +1,13 @@
 ---
-title: Building Zed for Linux
-description: "Guide to building zed for linux for Zed development."
+title: Building Orion Studio for Linux
+description: "Guide to building Orion Studio on Linux."
 ---
 
-# Building Zed for Linux
+# Building Orion Studio for Linux
 
 ## Repository
 
-Clone the [Zed repository](https://github.com/zed-industries/zed).
+Clone the [Orion Studio repository](https://github.com/orion-agents/orion-studio).
 
 ## Dependencies
 
@@ -23,7 +23,7 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Building from source
 
-Once the dependencies are installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
+Once the dependencies are installed, you can build Orion Studio using [Cargo](https://doc.rust-lang.org/cargo/).
 
 For a debug build of the editor:
 
@@ -37,7 +37,9 @@ And to run the tests:
 cargo test --workspace
 ```
 
-In release mode, the primary user interface is the `cli` crate. You can run it in development with:
+The application package is `orion-studio`. The separate `cli` crate is bundled
+as the canonical `orion-studio` launcher in release artifacts; `orion` is an
+optional short alias. You can run the CLI crate in development with:
 
 ```sh
 cargo run -p cli
@@ -51,42 +53,56 @@ You can install a local build on your machine with:
 ./script/install-linux
 ```
 
-This builds `zed` and the `cli` in release mode, installs the binary at `~/.local/bin/zed`, and installs `.desktop` files to `~/.local/share`.
+This builds `orion-studio` and `cli` in release mode, creates a bundle under
+`~/.local/orion-studio.app`, installs the canonical launcher at
+`~/.local/bin/orion-studio`, adds the optional `orion` short alias and deprecated
+`zed` compatibility alias, and installs desktop integration under
+`~/.local/share`.
 
 ## Wayland & X11
 
-Zed supports both X11 and Wayland. By default, we pick whichever we can find at runtime. If you're on Wayland and want to run in X11 mode, use the environment variable `WAYLAND_DISPLAY=''`.
+Orion Studio supports both X11 and Wayland. By default, we pick whichever we can find at runtime. If you're on Wayland and want to run in X11 mode, use the environment variable `WAYLAND_DISPLAY=''`.
 
-## Notes for packaging Zed
+## Notes for packaging Orion Studio
 
-This section is for distribution maintainers packaging Zed.
+This section is for distribution maintainers packaging Orion Studio.
 
 ### Technical requirements
 
-Zed has two main binaries:
+Orion Studio has two main binaries:
 
-- You will need to build `crates/cli` and make its binary available in `$PATH` with the name `zed`.
-- You will need to build `crates/zed` and put it at `$PATH/to/cli/../../libexec/zed-editor`. For example, if you are going to put the cli at `~/.local/bin/zed` put zed at `~/.local/libexec/zed-editor`. As some linux distributions (notably Arch) discourage the use of `libexec`, you can also put this binary at `$PATH/to/cli/../../lib/zed/zed-editor` (e.g. `~/.local/lib/zed/zed-editor`) instead.
-- If you are going to provide a `.desktop` file you can find a template in `crates/zed/resources/zed.desktop.in`, and use `envsubst` to populate it with the values required. This file should also be renamed to `$APP_ID.desktop` so that the file [follows the FreeDesktop standards](https://github.com/zed-industries/zed/issues/12707#issuecomment-2168742761). You should also make this desktop file executable (`chmod 755`).
-- You will need to ensure that the necessary libraries are installed. You can get the current list by [inspecting the built binary](https://github.com/zed-industries/zed/blob/935cf542aebf55122ce6ed1c91d0fe8711970c82/script/bundle-linux#L65-L67) on your system.
-- For an example of a complete build script, see [script/bundle-linux](https://github.com/zed-industries/zed/blob/935cf542aebf55122ce6ed1c91d0fe8711970c82/script/bundle-linux).
-- You can disable Zed's auto updates and provide instructions for users who try to update Zed manually by building (or running) Zed with the environment variable `ZED_UPDATE_EXPLANATION`. For example: `ZED_UPDATE_EXPLANATION="Please use flatpak to update zed."`.
-- Make sure to update the contents of the `crates/zed/RELEASE_CHANNEL` file to 'nightly', 'preview', or 'stable', with no newline. This will cause Zed to use the credentials manager to remember a user's login.
+- Build the `cli` package and expose it in `$PATH` as `orion-studio`. Release
+  bundles may also expose `orion` as an optional short alias and `zed` only as a
+  deprecated compatibility alias.
+- Build the `orion-studio` package and place its main binary at a path the launcher can resolve, preferably `$PREFIX/libexec/orion-studio` or `$PREFIX/lib/orion-studio/orion-studio`.
+- The source tree still stores the main package under the historical `crates/zed`
+  path; the desktop template is `crates/zed/resources/orion-studio.desktop.in`.
+  Package the generated desktop file under the Orion application ID and product
+  name.
+- You will need to ensure that the necessary libraries are installed. You can get the current list by [inspecting the built binary](https://github.com/orion-agents/orion-studio/blob/935cf542aebf55122ce6ed1c91d0fe8711970c82/script/bundle-linux#L65-L67) on your system.
+- For an example of a complete build script, see [script/bundle-linux](https://github.com/orion-agents/orion-studio/blob/935cf542aebf55122ce6ed1c91d0fe8711970c82/script/bundle-linux).
+- You can disable Orion Studio's auto updates and provide package-specific
+  update instructions by building with `ORION_STUDIO_UPDATE_EXPLANATION`, for
+  example `ORION_STUDIO_UPDATE_EXPLANATION="Please use Flatpak to update Orion Studio."`.
+  The legacy `ZED_UPDATE_EXPLANATION` name remains supported for compatible
+  build pipelines.
+- Set `crates/zed/RELEASE_CHANNEL` to `nightly`, `preview`, or `stable`, with no trailing newline. The `crates/zed` path is retained for source compatibility.
 
 ### Other things to note
 
-Zed moves quickly, and distribution maintainers often have different constraints and priorities. The points below describe current trade-offs:
+Distribution maintainers should account for these behaviors:
 
-- Zed is a fast-moving project. We typically publish 2-3 builds per week to address reported issues and ship larger changes.
-- There are a couple of other `zed` binaries that may be present on Linux systems ([1](https://openzfs.github.io/openzfs-docs/man/v2.2/8/zed.8.html), [2](https://zed.brimdata.io/docs/commands/zed)). If you want to rename our CLI binary because of these issues, we suggest `zedit`, `zeditor`, or `zed-cli`.
-- Zed automatically installs versions of common developer tools, similar to rustup/rbenv/pyenv. This behavior is discussed [here](https://github.com/zed-industries/zed/issues/12589).
-- Users can install extensions locally and from [zed-industries/extensions](https://github.com/zed-industries/extensions). Extensions may install additional tools such as language servers. Planned safety improvements are tracked [here](https://github.com/zed-industries/zed/issues/12358).
-- Zed connects to several online services by default (AI, telemetry, collaboration). AI and our telemetry can be disabled by your users with their zed settings or by patching our [default settings file](https://github.com/zed-industries/zed/blob/main/assets/settings/default.json).
-- Because of the points above, Zed currently does not work well with sandboxes. See [this discussion](https://github.com/zed-industries/zed/pull/12006#issuecomment-2130421220).
+- Use `orion-studio` as the packaged launcher. `orion` may be provided as a short
+  alias. Do not use `zed` as the primary name; it is deprecated, can collide with
+  the upstream editor, and is retained only as a migration alias.
+- Orion Studio automatically installs versions of common developer tools, similar to rustup/rbenv/pyenv. This behavior is discussed [here](https://github.com/orion-agents/orion-studio/issues/12589).
+- Orion Studio remains compatible with extensions from the upstream [`zed-industries/extensions`](https://github.com/zed-industries/extensions) ecosystem. The organization name is an upstream attribution, not Orion Studio branding. Extensions may install additional tools such as language servers.
+- Hosted AI, telemetry, authentication, and collaboration require explicitly configured endpoints. Packages must not silently fall back to Zed-hosted infrastructure. Review the [default settings](https://github.com/orion-agents/orion-studio/blob/main/assets/settings/default.json) and operator configuration before distribution.
+- Because of the points above, Orion Studio currently does not work well with sandboxes. See [this discussion](https://github.com/orion-agents/orion-studio/pull/12006#issuecomment-2130421220).
 
 ## Flatpak
 
-> Zed's current Flatpak integration exits the sandbox on startup. Workflows that rely on Flatpak's sandboxing may not work as expected.
+> Orion Studio's current Flatpak integration exits the sandbox on startup. Workflows that rely on Flatpak's sandboxing may not work as expected.
 
 To build & install the Flatpak package locally follow the steps below:
 
@@ -104,25 +120,22 @@ $ sudo apt install heaptrack heaptrack-gui
 $ cargo install cargo-heaptrack
 ```
 
-Then, to build and run Zed with the profiler attached:
+Then, to build and run Orion Studio with the profiler attached:
 
 ```sh
-$ cargo heaptrack -b zed
+$ cargo heaptrack -b orion-studio
 ```
 
-When this zed instance is exited, terminal output will include a command to run `heaptrack_interpret` to convert the `*.raw.zst` profile to a `*.zst` file which can be passed to `heaptrack_gui` for viewing.
+When this Orion Studio instance exits, terminal output includes a command to run `heaptrack_interpret`, which converts the `*.raw.zst` profile to a `*.zst` file for `heaptrack_gui`.
 
 ## Perf recording
 
-How to get a flamegraph with resolved symbols from a running Zed instance.
-Use this when Zed is using a lot of CPU. It is not useful for hangs.
+How to get a flamegraph with resolved symbols from a running Orion Studio instance.
+Use this when Orion Studio is using a lot of CPU. It is not useful for hangs.
 
 ### During the incident
 
-- Find the PID (process ID) using:
-  `ps -eo size,pid,comm | grep zed | sort | head -n 1 | cut -d ' ' -f 2`
-  Or find the PID of `zed-editor` with the highest RAM usage in something
-  like htop/btop/top.
+- Find the `orion-studio` process ID with `pgrep -x orion-studio`, or locate the process with the highest memory usage in `htop`, `btop`, or `top`.
 
 - Install perf:
   On Ubuntu (derivatives) run `sudo apt install linux-tools`.
@@ -133,16 +146,15 @@ Use this when Zed is using a lot of CPU. It is not useful for hangs.
 - Make the output file user owned:
   run `sudo chown $USER:$USER perf.data`
 
-- Get build info:
-  Run zed again and type {#action zed::About} in the command pallet to get the exact commit.
+- Get build info by opening Orion Studio and running {#action zed::About} from the Command Palette to obtain the exact commit. The `zed::About` action namespace is a retained internal identifier.
 
-The `perf.data` file can be sent to Zed together with the exact commit.
+Attach `perf.data` and the exact commit to a private maintainer channel or GitHub issue only after checking the profile for sensitive data.
 
 ### Later
 
-This can be done by Zed staff.
+This can be done by a maintainer with access to the matching source revision.
 
-- Build Zed with symbols:
+- Build Orion Studio with symbols:
   Check out the commit found previously and modify `Cargo.toml`.
   Apply the following diff, then make a release build.
 
@@ -153,7 +165,7 @@ This can be done by Zed staff.
 ```
 
 - Add the symbols to the perf database:
-  `perf buildid-cache -v -a <path to release zed binary>`
+  `perf buildid-cache -v -a <path to release orion-studio binary>`
 
 - Resolve the symbols from the db:
   `perf inject -i perf.data -o perf_with_symbols.data`

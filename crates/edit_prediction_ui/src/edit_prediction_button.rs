@@ -54,7 +54,7 @@ actions!(
 
 const COPILOT_SETTINGS_PATH: &str = "/settings/copilot";
 const COPILOT_SETTINGS_URL: &str = concat!("https://github.com", "/settings/copilot");
-const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
+const PRIVACY_DOCS: &str = "https://orion.dev/docs/ai/privacy-and-security";
 
 struct CopilotErrorToast;
 
@@ -344,13 +344,13 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Zed | EditPredictionProvider::Mercury) => {
+            provider @ (EditPredictionProvider::Orion | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let file = self.file.clone();
                 let language = self.language.clone();
                 let project = self.project.clone();
                 let provider_name: &'static str = match provider {
-                    EditPredictionProvider::Zed => "zed",
+                    EditPredictionProvider::Orion => "orion",
                     _ => "unknown",
                 };
                 let icons = self
@@ -358,7 +358,7 @@ impl Render for EditPredictionButton {
                     .as_ref()
                     .map(|p| p.icons(cx))
                     .unwrap_or_else(|| {
-                        edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                        edit_prediction_types::EditPredictionIconSet::new(IconName::OrionPredict)
                     });
 
                 let ep_icon;
@@ -396,7 +396,7 @@ impl Render for EditPredictionButton {
                     };
 
                     return div().child(
-                        IconButton::new("zed-predict-pending-button", ep_icon)
+                        IconButton::new("orion-predict-pending-button", ep_icon)
                             .shape(IconButtonShape::Square)
                             .tab_index(0isize)
                             .aria_label("Edit Predictions")
@@ -410,6 +410,7 @@ impl Render for EditPredictionButton {
                                     "Pending ToS Clicked",
                                     source = "Edit Prediction Status Button"
                                 );
+                                // Keep dispatching the public legacy action used by existing keymaps.
                                 window.dispatch_action(
                                     zed_actions::OpenZedPredictOnboarding.boxed_clone(),
                                     cx,
@@ -448,12 +449,12 @@ impl Render for EditPredictionButton {
                     None
                 };
 
-                let zed_cloud_needs_sign_in =
-                    matches!(provider, EditPredictionProvider::Zed) && user.is_none();
+                let orion_cloud_needs_sign_in =
+                    matches!(provider, EditPredictionProvider::Orion) && user.is_none();
                 let provider_unavailable =
-                    missing_token || mercury_has_error || zed_cloud_needs_sign_in;
+                    missing_token || mercury_has_error || orion_cloud_needs_sign_in;
 
-                let icon_button = IconButton::new("zed-predict-pending-button", ep_icon)
+                let icon_button = IconButton::new("orion-predict-pending-button", ep_icon)
                     .shape(IconButtonShape::Square)
                     .tab_index(0isize)
                     .aria_label("Edit Prediction")
@@ -465,7 +466,7 @@ impl Render for EditPredictionButton {
                         element.tooltip(move |_window, cx| {
                             let description = if !enabled {
                                 "Disabled For This File"
-                            } else if zed_cloud_needs_sign_in {
+                            } else if orion_cloud_needs_sign_in {
                                 "Sign In Or Configure a Provider"
                             } else if provider_unavailable || show_editor_predictions {
                                 tooltip_meta
@@ -601,7 +602,7 @@ impl EditPredictionButton {
             .read(cx)
             .current_organization_configuration();
 
-        let is_zed_provider_disabled = organization_configuration
+        let is_orion_provider_disabled = organization_configuration
             .is_some_and(|configuration| !configuration.edit_prediction.is_enabled);
 
         let available_providers = get_available_providers(cx);
@@ -619,15 +620,18 @@ impl EditPredictionButton {
                     continue;
                 };
                 let is_current = provider == current_provider;
-                let is_disabled_zed_provider =
-                    provider == EditPredictionProvider::Zed && is_zed_provider_disabled;
+                let is_disabled_orion_provider =
+                    provider == EditPredictionProvider::Orion && is_orion_provider_disabled;
                 let fs = self.fs.clone();
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(IconPosition::Start, is_current && !is_disabled_zed_provider)
-                        .disabled(is_disabled_zed_provider)
-                        .when(is_disabled_zed_provider, |item| {
+                        .toggleable(
+                            IconPosition::Start,
+                            is_current && !is_disabled_orion_provider,
+                        )
+                        .disabled(is_disabled_orion_provider)
+                        .when(is_disabled_orion_provider, |item| {
                             item.documentation_aside(DocumentationSide::Left, move |_cx| {
                                 Label::new("Edit predictions are disabled for this organization.")
                                     .into_any_element()
@@ -840,7 +844,7 @@ impl EditPredictionButton {
 
         menu = menu.separator().header("Privacy");
 
-        if matches!(provider, EditPredictionProvider::Zed) {
+        if matches!(provider, EditPredictionProvider::Orion) {
             if let Some(provider) = &self.edit_prediction_provider {
                 let data_collection = provider.data_collection_state(cx);
 
@@ -893,7 +897,7 @@ impl EditPredictionButton {
                                     .child(
                                         Label::new(indoc!{
                                             "Help us improve our open dataset model by sharing data from open source repositories. \
-                                            Zed must detect a license file in your repo for this setting to take effect. \
+                                            Orion Studio must detect a license file in your repo for this setting to take effect. \
                                             Files with sensitive data and secrets are excluded by default."
                                         })
                                     )
@@ -947,7 +951,7 @@ impl EditPredictionButton {
                 .icon_color(Color::Muted)
                 .documentation_aside(DocumentationSide::Left, |_| {
                     Label::new(indoc!{"
-                        Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
+                        Open your settings to add sensitive paths for which Orion AI will never predict edits."}).into_any_element()
                 })
                 .handler(move |window, cx| {
                     telemetry::event!(
@@ -985,7 +989,7 @@ impl EditPredictionButton {
                 .as_ref()
                 .map(|p| p.icons(cx))
                 .unwrap_or_else(|| {
-                    edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                    edit_prediction_types::EditPredictionIconSet::new(IconName::OrionPredict)
                 });
             menu = menu.item(
                 ContextMenuEntry::new("This file is excluded.")
@@ -1112,7 +1116,7 @@ impl EditPredictionButton {
             let needs_sign_in = user.is_none()
                 && matches!(
                     provider,
-                    EditPredictionProvider::None | EditPredictionProvider::Zed
+                    EditPredictionProvider::None | EditPredictionProvider::Orion
                 );
 
             if needs_sign_in {
@@ -1140,7 +1144,7 @@ impl EditPredictionButton {
                         telemetry::event!(
                             "Edit Prediction Menu Action",
                             action = "sign_in",
-                            provider = "zed",
+                            provider = "orion",
                         );
                         let client = Client::global(cx);
                         window
@@ -1246,14 +1250,18 @@ impl EditPredictionButton {
                             },
                             |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
                         )
-                        .entry("Upgrade to Zed Pro or contact us.", None, |_window, cx| {
-                            telemetry::event!(
-                                "Edit Prediction Menu Action",
-                                action = "upsell_clicked",
-                                reason = "account_age",
-                            );
-                            cx.open_url(&zed_urls::account_url(cx))
-                        })
+                        .entry(
+                            "Upgrade to Orion Pro or contact support.",
+                            None,
+                            |_window, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Menu Action",
+                                    action = "upsell_clicked",
+                                    reason = "account_age",
+                                );
+                                cx.open_url(&zed_urls::account_url(cx))
+                            },
+                        )
                         .separator();
                 } else if self.user_store.read(cx).has_overdue_invoices() {
                     menu = menu
@@ -1269,7 +1277,7 @@ impl EditPredictionButton {
                             },
                         )
                         .entry(
-                            "Check your payment status or contact us at billing-support@zed.dev to continue using this feature.",
+                            "Check your payment status or contact Orion Studio support to continue using this feature.",
                             None,
                             |_window, cx| {
                                 cx.open_url(&zed_urls::account_url(cx))
@@ -1484,7 +1492,7 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
 pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     let mut providers = Vec::new();
 
-    providers.push(EditPredictionProvider::Zed);
+    providers.push(EditPredictionProvider::Orion);
 
     let app_state = workspace::AppState::global(cx);
     if copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
@@ -1632,7 +1640,7 @@ fn render_zeta_tab_animation(cx: &App) -> impl IntoElement {
             8.,
         ))
         .child(tab_sequence(true))
-        .child(Icon::new(IconName::ZedPredict))
+        .child(Icon::new(IconName::OrionPredict))
         .child(tab_sequence(false))
 }
 

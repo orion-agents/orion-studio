@@ -3,7 +3,7 @@
 
 Usage:
     script/sentry-fetch <issue-short-id-or-numeric-id>
-    script/sentry-fetch ZED-4VS
+    script/sentry-fetch ORION-4VS
     script/sentry-fetch 7243282041
 
 Authentication (checked in order):
@@ -22,7 +22,7 @@ import urllib.error
 import urllib.request
 
 SENTRY_BASE_URL = "https://sentry.io/api/0"
-DEFAULT_SENTRY_ORG = "zed-dev"
+DEFAULT_SENTRY_ORG = os.environ.get("ORION_STUDIO_SENTRY_ORGANIZATION")
 
 
 def main():
@@ -31,9 +31,19 @@ def main():
     )
     parser.add_argument(
         "issue",
-        help="Sentry issue short ID (e.g. ZED-4VS) or numeric issue ID",
+        help="Sentry issue short ID (e.g. ORION-4VS) or numeric issue ID",
+    )
+    parser.add_argument(
+        "--org",
+        default=DEFAULT_SENTRY_ORG,
+        help="Sentry organization slug (defaults to ORION_STUDIO_SENTRY_ORGANIZATION)",
     )
     args = parser.parse_args()
+
+    if not args.org:
+        parser.error(
+            "--org or ORION_STUDIO_SENTRY_ORGANIZATION is required; no upstream default is used"
+        )
 
     token = find_auth_token()
     if not token:
@@ -51,13 +61,13 @@ def main():
         sys.exit(1)
 
     try:
-        issue_id, short_id, issue = resolve_issue(args.issue, token)
+        issue_id, short_id, issue = resolve_issue(args.issue, token, args.org)
         event = fetch_latest_event(issue_id, token)
     except FetchError as err:
         print(f"Error: {err}", file=sys.stderr)
         sys.exit(1)
 
-    markdown = format_crash_report(issue, event, short_id)
+    markdown = format_crash_report(issue, event, short_id, args.org)
     print(markdown)
 
 
@@ -110,7 +120,7 @@ def api_get(path, token):
         raise FetchError(f"Failed to connect to Sentry API: {err.reason}")
 
 
-def resolve_issue(identifier, token):
+def resolve_issue(identifier, token, organization):
     """Resolve a Sentry issue by short ID or numeric ID.
 
     Returns (issue_id, short_id, issue_data).
@@ -119,7 +129,7 @@ def resolve_issue(identifier, token):
         issue = api_get(f"/issues/{identifier}/", token)
         return identifier, issue.get("shortId", identifier), issue
 
-    result = api_get(f"/organizations/{DEFAULT_SENTRY_ORG}/shortids/{identifier}/", token)
+    result = api_get(f"/organizations/{organization}/shortids/{identifier}/", token)
     group_id = str(result["groupId"])
     issue = api_get(f"/issues/{group_id}/", token)
     return group_id, identifier, issue
@@ -130,7 +140,7 @@ def fetch_latest_event(issue_id, token):
     return api_get(f"/issues/{issue_id}/events/latest/", token)
 
 
-def format_crash_report(issue, event, short_id):
+def format_crash_report(issue, event, short_id, organization):
     """Format a Sentry issue and event as a markdown crash report."""
     lines = []
 
@@ -146,7 +156,7 @@ def format_crash_report(issue, event, short_id):
     first_seen = issue.get("firstSeen", "unknown")
     last_seen = issue.get("lastSeen", "unknown")
     count = issue.get("count", "unknown")
-    sentry_url = f"https://sentry.io/organizations/{DEFAULT_SENTRY_ORG}/issues/{issue_id}/"
+    sentry_url = f"https://sentry.io/organizations/{organization}/issues/{issue_id}/"
 
     lines.append(f"**Short ID:** {short_id}")
     lines.append(f"**Issue ID:** {issue_id}")

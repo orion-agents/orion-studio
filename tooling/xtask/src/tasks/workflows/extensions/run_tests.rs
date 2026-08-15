@@ -1,4 +1,6 @@
-use gh_workflow::{Event, Job, Level, Permissions, PullRequest, Push, UsesJob, Workflow};
+use gh_workflow::{
+    Event, Expression, Job, Level, Permissions, PullRequest, Push, UsesJob, Workflow,
+};
 
 use crate::tasks::workflows::{
     GenerateWorkflowArgs, GitSha,
@@ -19,10 +21,13 @@ pub(crate) fn run_tests(args: &GenerateWorkflowArgs) -> Workflow {
 
 pub(crate) fn call_extension_tests(target_ref: Option<&GitSha>) -> NamedJob<UsesJob> {
     let job = Job::default()
+        .cond(Expression::new(
+            "vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION",
+        ))
         .permissions(Permissions::default().contents(Level::Read))
         .uses(
-            "zed-industries",
-            "zed",
+            "orion-agents",
+            "orion-studio",
             ".github/workflows/extension_tests.yml",
             target_ref.map_or("main", AsRef::as_ref),
         );

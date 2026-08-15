@@ -1,6 +1,6 @@
 # Extracting an extension to dedicated repo
 
-These are some notes of how to extract an extension from the main zed repository and generate a new repository which preserves the history as best as possible. In the this example we will be extracting the `ruby` extension, substitute as appropriate.
+These notes describe how to extract an extension from the Orion Studio monorepo into a dedicated repository while preserving its history. The example uses the `ruby` extension; substitute the appropriate extension name.
 
 ## Pre-requisites
 
@@ -12,19 +12,20 @@ brew install git-filter-repo
 
 ## Process
 
-We are going to use a `$LANGNAME` variable for all these steps. Make sure it is set correctly.
+The commands use `$LANGNAME` and `$ORION_STUDIO_EXTENSION_ORGANIZATION`. Set both before starting. The destination organization must be Orion-owned and must match the repository variable used by the extension workflows.
 
 > **Note**
 > If you get `zsh: command not found: #` errors, run:
 > `setopt interactive_comments && echo "setopt interactive_comments" >> ~/.zshrc`
 
-1. Create a clean clone the zed repository, delete tags and delete branches.
+1. Create a clean clone of the Orion Studio repository without tags or additional branches.
 
 ```sh
 LANGNAME=your_language_name_here
+ORION_STUDIO_EXTENSION_ORGANIZATION=your_orion_extension_org_here
 
 rm -rf $LANGNAME
-git clone --single-branch --no-tags git@github.com:zed-industries/zed.git $LANGNAME
+git clone --single-branch --no-tags git@github.com:orion-agents/orion-studio.git $LANGNAME
 cd $LANGNAME
 ```
 
@@ -34,6 +35,8 @@ This file takes the form of `pattern==>replacement`, where the replacement is op
 Note whitespace matters so `ruby: ==>` is removing the `ruby:` prefix from a commit messages and adding a space after `==> ` means the replacement begins with a space. Regex capture groups are numbered `\1`, `\2`, etc.
 
 See: [Git Filter Repo Docs](https://htmlpreview.github.io/?https://github.com/newren/git-filter-repo/blob/docs/html/git-filter-repo.html) for more.
+
+The issue-link rewrite below intentionally preserves references to the upstream Zed repository because those historical issue numbers do not belong to Orion Studio.
 
 ```sh
 # Create regex mapping for rewriting commit messages (edit as appropriate)
@@ -89,10 +92,10 @@ Usually the initial extraction didn't mention a version number so you can just d
 
 5. Push to the new repo
 
-Create a new empty repo on github under the [zed-extensions](https://github.com/organizations/zed-extensions/repositories/new) organization.
+Create a new empty repository in the approved Orion extension organization.
 
 ```
-git remote add origin git@github.com:zed-extensions/$LANGNAME
+git remote add origin git@github.com:${ORION_STUDIO_EXTENSION_ORGANIZATION}/${LANGNAME}
 git push origin main --tags
 git branch --set-upstream-to=origin/main main
 ```
@@ -112,7 +115,7 @@ OLD_VERSION=$(grep '^version = ' extension.toml | cut -d'"' -f2)
 NEW_VERSION=$(echo "$OLD_VERSION" | awk -F. '{$NF = $NF + 1;} 1' OFS=.)
 echo $OLD_VERSION $NEW_VERSION
 perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" extension.toml
-perl -i -pe "s#https://github.com/zed-industries/zed#https://github.com/zed-extensions/${LANGNAME}#g" extension.toml
+perl -i -pe "s#https://github.com/orion-agents/orion-studio#https://github.com/${ORION_STUDIO_EXTENSION_ORGANIZATION}/${LANGNAME}#g" extension.toml
 
 # if there's rust code, update this too.
 test -f Cargo.toml && perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" Cargo.toml
@@ -139,7 +142,7 @@ git tag v${NEW_VERSION}
 git push origin v${NEW_VERSION}
 ```
 
-7. In zed repository, remove the old extension and push a PR.
+7. In the Orion Studio repository, remove the old extension and open a PR.
 
 ```sh
 rm -rf extensions/$LANGNAME
@@ -148,7 +151,7 @@ cargo check
 git checkout -b remove_$LANGNAME
 git add extensions/$LANGNAME
 git add Cargo.toml Cargo.lock extensions/$LANGNAME
-git commit -m "Migrate to $LANGNAME extension to zed-extensions/$LANGNAME"
+git commit -m "Migrate $LANGNAME extension to ${ORION_STUDIO_EXTENSION_ORGANIZATION}/${LANGNAME}"
 git push
 gh pr create --web
 ```
@@ -164,12 +167,12 @@ git submodule update
 git status
 
 git checkout -b ${LANGNAME}_v${NEW_VERSION}
-git submodule add https://github.com/zed-extensions/${LANGNAME}.git extensions/${LANGNAME}
+git submodule add https://github.com/${ORION_STUDIO_EXTENSION_ORGANIZATION}/${LANGNAME}.git extensions/${LANGNAME}
 pnpm sort-extensions
 
 # edit extensions.toml:
 # - bump version
-# - change `submodule` from `extensions/zed` to new path
+# - change `submodule` from the old monorepo path to the new extension path
 # - remove `path` line all together
 
 git add extensions.toml .gitmodules extensions/${LANGNAME}
@@ -178,4 +181,4 @@ git commit -m "Bump ${LANGNAME} to v${NEW_VERSION}"
 git push
 ```
 
-Create PR and reference the Zed PR with removal from tree.
+Create the PR and reference the Orion Studio PR that removes the extension from the monorepo.

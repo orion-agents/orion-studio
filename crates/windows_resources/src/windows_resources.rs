@@ -6,8 +6,55 @@
 
 use std::process::Command;
 
+fn environment_variable_from(
+    canonical_name: &str,
+    legacy_name: &str,
+    mut get_environment_variable: impl FnMut(&str) -> Result<String, std::env::VarError>,
+) -> Result<String, std::env::VarError> {
+    match get_environment_variable(canonical_name) {
+        Err(std::env::VarError::NotPresent) => get_environment_variable(legacy_name),
+        result => result,
+    }
+}
+
+fn environment_variable(
+    canonical_name: &str,
+    legacy_name: &str,
+) -> Result<String, std::env::VarError> {
+    environment_variable_from(canonical_name, legacy_name, |name| std::env::var(name))
+}
+
+fn release_channel_from(
+    mut get_environment_variable: impl FnMut(&str) -> Result<String, std::env::VarError>,
+) -> String {
+    match environment_variable_from(
+        "ORION_STUDIO_RELEASE_CHANNEL",
+        "ZED_RELEASE_CHANNEL",
+        &mut get_environment_variable,
+    ) {
+        Ok(channel) => channel,
+        Err(std::env::VarError::NotPresent) => {
+            get_environment_variable("RELEASE_CHANNEL").unwrap_or_else(|_| "dev".to_owned())
+        }
+        Err(std::env::VarError::NotUnicode(_)) => "dev".to_owned(),
+    }
+}
+
+fn release_channel() -> String {
+    release_channel_from(|name| std::env::var(name))
+}
+
+fn resource_identity(channel: &str) -> (&'static str, &'static str) {
+    match channel {
+        "stable" => ("app-icon.ico", "Orion Studio"),
+        "preview" => ("app-icon-preview.ico", "Orion Studio Preview"),
+        "nightly" => ("app-icon-nightly.ico", "Orion Studio Nightly"),
+        _ => ("app-icon-dev.ico", "Orion Studio Dev"),
+    }
+}
+
 fn git_sha() -> Option<String> {
-    if let Ok(sha) = std::env::var("ZED_COMMIT_SHA") {
+    if let Ok(sha) = environment_variable("ORION_STUDIO_COMMIT_SHA", "ZED_COMMIT_SHA") {
         return Some(sha);
     }
 
@@ -22,7 +69,7 @@ fn git_sha() -> Option<String> {
 fn product_version() -> String {
     let commit_sha = git_sha();
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
-    let channel = std::env::var("RELEASE_CHANNEL").unwrap_or_else(|_| "dev".into());
+    let channel = release_channel();
     let build_id = std::env::var("GITHUB_RUN_NUMBER").ok();
 
     let mut metadata = channel;
@@ -42,13 +89,19 @@ const ICON_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../zed/resources/wi
 const MANIFEST_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/resources/manifest.xml");
 
 pub fn compile(manifest: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
-    let (icon_filename, product_name) = match channel {
-        "stable" => ("app-icon.ico", "Zed"),
-        "preview" => ("app-icon-preview.ico", "Zed Preview"),
-        "nightly" => ("app-icon-nightly.ico", "Zed Nightly"),
-        _ => ("app-icon-dev.ico", "Zed Dev"),
-    };
+    for name in [
+        "ORION_STUDIO_RELEASE_CHANNEL",
+        "ZED_RELEASE_CHANNEL",
+        "ORION_STUDIO_COMMIT_SHA",
+        "ZED_COMMIT_SHA",
+        "ORION_STUDIO_RC_TOOLKIT_PATH",
+        "ZED_RC_TOOLKIT_PATH",
+    ] {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+
+    let channel = release_channel();
+    let (icon_filename, product_name) = resource_identity(&channel);
     let icon = std::path::PathBuf::from(ICON_DIR).join(icon_filename);
     let icon_escaped = icon.to_string_lossy().replace('\\', "\\\\");
 
@@ -94,8 +147,6 @@ BEGIN
             VALUE "FileVersion", "{pkg_version}\0"
             VALUE "ProductName", "{product_name}\0"
             VALUE "ProductVersion", "{product_version}\0"
-            VALUE "CompanyName", "Zed Industries, Inc.\0"
-            VALUE "LegalCopyright", "Copyright 2022 - 2025 Zed Industries, Inc.\0"
         END
     END
     BLOCK "VarFileInfo"
@@ -107,19 +158,60 @@ END
     );
 
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
-    let rc_path = out_dir.join("zed_resources.rc");
+    let rc_path = out_dir.join("orion_studio_resources.rc");
     std::fs::write(&rc_path, rc_content)?;
 
-    if let Ok(toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH") {
+    if let Ok(toolkit_path) =
+        environment_variable("ORION_STUDIO_RC_TOOLKIT_PATH", "ZED_RC_TOOLKIT_PATH")
+    {
         let rc_exe = std::path::Path::new(&toolkit_path).join("rc.exe");
         unsafe {
             std::env::set_var("RC", rc_exe);
         }
     }
 
-    embed_resource::compile(&rc_path, embed_resource::NONE)
-        .manifest_optional()
-        .unwrap();
+    embed_resource::compile(&rc_path, embed_resource::NONE).manifest_optional()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{release_channel_from, resource_identity};
+
+    #[test]
+    fn build_helper_switches_resource_identity_between_channels() {
+        let stable_channel = release_channel_from(|name| {
+            (name == "ORION_STUDIO_RELEASE_CHANNEL")
+                .then(|| "stable".to_owned())
+                .ok_or(std::env::VarError::NotPresent)
+        });
+        let nightly_channel = release_channel_from(|name| {
+            (name == "ORION_STUDIO_RELEASE_CHANNEL")
+                .then(|| "nightly".to_owned())
+                .ok_or(std::env::VarError::NotPresent)
+        });
+
+        assert_eq!(stable_channel, "stable");
+        assert_eq!(
+            resource_identity(&stable_channel),
+            ("app-icon.ico", "Orion Studio")
+        );
+        assert_eq!(nightly_channel, "nightly");
+        assert_eq!(
+            resource_identity(&nightly_channel),
+            ("app-icon-nightly.ico", "Orion Studio Nightly")
+        );
+    }
+
+    #[test]
+    fn canonical_channel_overrides_legacy_build_input() {
+        let channel = release_channel_from(|name| match name {
+            "ORION_STUDIO_RELEASE_CHANNEL" => Ok("preview".to_owned()),
+            "ZED_RELEASE_CHANNEL" => Ok("stable".to_owned()),
+            _ => Err(std::env::VarError::NotPresent),
+        });
+
+        assert_eq!(channel, "preview");
+    }
 }

@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+validator="${script_directory}/validate-preview-release"
+temporary_base=${TMPDIR:-/tmp}
+temporary_base=${temporary_base%/}
+test_root=$(mktemp -d "${temporary_base}/orion-preview-release-tests.XXXXXX")
+fixture_repository="${test_root}/repository"
+captured_output=""
+pass_count=0
+
+cleanup() {
+    local status=$?
+
+    trap - EXIT
+    case "${test_root}" in
+        "${temporary_base}"/orion-preview-release-tests.*)
+            rm -rf -- "${test_root}"
+            ;;
+        *)
+            printf 'error: refusing to remove unexpected test directory %s\n' "${test_root}" >&2
+            status=1
+            ;;
+    esac
+    exit "${status}"
+}
+trap cleanup EXIT
+
+fail() {
+    printf 'not ok - %s\n' "$*" >&2
+    exit 1
+}
+
+pass() {
+    pass_count=$((pass_count + 1))
+    printf 'ok %d - %s\n' "${pass_count}" "$1"
+}
+
+expect_success() {
+    local name=$1
+    shift
+
+    if captured_output=$("$@" 2>&1); then
+        pass "${name}"
+    else
+        printf '%s\n' "${captured_output}" >&2
+        fail "${name}"
+    fi
+}
+
+expect_failure_containing() {
+    local name=$1
+    local expected_message=$2
+    shift 2
+
+    if captured_output=$("$@" 2>&1); then
+        printf '%s\n' "${captured_output}" >&2
+        fail "${name} unexpectedly succeeded"
+    fi
+    if [[ "${captured_output}" != *"${expected_message}"* ]]; then
+        printf '%s\n' "${captured_output}" >&2
+        fail "${name} did not report '${expected_message}'"
+    fi
+    pass "${name}"
+}
+
+run_validator() {
+    (
+        cd "${fixture_repository}"
+        "${validator}" "$@"
+    )
+}
+
+run_validator_with_output() {
+    local github_output=$1
+    shift
+
+    (
+        cd "${fixture_repository}"
+        GITHUB_OUTPUT="${github_output}" "${validator}" "$@"
+    )
+}
+
+run_validator_with_fake_signing_inputs() {
+    (
+        cd "${fixture_repository}"
+        MACOS_CERTIFICATE='ZmFrZQ==' \
+        MACOS_CERTIFICATE_PASSWORD='test-only' \
+        APPLE_NOTARIZATION_KEY='test-only' \
+        APPLE_NOTARIZATION_KEY_ID='TESTONLY01' \
+        APPLE_NOTARIZATION_ISSUER_ID='test-only' \
+        ORION_STUDIO_MACOS_SIGNING_IDENTITY='Developer ID Application: Test Only (ABCDEFGHIJ)' \
+        ORION_STUDIO_MACOS_TEAM_ID='ABCDEFGHIJ' \
+        ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64='ZmFrZQ==' \
+        "${validator}" signing-inputs
+    )
+}
+
+[[ -x "${validator}" ]] || fail "validator is not executable: ${validator}"
+command -v git >/dev/null 2>&1 || fail "git is required"
+
+git init -q "${fixture_repository}"
+git -C "${fixture_repository}" config user.name "Preview Release Test"
+git -C "${fixture_repository}" config user.email "preview-release-test@example.invalid"
+mkdir -p "${fixture_repository}/crates/zed"
+printf '[package]\nname = "orion-studio"\nversion = "1.16.0"\n' > "${fixture_repository}/crates/zed/Cargo.toml"
+printf 'preview\n' > "${fixture_repository}/crates/zed/RELEASE_CHANNEL"
+git -C "${fixture_repository}" add crates/zed/Cargo.toml crates/zed/RELEASE_CHANNEL
+git -C "${fixture_repository}" commit -q -m "Create preview source"
+git -C "${fixture_repository}" branch -M main
+preview_commit=$(git -C "${fixture_repository}" rev-parse HEAD)
+git -C "${fixture_repository}" tag v1.16.0-pre "${preview_commit}"
+
+printf 'main descendant\n' > "${fixture_repository}/main-marker"
+git -C "${fixture_repository}" add main-marker
+git -C "${fixture_repository}" commit -q -m "Advance main"
+main_commit=$(git -C "${fixture_repository}" rev-parse HEAD)
+git -C "${fixture_repository}" update-ref refs/remotes/origin/main "${main_commit}"
+
+github_output="${test_root}/github-output"
+expect_success "valid preview tag and source" run_validator_with_output "${github_output}" source v1.16.0-pre
+grep -Fqx "tag_commit=${preview_commit}" "${github_output}" || fail "source output did not contain the tag commit"
+grep -Fqx 'version=1.16.0' "${github_output}" || fail "source output did not contain the crate version"
+pass "source outputs are deterministic"
+
+git -C "${fixture_repository}" switch -q --detach "${preview_commit}"
+expect_success "immutable checkout matches validated preview source" run_validator checkout v1.16.0-pre "${preview_commit}"
+expect_failure_containing "checkout SHA mismatch is rejected" "does not match validated tag commit" run_validator checkout v1.16.0-pre "${main_commit}"
+git -C "${fixture_repository}" switch -q main
+
+expect_failure_containing "numbered preview tag is rejected" "preview tag must match" run_validator tag-format v1.16.0-pre.1
+expect_failure_containing "stable tag is rejected" "preview tag must match" run_validator tag-format v1.16.0
+expect_failure_containing "missing tag is rejected" "is not available locally" run_validator source v1.16.9-pre
+
+git -C "${fixture_repository}" tag v1.17.0-pre "${preview_commit}"
+expect_failure_containing "crate and tag versions must match" "does not match crates/zed package version" run_validator source v1.17.0-pre
+
+git -C "${fixture_repository}" switch -q -c channel-mismatch "${main_commit}"
+printf 'dev\n' > "${fixture_repository}/crates/zed/RELEASE_CHANNEL"
+git -C "${fixture_repository}" add crates/zed/RELEASE_CHANNEL
+git -C "${fixture_repository}" commit -q -m "Use dev channel"
+channel_commit=$(git -C "${fixture_repository}" rev-parse HEAD)
+git -C "${fixture_repository}" tag v1.16.1-pre "${channel_commit}"
+git -C "${fixture_repository}" update-ref refs/remotes/origin/main "${channel_commit}"
+expect_failure_containing "non-preview channel is rejected" "RELEASE_CHANNEL must be preview" run_validator source v1.16.1-pre
+
+git -C "${fixture_repository}" switch -q -c unrelated-preview "${preview_commit}"
+printf 'unrelated release\n' > "${fixture_repository}/release-marker"
+git -C "${fixture_repository}" add release-marker
+git -C "${fixture_repository}" commit -q -m "Create unrelated preview commit"
+unrelated_commit=$(git -C "${fixture_repository}" rev-parse HEAD)
+git -C "${fixture_repository}" tag v1.16.2-pre "${unrelated_commit}"
+git -C "${fixture_repository}" update-ref refs/remotes/origin/main "${main_commit}"
+expect_failure_containing "tag commit must be on origin main" "is not an ancestor" run_validator source v1.16.2-pre
+
+expect_failure_containing "artifact mode validates inputs without credentials" "DMG must be a regular" \
+    run_validator artifact v1.16.0-pre "${test_root}/missing/Orion-Studio-aarch64.dmg"
+expect_success "disk preflight can run without release credentials" run_validator disk-space 1 "${test_root}"
+expect_failure_containing "disk preflight fails closed" "insufficient disk space" run_validator disk-space 999999 "${test_root}"
+expect_failure_containing "missing signing inputs fail before build" "incomplete macOS release signing configuration" run_validator signing-inputs
+expect_success "fake signing input names satisfy the local presence gate" run_validator_with_fake_signing_inputs
+
+printf '1..%d\n' "${pass_count}"

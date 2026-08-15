@@ -1,0 +1,219 @@
+#!/usr/bin/env node
+
+const HELP = `
+USAGE
+  orion-studio-local  [options]  [Orion Studio args]
+
+SUMMARY
+  Runs 1-6 instances of Orion Studio using a locally running collaboration
+  server. Each instance is signed in as a different user specified in either
+  \`seed.json\` or \`seed.default.json\`.
+
+  All arguments after the initial options are passed through to the first
+  Orion Studio instance. This can be used to test SSH remoting with local
+  collaboration, for example:
+
+  $ script/orion-studio-local -2 ssh://your-ssh-uri-here
+
+OPTIONS
+  --help            Print this help message
+  --release         Build Orion Studio in release mode
+  --stateful        Preserve state for the first Orion Studio instance
+  -2, -3, -4, ...   Spawn multiple Orion Studio instances with tiled windows
+  --top             Arrange windows in the top half of the screen
+  --stable          Use the installed stable Orion Studio for later instances
+  --preview         Use the installed Orion Studio Preview for later instances
+`.trim();
+
+const { spawn, execSync, execFileSync } = require("child_process");
+const assert = require("assert");
+const { existsSync } = require("fs");
+const path = require("path");
+
+let users;
+if (process.env.SEED_PATH) {
+  users = require(process.env.SEED_PATH).admins;
+} else {
+  users = require("../crates/collab/seed.default.json").admins;
+  const customSeedPath = path.join(__dirname, "../crates/collab/seed.json");
+  if (existsSync(customSeedPath)) {
+    const defaultUsers = users;
+    const customUsers = require(customSeedPath).admins;
+    assert(customUsers.length > 0);
+    users = customUsers.concat(
+      defaultUsers.filter((user) => !customUsers.includes(user)),
+    );
+  }
+}
+
+const RESOLUTION_REGEX = /(\d+) x (\d+)/;
+const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
+
+let instanceCount = 1;
+let isReleaseMode = false;
+let isTop = false;
+let othersOnStable = false;
+let othersOnPreview = false;
+let isStateful = false;
+
+const args = process.argv.slice(2);
+while (args.length > 0) {
+  const arg = args[0];
+
+  const digitMatch = arg.match(DIGIT_FLAG_REGEX);
+  if (digitMatch) {
+    instanceCount = parseInt(digitMatch[1]);
+  } else if (arg === "--release") {
+    isReleaseMode = true;
+  } else if (arg === "--stateful") {
+    isStateful = true;
+  } else if (arg === "--top") {
+    isTop = true;
+  } else if (arg === "--help") {
+    console.log(HELP);
+    process.exit(0);
+  } else if (arg === "--stable") {
+    othersOnStable = true;
+  } else if (arg === "--preview") {
+    othersOnPreview = true;
+  } else {
+    break;
+  }
+
+  args.shift();
+}
+
+const os = require("os");
+const platform = os.platform();
+
+let screenWidth, screenHeight;
+const titleBarHeight = 24;
+
+if (platform === "darwin") {
+  const displayInfo = JSON.parse(
+    execFileSync("system_profiler", ["SPDisplaysDataType", "-json"], {
+      encoding: "utf8",
+    }),
+  );
+  const mainDisplayResolution = displayInfo?.SPDisplaysDataType?.flatMap(
+    (display) => display?.spdisplays_ndrvs,
+  )
+    ?.find((entry) => entry?.spdisplays_main === "spdisplays_yes")
+    ?._spdisplays_resolution?.match(RESOLUTION_REGEX);
+  if (!mainDisplayResolution) {
+    throw new Error("Could not parse screen resolution");
+  }
+  screenWidth = parseInt(mainDisplayResolution[1]);
+  screenHeight = parseInt(mainDisplayResolution[2]) - titleBarHeight;
+} else if (platform === "linux") {
+  try {
+    const xrandrOutput = execSync('xrandr | grep "\\*" | cut -d" " -f4', {
+      encoding: "utf8",
+    }).trim();
+    [screenWidth, screenHeight] = xrandrOutput.split("x").map(Number);
+  } catch (error) {
+    console.log(error);
+    throw new Error("Could not get screen resolution");
+  }
+} else if (platform === "win32") {
+  try {
+    const resolutionOutput = execSync(
+      `powershell -Command "& {Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Size}"`,
+      { encoding: "utf8" },
+    ).trim();
+    [screenWidth, screenHeight] = resolutionOutput.match(/\d+/g).map(Number);
+  } catch (error) {
+    console.log(error);
+    throw new Error("Could not get screen resolution on Windows");
+  }
+}
+
+if (platform !== "win32") {
+  screenHeight -= titleBarHeight;
+}
+
+if (isTop) {
+  screenHeight = Math.floor(screenHeight / 2);
+}
+
+let rows;
+let columns;
+switch (instanceCount) {
+  case 1:
+    [rows, columns] = [1, 1];
+    break;
+  case 2:
+    [rows, columns] = [1, 2];
+    break;
+  case 3:
+  case 4:
+    [rows, columns] = [2, 2];
+    break;
+  case 5:
+  case 6:
+    [rows, columns] = [2, 3];
+    break;
+}
+
+const instanceWidth = Math.floor(screenWidth / columns);
+const instanceHeight = Math.floor(screenHeight / rows);
+
+const user = process.env.ORION_STUDIO_IMPERSONATE;
+if (user) {
+  users = [user].concat(users.filter((candidate) => candidate !== user));
+}
+
+const buildArgs = ["build", "--bin", "orion-studio"];
+let orionStudioBinary = "target/debug/orion-studio";
+if (isReleaseMode) {
+  buildArgs.push("--release");
+  orionStudioBinary = "target/release/orion-studio";
+}
+
+try {
+  execFileSync("cargo", buildArgs, {
+    stdio: "inherit",
+  });
+} catch (error) {
+  console.error(`Failed to build Orion Studio: ${error.message}`);
+  process.exit(1);
+}
+
+setTimeout(() => {
+  for (let index = 0; index < instanceCount; index++) {
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    let position;
+    if (platform === "win32") {
+      position = [column * instanceWidth, row * instanceHeight].join(",");
+    } else {
+      position = [
+        column * instanceWidth,
+        row * instanceHeight + titleBarHeight,
+      ].join(",");
+    }
+    const size = [instanceWidth, instanceHeight].join(",");
+    let binaryPath = orionStudioBinary;
+    if (index !== 0 && othersOnStable) {
+      binaryPath = "/Applications/Orion Studio.app/Contents/MacOS/orion-studio";
+    } else if (index !== 0 && othersOnPreview) {
+      binaryPath =
+        "/Applications/Orion Studio Preview.app/Contents/MacOS/orion-studio";
+    }
+    spawn(binaryPath, index === 0 ? args : [], {
+      stdio: "inherit",
+      env: Object.assign({}, process.env, {
+        ORION_STUDIO_IMPERSONATE: users[index],
+        ORION_STUDIO_WINDOW_POSITION: position,
+        ORION_STUDIO_STATELESS: isStateful && index === 0 ? "" : "1",
+        ORION_STUDIO_ALWAYS_ACTIVE: "1",
+        ORION_STUDIO_SERVER_URL: "http://localhost:3000",
+        ORION_STUDIO_RPC_URL: "http://localhost:8080/rpc",
+        ORION_STUDIO_ADMIN_API_TOKEN: "internal-api-key-secret",
+        ORION_STUDIO_WINDOW_SIZE: size,
+        ORION_STUDIO_CLIENT_CHECKSUM_SEED: "development-checksum-seed",
+        RUST_LOG: process.env.RUST_LOG || "info",
+      }),
+    });
+  }
+}, 0.1);

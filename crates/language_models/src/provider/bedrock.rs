@@ -46,7 +46,7 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role,
-    SubPageProviderSettings, TokenUsage, env_var,
+    SubPageProviderSettings, TokenUsage,
 };
 use open_ai::responses::Request as OpenAiResponseRequest;
 use open_ai::responses::{ResponseOutputItem, StreamEvent as OpenAiResponseStreamEvent};
@@ -57,8 +57,8 @@ use settings::{
     BedrockAvailableModel as AvailableModel, BedrockMantleAvailableModel as MantleAvailableModel,
     Settings, SettingsStore,
 };
-use std::sync::LazyLock;
 use std::time::SystemTime;
+use std::{env::VarError, sync::LazyLock};
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
@@ -219,14 +219,57 @@ impl From<BedrockModelMode> for ModelMode {
 /// under in the keychain.
 const AMAZON_AWS_URL: &str = "https://amazonaws.com";
 
-// These environment variables all use a `ZED_` prefix because we don't want to overwrite the user's AWS credentials.
-static ZED_BEDROCK_ACCESS_KEY_ID_VAR: LazyLock<EnvVar> = env_var!("ZED_ACCESS_KEY_ID");
-static ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: LazyLock<EnvVar> = env_var!("ZED_SECRET_ACCESS_KEY");
-static ZED_BEDROCK_SESSION_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_SESSION_TOKEN");
-static ZED_AWS_PROFILE_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_PROFILE");
-static ZED_BEDROCK_REGION_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_REGION");
-static ZED_AWS_ENDPOINT_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_ENDPOINT");
-static ZED_BEDROCK_BEARER_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_BEDROCK_BEARER_TOKEN");
+fn env_var_value(name: &str, value: Option<String>) -> EnvVar {
+    EnvVar {
+        name: name.to_string().into(),
+        value: value.filter(|value| !value.is_empty()),
+    }
+}
+
+fn resolve_compatible_env_var(
+    canonical_name: &str,
+    legacy_name: &str,
+    canonical_value: Result<String, VarError>,
+    legacy_value: impl FnOnce() -> Result<String, VarError>,
+) -> EnvVar {
+    match canonical_value {
+        Ok(value) => env_var_value(canonical_name, Some(value)),
+        Err(VarError::NotUnicode(_)) => env_var_value(canonical_name, None),
+        Err(VarError::NotPresent) => match legacy_value() {
+            Ok(value) => env_var_value(legacy_name, Some(value)),
+            Err(VarError::NotUnicode(_)) => env_var_value(legacy_name, None),
+            Err(VarError::NotPresent) => env_var_value(canonical_name, None),
+        },
+    }
+}
+
+fn compatible_env_var(canonical_name: &str, legacy_name: &str) -> EnvVar {
+    resolve_compatible_env_var(
+        canonical_name,
+        legacy_name,
+        std::env::var(canonical_name),
+        || std::env::var(legacy_name),
+    )
+}
+
+static ORION_STUDIO_BEDROCK_ACCESS_KEY_ID_VAR: LazyLock<EnvVar> =
+    LazyLock::new(|| compatible_env_var("ORION_STUDIO_ACCESS_KEY_ID", "ZED_ACCESS_KEY_ID"));
+static ORION_STUDIO_BEDROCK_SECRET_ACCESS_KEY_VAR: LazyLock<EnvVar> =
+    LazyLock::new(|| compatible_env_var("ORION_STUDIO_SECRET_ACCESS_KEY", "ZED_SECRET_ACCESS_KEY"));
+static ORION_STUDIO_BEDROCK_SESSION_TOKEN_VAR: LazyLock<EnvVar> =
+    LazyLock::new(|| compatible_env_var("ORION_STUDIO_SESSION_TOKEN", "ZED_SESSION_TOKEN"));
+static ORION_STUDIO_AWS_PROFILE_VAR: LazyLock<EnvVar> =
+    LazyLock::new(|| compatible_env_var("ORION_STUDIO_AWS_PROFILE", "ZED_AWS_PROFILE"));
+static ORION_STUDIO_BEDROCK_REGION_VAR: LazyLock<EnvVar> =
+    LazyLock::new(|| compatible_env_var("ORION_STUDIO_AWS_REGION", "ZED_AWS_REGION"));
+static ORION_STUDIO_AWS_ENDPOINT_VAR: LazyLock<EnvVar> =
+    LazyLock::new(|| compatible_env_var("ORION_STUDIO_AWS_ENDPOINT", "ZED_AWS_ENDPOINT"));
+static ORION_STUDIO_BEDROCK_BEARER_TOKEN_VAR: LazyLock<EnvVar> = LazyLock::new(|| {
+    compatible_env_var(
+        "ORION_STUDIO_BEDROCK_BEARER_TOKEN",
+        "ZED_BEDROCK_BEARER_TOKEN",
+    )
+});
 
 /// AWS Regions where the `bedrock-mantle` endpoint is available.
 /// See <https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions>.
@@ -440,7 +483,9 @@ impl State {
         let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             // Try environment variables first
-            let (auth, from_env) = if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
+            let (auth, from_env) = if let Some(bearer_token) =
+                &ORION_STUDIO_BEDROCK_BEARER_TOKEN_VAR.value
+            {
                 if !bearer_token.is_empty() {
                     (
                         Some(BedrockAuth::ApiKey {
@@ -451,10 +496,10 @@ impl State {
                 } else {
                     (None, false)
                 }
-            } else if let Some(access_key_id) = &ZED_BEDROCK_ACCESS_KEY_ID_VAR.value {
-                if let Some(secret_access_key) = &ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.value {
+            } else if let Some(access_key_id) = &ORION_STUDIO_BEDROCK_ACCESS_KEY_ID_VAR.value {
+                if let Some(secret_access_key) = &ORION_STUDIO_BEDROCK_SECRET_ACCESS_KEY_VAR.value {
                     if !access_key_id.is_empty() && !secret_access_key.is_empty() {
-                        let session_token = ZED_BEDROCK_SESSION_TOKEN_VAR
+                        let session_token = ORION_STUDIO_BEDROCK_SESSION_TOKEN_VAR
                             .value
                             .as_deref()
                             .filter(|s| !s.is_empty())
@@ -516,7 +561,7 @@ impl State {
     /// Get the resolved region. Checks env var, then settings, then defaults to us-east-1.
     fn get_region(&self) -> String {
         // Priority: env var > settings > default
-        if let Some(region) = ZED_BEDROCK_REGION_VAR.value.as_deref() {
+        if let Some(region) = ORION_STUDIO_BEDROCK_REGION_VAR.value.as_deref() {
             if !region.is_empty() {
                 return region.to_string();
             }
@@ -704,7 +749,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     .into()
             })
             .description(InlineDescription::Text(
-                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.".into(),
+                "To use Orion Agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.".into(),
             )),
         ))
     }
@@ -2681,14 +2726,15 @@ impl Render for ConfigurationView {
             Some(BedrockAuth::IamCredentials { .. }) if env_var_set => {
                 format!(
                     "Using IAM credentials from {} and {} environment variables",
-                    ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name
+                    ORION_STUDIO_BEDROCK_ACCESS_KEY_ID_VAR.name,
+                    ORION_STUDIO_BEDROCK_SECRET_ACCESS_KEY_VAR.name
                 )
             }
             Some(BedrockAuth::IamCredentials { .. }) => "Using IAM credentials".into(),
             Some(BedrockAuth::ApiKey { .. }) if env_var_set => {
                 format!(
                     "Using Bedrock API Key from {} environment variable",
-                    ZED_BEDROCK_BEARER_TOKEN_VAR.name
+                    ORION_STUDIO_BEDROCK_BEARER_TOKEN_VAR.name
                 )
             }
             Some(BedrockAuth::ApiKey { .. }) => "Using Bedrock API Key".into(),
@@ -2707,10 +2753,10 @@ impl Render for ConfigurationView {
         let tooltip_label = if env_var_set {
             Some(format!(
                 "To reset your credentials, unset the {}, {}, and {} or {} environment variables.",
-                ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
-                ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
-                ZED_BEDROCK_SESSION_TOKEN_VAR.name,
-                ZED_BEDROCK_BEARER_TOKEN_VAR.name
+                ORION_STUDIO_BEDROCK_ACCESS_KEY_ID_VAR.name,
+                ORION_STUDIO_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
+                ORION_STUDIO_BEDROCK_SESSION_TOKEN_VAR.name,
+                ORION_STUDIO_BEDROCK_BEARER_TOKEN_VAR.name
             ))
         } else if is_settings_derived {
             Some(
@@ -2742,7 +2788,7 @@ impl Render for ConfigurationView {
             .child(Headline::new("Amazon Bedrock").size(HeadlineSize::Small))
             .child(
                 Label::new(
-                    "To use Zed's agent with Bedrock, you can set a custom authentication strategy through your settings file or use static credentials.",
+                    "To use Orion Agent with Bedrock, you can set a custom authentication strategy through your settings file or use static credentials.",
                 )
                 .color(Color::Muted),
             )
@@ -2850,11 +2896,11 @@ impl ConfigurationView {
             )
             .child(
                 Label::new(format!(
-                    "You can also set the {}, {} and {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.",
-                    ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
-                    ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
-                    ZED_BEDROCK_REGION_VAR.name,
-                    ZED_BEDROCK_BEARER_TOKEN_VAR.name
+                    "You can also set the {}, {} and {} environment variables (or {} for Bedrock API Key authentication) and restart Orion Studio.",
+                    ORION_STUDIO_BEDROCK_ACCESS_KEY_ID_VAR.name,
+                    ORION_STUDIO_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
+                    ORION_STUDIO_BEDROCK_REGION_VAR.name,
+                    ORION_STUDIO_BEDROCK_BEARER_TOKEN_VAR.name
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted),
@@ -2862,9 +2908,9 @@ impl ConfigurationView {
             .child(
                 Label::new(format!(
                     "Optionally, if your environment uses AWS CLI profiles, you can set {}; if it requires a custom endpoint, you can set {}; and if it requires a Session Token, you can set {}.",
-                    ZED_AWS_PROFILE_VAR.name,
-                    ZED_AWS_ENDPOINT_VAR.name,
-                    ZED_BEDROCK_SESSION_TOKEN_VAR.name
+                    ORION_STUDIO_AWS_PROFILE_VAR.name,
+                    ORION_STUDIO_AWS_ENDPOINT_VAR.name,
+                    ORION_STUDIO_BEDROCK_SESSION_TOKEN_VAR.name
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted)
@@ -2877,7 +2923,7 @@ impl ConfigurationView {
             .child(
                 Label::new(format!(
                     "Region is configured via {} environment variable or settings.json (defaults to us-east-1).",
-                    ZED_BEDROCK_REGION_VAR.name
+                    ORION_STUDIO_BEDROCK_REGION_VAR.name
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted)
@@ -2892,6 +2938,7 @@ mod tests {
     use open_ai::responses::{
         ResponseFunctionToolCall, ResponseOutputMessage, ResponseReasoningItem,
     };
+    use std::cell::Cell;
 
     fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
         into_bedrock(
@@ -2909,6 +2956,46 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn compatible_environment_variable_uses_legacy_only_when_canonical_is_absent() {
+        let legacy_was_read = Cell::new(false);
+        let canonical = resolve_compatible_env_var(
+            "ORION_STUDIO_VALUE",
+            "ZED_VALUE",
+            Ok(String::new()),
+            || {
+                legacy_was_read.set(true);
+                Ok("legacy".to_owned())
+            },
+        );
+        assert_eq!(canonical.name.as_ref(), "ORION_STUDIO_VALUE");
+        assert_eq!(canonical.value, None);
+        assert!(!legacy_was_read.get());
+
+        let legacy = resolve_compatible_env_var(
+            "ORION_STUDIO_VALUE",
+            "ZED_VALUE",
+            Err(VarError::NotPresent),
+            || Ok("legacy".to_string()),
+        );
+        assert_eq!(legacy.name.as_ref(), "ZED_VALUE");
+        assert_eq!(legacy.value.as_deref(), Some("legacy"));
+
+        legacy_was_read.set(false);
+        let non_unicode = resolve_compatible_env_var(
+            "ORION_STUDIO_VALUE",
+            "ZED_VALUE",
+            Err(VarError::NotUnicode(std::ffi::OsString::from("invalid"))),
+            || {
+                legacy_was_read.set(true);
+                Ok("legacy".to_owned())
+            },
+        );
+        assert_eq!(non_unicode.name.as_ref(), "ORION_STUDIO_VALUE");
+        assert_eq!(non_unicode.value, None);
+        assert!(!legacy_was_read.get());
     }
 
     #[test]

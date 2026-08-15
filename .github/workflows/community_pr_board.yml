@@ -36,7 +36,7 @@ concurrency:
 jobs:
   route-pr:
     if: >-
-      github.repository == 'zed-industries/zed' &&
+      github.repository == 'orion-agents/orion-studio' &&
       (github.event_name != 'issue_comment' ||
        (github.event.issue.pull_request &&
         github.event.comment.user.login == github.event.issue.user.login)) &&
@@ -50,10 +50,10 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
-          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
-          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
-          owner: zed-industries
-          repositories: zed
+          app-id: ${{ secrets.ORION_STUDIO_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ORION_STUDIO_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: orion-agents
+          repositories: orion-studio
           permission-issues: read
           permission-organization-projects: write
           permission-pull-requests: read

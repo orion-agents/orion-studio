@@ -12,8 +12,6 @@ pub(crate) fn use_clang(job: Job) -> Job {
         .add_env(Env::new("CXX", "clang++"))
 }
 
-const SCCACHE_R2_BUCKET: &str = "sccache-zed";
-
 pub(crate) const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
@@ -67,6 +65,7 @@ pub(crate) struct CheckoutStep {
     name: Option<String>,
     token: Option<String>,
     path: Option<String>,
+    persist_credentials: Option<bool>,
     repository: Option<String>,
     ref_: Option<String>,
 }
@@ -99,6 +98,11 @@ impl CheckoutStep {
 
     pub fn with_path(mut self, path: &str) -> Self {
         self.path = Some(path.to_string());
+        self
+    }
+
+    pub fn without_persisted_credentials(mut self) -> Self {
+        self.persist_credentials = Some(false);
         self
     }
 
@@ -135,6 +139,9 @@ impl From<CheckoutStep> for Step<Use> {
                 FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
             })
             .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.persist_credentials, |step, persist_credentials| {
+                step.add_with(("persist-credentials", persist_credentials))
+            })
             .when_some(value.repository, |step, repository| {
                 step.add_with(("repository", repository))
             })
@@ -282,7 +289,7 @@ pub fn setup_sccache(platform: Platform) -> Step<Run> {
     step.add_env(("R2_ACCOUNT_ID", vars::R2_ACCOUNT_ID))
         .add_env(("R2_ACCESS_KEY_ID", vars::R2_ACCESS_KEY_ID))
         .add_env(("R2_SECRET_ACCESS_KEY", vars::R2_SECRET_ACCESS_KEY))
-        .add_env(("SCCACHE_BUCKET", SCCACHE_R2_BUCKET))
+        .add_env(("SCCACHE_BUCKET", vars::ORION_STUDIO_SCCACHE_R2_BUCKET))
 }
 
 pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
@@ -352,24 +359,24 @@ pub struct NamedJob<J: JobType = RunJob> {
 //     }
 // }
 
-pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str =
-    "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')";
+pub(crate) const DEFAULT_REPOSITORY_GUARD: &str =
+    "github.repository == 'orion-agents/orion-studio'";
 
-pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
+pub fn repository_guard_expression(trigger_always: bool) -> Expression {
     Expression::new(format!(
         "{}{}",
-        DEFAULT_REPOSITORY_OWNER_GUARD,
+        DEFAULT_REPOSITORY_GUARD,
         trigger_always.then_some(" && always()").unwrap_or_default()
     ))
 }
 
 pub trait CommonJobConditions: Sized {
-    fn with_repository_owner_guard(self) -> Self;
+    fn with_repository_guard(self) -> Self;
 }
 
 impl CommonJobConditions for Job {
-    fn with_repository_owner_guard(self) -> Self {
-        self.cond(repository_owner_guard_expression(false))
+    fn with_repository_guard(self) -> Self {
+        self.cond(repository_guard_expression(false))
     }
 }
 
@@ -385,7 +392,7 @@ impl CommonPermissionSets for Workflow {
 
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
-        .with_repository_owner_guard()
+        .with_repository_guard()
         .timeout_minutes(60u32)
 }
 
@@ -550,19 +557,20 @@ pub mod named {
     }
 }
 
-const ZED_ZIPPY_GIT_USER_NAME: &str = "zed-zippy[bot]";
-const ZED_ZIPPY_GIT_USER_EMAIL: &str = "234243425+zed-zippy[bot]@users.noreply.github.com";
+const ORION_AUTOMATION_GIT_USER_NAME: &str = "orion-studio-automation[bot]";
+const ORION_AUTOMATION_GIT_USER_EMAIL: &str =
+    "orion-studio-automation[bot]@users.noreply.github.com";
 
-pub(crate) trait ZippyGitIdentity {
-    fn with_zippy_git_identity(self) -> Self;
+pub(crate) trait AutomationGitIdentity {
+    fn with_orion_automation_git_identity(self) -> Self;
 }
 
-impl ZippyGitIdentity for Step<Run> {
-    fn with_zippy_git_identity(self) -> Self {
-        self.add_env(("GIT_AUTHOR_NAME", ZED_ZIPPY_GIT_USER_NAME))
-            .add_env(("GIT_AUTHOR_EMAIL", ZED_ZIPPY_GIT_USER_EMAIL))
-            .add_env(("GIT_COMMITTER_NAME", ZED_ZIPPY_GIT_USER_NAME))
-            .add_env(("GIT_COMMITTER_EMAIL", ZED_ZIPPY_GIT_USER_EMAIL))
+impl AutomationGitIdentity for Step<Run> {
+    fn with_orion_automation_git_identity(self) -> Self {
+        self.add_env(("GIT_AUTHOR_NAME", ORION_AUTOMATION_GIT_USER_NAME))
+            .add_env(("GIT_AUTHOR_EMAIL", ORION_AUTOMATION_GIT_USER_EMAIL))
+            .add_env(("GIT_COMMITTER_NAME", ORION_AUTOMATION_GIT_USER_NAME))
+            .add_env(("GIT_COMMITTER_EMAIL", ORION_AUTOMATION_GIT_USER_EMAIL))
     }
 }
 
@@ -897,8 +905,11 @@ pub(crate) fn generate_token<'a>(
     generate_token_with_job_name(app_id_source, app_secret_source)
 }
 
-pub fn authenticate_as_zippy() -> GenerateAppToken<'static> {
-    generate_token_with_job_name(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+pub fn authenticate_as_orion_automation() -> GenerateAppToken<'static> {
+    generate_token_with_job_name(
+        vars::ORION_STUDIO_AUTOMATION_APP_ID,
+        vars::ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY,
+    )
 }
 
 fn generate_token_with_job_name<'a>(
@@ -1075,8 +1086,8 @@ pub(crate) fn update_ref(
     }
 }
 
-const ZED_ZIPPY_COMMITTER: &str =
-    "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>";
+const ORION_AUTOMATION_COMMITTER: &str =
+    "orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>";
 
 pub(crate) struct CreatePrStep {
     title: String,
@@ -1144,8 +1155,8 @@ impl From<CreatePrStep> for Step<Use> {
             .add_with(("body", step.body))
             .add_with(("commit-message", step.title))
             .add_with(("branch", step.branch))
-            .add_with(("committer", ZED_ZIPPY_COMMITTER))
-            .add_with(("author", ZED_ZIPPY_COMMITTER))
+            .add_with(("committer", ORION_AUTOMATION_COMMITTER))
+            .add_with(("author", ORION_AUTOMATION_COMMITTER))
             .add_with(("base", step.base))
             .add_with(("delete-branch", true))
             .add_with(("token", step.token))

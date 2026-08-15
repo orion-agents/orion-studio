@@ -18,6 +18,7 @@ pub const GEMINI_ID: &str = "gemini";
 pub const CLAUDE_AGENT_ID: &str = "claude-acp";
 pub const CODEX_ID: &str = "codex-acp";
 pub const CURSOR_ID: &str = "cursor";
+const GEMINI_SURFACE: &str = "orion-studio";
 
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {
@@ -240,7 +241,7 @@ impl AgentServer for CustomAgentServer {
                     }
                 }
                 GEMINI_ID => {
-                    extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
+                    extra_env.insert("SURFACE".to_owned(), GEMINI_SURFACE.to_owned());
                 }
                 _ => {}
             }

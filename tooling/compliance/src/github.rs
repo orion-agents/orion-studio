@@ -137,6 +137,14 @@ pub struct CommitAuthor {
 }
 
 impl CommitAuthor {
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn email(&self) -> &str {
+        &self.email
+    }
+
     pub(crate) fn user(&self) -> Option<&GithubLogin> {
         self.user.as_ref()
     }
@@ -144,10 +152,10 @@ impl CommitAuthor {
 
 impl PartialEq for CommitAuthor {
     fn eq(&self, other: &Self) -> bool {
-        self.user.as_ref().zip(other.user.as_ref()).map_or_else(
-            || self.email == other.email || self.name == other.name,
-            |(l, r)| l == r,
-        )
+        match (self.user.as_ref(), other.user.as_ref()) {
+            (Some(left), Some(right)) => left == right,
+            _ => self.email == other.email && self.name == other.name,
+        }
     }
 }
 
@@ -250,14 +258,15 @@ impl<'de> serde::Deserialize<'de> for CommitMetadataBySha {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Repository<'a> {
     owner: Cow<'a, str>,
     name: Cow<'a, str>,
 }
 
 impl<'a> Repository<'a> {
-    pub const ZED: Repository<'static> = Repository::new_static("zed-industries", "zed");
+    pub const ORION_STUDIO: Repository<'static> =
+        Repository::new_static("orion-agents", "orion-studio");
 
     pub fn new(owner: &'a str, name: &'a str) -> Self {
         Self {
@@ -468,6 +477,13 @@ mod octo_client {
 
     impl OctocrabClient {
         pub async fn new(app_id: u64, app_private_key: &str, org: &str) -> Result<Self> {
+            if org != Repository::ORION_STUDIO.owner() {
+                anyhow::bail!(
+                    "Compliance GitHub App organization must be {}, found {org}",
+                    Repository::ORION_STUDIO.owner()
+                );
+            }
+
             let octocrab = Octocrab::builder()
                 .cache(InMemoryCache::new())
                 .app(
@@ -487,7 +503,12 @@ mod octo_client {
             let installation_id = installations
                 .into_iter()
                 .find(|installation| installation.account.login == org)
-                .context("Could not find Zed repository in installations")?
+                .with_context(|| {
+                    format!(
+                        "Could not find the {} GitHub App installation",
+                        Repository::ORION_STUDIO.owner()
+                    )
+                })?
                 .id;
 
             let client = octocrab.installation(installation_id)?;
@@ -723,3 +744,66 @@ mod octo_client {
 
 #[cfg(feature = "octo-client")]
 pub use octo_client::OctocrabClient;
+
+#[cfg(test)]
+mod tests {
+    use super::{CommitMetadata, Repository};
+
+    #[test]
+    fn compliance_repository_is_exact_orion_studio_repository() {
+        assert_eq!(Repository::ORION_STUDIO.owner(), "orion-agents");
+        assert_eq!(Repository::ORION_STUDIO.name(), "orion-studio");
+        assert_ne!(
+            Repository::ORION_STUDIO,
+            Repository::new_static("zed-industries", "zed")
+        );
+    }
+
+    #[test]
+    fn co_author_with_same_name_and_different_email_is_not_filtered_out() {
+        let metadata: CommitMetadata = serde_json::from_value(serde_json::json!({
+            "author": {
+                "name": "Orion Studio Automation",
+                "email": "orion-studio-automation[bot]@users.noreply.github.com",
+                "user": null
+            },
+            "authors": {
+                "nodes": [
+                    {
+                        "name": "Orion Studio Automation",
+                        "email": "orion-studio-automation[bot]@users.noreply.github.com",
+                        "user": null
+                    },
+                    {
+                        "name": "Orion Studio Automation",
+                        "email": "different@example.com",
+                        "user": null
+                    }
+                ]
+            }
+        }))
+        .expect("commit metadata fixture must deserialize");
+
+        let co_authors = metadata
+            .co_authors()
+            .expect("different author must remain")
+            .collect::<Vec<_>>();
+        assert_eq!(co_authors.len(), 1);
+        assert_eq!(co_authors[0].email(), "different@example.com");
+    }
+
+    #[cfg(feature = "octo-client")]
+    #[tokio::test]
+    async fn octocrab_client_rejects_legacy_organization_before_authentication() {
+        let result = super::OctocrabClient::new(1, "not-a-private-key", "zed-industries").await;
+        let error = match result {
+            Ok(_) => panic!("legacy organization must be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("must be orion-agents, found zed-industries")
+        );
+    }
+}

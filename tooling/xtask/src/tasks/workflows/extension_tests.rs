@@ -8,18 +8,22 @@ use crate::tasks::workflows::{
     },
     runners,
     steps::{
-        self, BASH_SHELL, CommonJobConditions, CommonPermissionSets, FluentBuilder, NamedJob,
+        self, BASH_SHELL, CommonPermissionSets, DEFAULT_REPOSITORY_GUARD, FluentBuilder, NamedJob,
         cache_rust_dependencies_namespace, named,
     },
-    vars::{PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch_and_token},
+    vars::{
+        self, PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch_and_token,
+    },
 };
 
-pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "9ee3c503a4bbbc6b4a0f8a789acca4871d773223";
+// The `zed-extension` executable name is a published compatibility ABI. The workflow
+// configuration itself uses Orion Studio's canonical environment-variable namespace.
+pub(crate) const EXTENSION_CLI_SHA: &str = "9ee3c503a4bbbc6b4a0f8a789acca4871d773223";
 
 // This should follow the set target in crates/extension/src/extension_builder.rs
 const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
 
-// This is used by various extensions repos in the zed-extensions org to run automated tests.
+// This is reusable by extension repositories in the configured Orion Studio organization.
 pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
     let should_check_extension =
@@ -37,6 +41,10 @@ pub(crate) fn extension_tests() -> Workflow {
     ];
 
     let tests_pass = tests_pass(&jobs, &[]);
+    let tests_pass = NamedJob {
+        name: tests_pass.name,
+        job: tests_pass.job.cond(extension_source_guard(true)),
+    };
 
     let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
@@ -54,7 +62,7 @@ pub(crate) fn extension_tests() -> Workflow {
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
-        .add_env(("ZED_EXTENSION_CLI_SHA", ZED_EXTENSION_CLI_SHA))
+        .add_env(("ORION_STUDIO_EXTENSION_CLI_SHA", EXTENSION_CLI_SHA))
         .add_env(("RUSTUP_TOOLCHAIN", "stable"))
         .add_env(("CARGO_BUILD_TARGET", EXTENSION_RUST_TARGET))
         .map(|workflow| {
@@ -110,8 +118,18 @@ fn extension_job_defaults() -> Defaults {
 fn with_extension_defaults(named_job: NamedJob) -> NamedJob {
     NamedJob {
         name: named_job.name,
-        job: named_job.job.defaults(extension_job_defaults()),
+        job: named_job
+            .job
+            .defaults(extension_job_defaults())
+            .cond(extension_source_guard(false)),
     }
+}
+
+fn extension_source_guard(trigger_always: bool) -> Expression {
+    Expression::new(format!(
+        "({DEFAULT_REPOSITORY_GUARD} || (vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION)){}",
+        trigger_always.then_some(" && always()").unwrap_or_default()
+    ))
 }
 
 fn check_rust() -> NamedJob {
@@ -119,7 +137,6 @@ fn check_rust() -> NamedJob {
 
     let job = Job::default()
         .defaults(extension_job_defaults())
-        .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
         .add_step(steps::checkout_repo())
@@ -135,17 +152,16 @@ fn check_rust() -> NamedJob {
 }
 
 pub(crate) fn check_extension() -> NamedJob {
-    let (cache_download, cache_hit) = cache_zed_extension_cli();
+    let (cache_download, cache_hit) = cache_extension_cli();
     let (check_version_job, version_changed, _) = compare_versions();
 
     let job = Job::default()
         .defaults(extension_job_defaults())
-        .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
         .add_step(steps::checkout_repo().with_full_history())
         .add_step(cache_download)
-        .add_step(download_zed_extension_cli(cache_hit))
+        .add_step(download_extension_cli(cache_hit))
         .add_step(cache_rust_dependencies_namespace()) // Extensions can compile Rust, so provide the cache if needed.
         .add_step(check())
         .add_step(fetch_ts_query_ls())
@@ -156,31 +172,42 @@ pub(crate) fn check_extension() -> NamedJob {
     named::job(job)
 }
 
-pub fn cache_zed_extension_cli() -> (Step<Use>, StepOutput) {
+pub fn cache_extension_cli() -> (Step<Use>, StepOutput) {
     let step = named::uses(
         "actions",
         "cache",
         "0057852bfaa89a56745cba8c7296529d2fc39830",
     )
-    .id("cache-zed-extension-cli")
-    .with(
-        Input::default()
-            .add("path", "zed-extension")
-            .add("key", "zed-extension-${{ env.ZED_EXTENSION_CLI_SHA }}"),
-    );
+    .id("cache-orion-extension-cli")
+    .with(Input::default().add("path", "zed-extension").add(
+        "key",
+        "orion-studio-extension-cli-${{ env.ORION_STUDIO_EXTENSION_CLI_SHA }}",
+    ));
     let output = StepOutput::new(&step, "cache-hit");
     (step, output)
 }
 
-pub fn download_zed_extension_cli(cache_hit: StepOutput) -> Step<Run> {
-    named::bash(
-    indoc! {
+pub fn download_extension_cli(cache_hit: StepOutput) -> Step<Run> {
+    named::bash(indoc! {
         r#"
-        wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension" -O "$GITHUB_WORKSPACE/zed-extension"
+        if [[ ! "$ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME" =~ ^orion-studio-[a-z0-9-]+$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME must name an Orion-owned bucket"
+            exit 1
+        fi
+        if [[ ! "$ORION_STUDIO_EXTENSION_CLI_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_CLI_SHA must be a full Git commit SHA"
+            exit 1
+        fi
+
+        wget --quiet --https-only "https://${ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME}.nyc3.digitaloceanspaces.com/$ORION_STUDIO_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension" -O "$GITHUB_WORKSPACE/zed-extension"
         chmod +x "$GITHUB_WORKSPACE/zed-extension"
         "#,
-    }
-    ).if_condition(Expression::new(format!("{} != 'true'", cache_hit.expr())))
+    })
+    .add_env((
+        "ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME",
+        vars::ORION_STUDIO_EXTENSION_CLI_BUCKET_NAME,
+    ))
+    .if_condition(Expression::new(format!("{} != 'true'", cache_hit.expr())))
 }
 
 pub fn check() -> Step<Run> {
@@ -195,13 +222,23 @@ pub fn check() -> Step<Run> {
 
 fn verify_version_did_not_change(version_changed: StepOutput) -> Step<Run> {
     named::bash(indoc! {r#"
-        if [[ "$VERSION_CHANGED" == "true" && "$GITHUB_EVENT_NAME" == "pull_request" && "$PR_USER_LOGIN" != "zed-zippy[bot]" ]] ; then
-            echo "Version change detected in your change!"
-            echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
-            exit 42
+        if [[ "$VERSION_CHANGED" == "true" && "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            if [[ -z "$AUTOMATION_BOT_LOGIN" ]]; then
+                echo "::error::ORION_STUDIO_AUTOMATION_BOT_LOGIN must be configured before accepting automated version changes"
+                exit 1
+            fi
+            if [[ "$PR_USER_LOGIN" != "$AUTOMATION_BOT_LOGIN" ]]; then
+                echo "Version change detected in your change!"
+                echo "Version changes happen in separate PRs and are performed by Orion Studio automation"
+                exit 42
+            fi
         fi
         "#
     })
     .add_env(("VERSION_CHANGED", version_changed.to_string()))
     .add_env(("PR_USER_LOGIN", "${{ github.event.pull_request.user.login }}"))
+    .add_env((
+        "AUTOMATION_BOT_LOGIN",
+        vars::ORION_STUDIO_AUTOMATION_BOT_LOGIN,
+    ))
 }

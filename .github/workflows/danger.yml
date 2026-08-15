@@ -15,7 +15,7 @@ permissions:
   contents: read
 jobs:
   danger:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -37,10 +37,10 @@ jobs:
     - name: danger::danger_job::install_deps
       run: pnpm install --dir script/danger
     - name: danger::danger_job::run
-      run: pnpm run --dir script/danger danger ci
+      run: "\n                case \"$DANGER_GITHUB_API_BASE_URL\" in\n                    https://orion.dev/*|https://*.orion.dev/*) ;;\n                    *)\n                        echo \"::error::ORION_STUDIO_DANGER_GITHUB_API_BASE_URL must be an HTTPS endpoint under orion.dev\"\n                        exit 1\n                        ;;\n                esac\n                pnpm run --dir script/danger danger ci\n            "
       env:
         GITHUB_TOKEN: not_a_real_token
-        DANGER_GITHUB_API_BASE_URL: https://danger-proxy.zed.dev/github
+        DANGER_GITHUB_API_BASE_URL: ${{ vars.ORION_STUDIO_DANGER_GITHUB_API_BASE_URL }}
 defaults:
   run:
     shell: bash -euxo pipefail {0}

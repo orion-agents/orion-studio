@@ -1,2 +1,2 @@
-ZED_ENVIRONMENT=production
+ORION_STUDIO_ENVIRONMENT=production
 RUST_LOG=info

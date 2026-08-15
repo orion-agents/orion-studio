@@ -14,20 +14,20 @@
 
 ---
 
-title: Configuring Zed - Settings and Preferences
-description: Configure Zed with the Settings Editor, JSON files, and project-specific overrides. Covers all settings options.
+title: Configuring Orion Studio - Settings and Preferences
+description: Configure Orion Studio with the Settings Editor, JSON files, and project-specific overrides. Covers all settings options.
 
 ---
 
-# Configuring Zed
+# Configuring Orion Studio
 
-This guide explains how Zed's settings system works, including the Settings Editor, JSON configuration files, and project-specific settings.
+This guide explains how Orion Studio's settings system works, including the Settings Editor, JSON configuration files, and project-specific settings.
 
 For visual customization (themes, fonts, icons), see [Appearance](./appearance.md).
 
 ## Settings Editor {#settings-editor}
 
-The **Settings Editor** ({#kb zed::OpenSettings}) is the primary way to configure Zed. It provides a searchable interface where you can browse available settings, see their current values, and make changes.
+The **Settings Editor** ({#kb zed::OpenSettings}) is the primary way to configure Orion Studio. It provides a searchable interface where you can browse available settings, see their current values, and make changes.
 
 To open it:
 
@@ -46,9 +46,9 @@ Your user settings apply globally across all projects. Open the file with {#kb z
 
 The file is located at:
 
-- macOS: `~/.config/zed/settings.json`
-- Linux: `~/.config/zed/settings.json` (or `$XDG_CONFIG_HOME/zed/settings.json`)
-- Windows: `%APPDATA%\Zed\settings.json`
+- macOS: `~/.config/orion-studio/settings.json`
+- Linux: `~/.config/orion-studio/settings.json` (or `$XDG_CONFIG_HOME/orion-studio/settings.json`)
+- Windows: `%APPDATA%\Orion Studio\settings.json`
 
 The syntax is JSON with support for `//` comments.
 
@@ -79,7 +79,7 @@ You can also add settings files in subdirectories for more granular control.
 
 Settings are applied in layers:
 
-1. **Default settings** — Zed's built-in defaults
+1. **Default settings** — Orion Studio's built-in defaults
 2. **User settings** — Your global preferences
 3. **Project settings** — Project-specific overrides
 
@@ -111,17 +111,11 @@ With this configuration:
 
 Changes made in the Settings Editor apply across all channels.
 
-## Settings Deep Links {#deep-links}
+## Opening a Specific Setting {#opening-a-specific-setting}
 
-Zed supports deep links that open specific settings directly:
-
-```
-zed://settings/theme
-zed://settings/vim_mode
-zed://settings/buffer_font_size
-```
-
-These are useful for sharing configuration tips or linking from documentation.
+Open the Settings Editor and search for the setting name, such as `theme`,
+`vim_mode`, or `buffer_font_size`. This keeps documentation independent of
+legacy URL schemes while still taking users to the canonical settings UI.
 
 ## Example Configuration {#example-configuration}
 

@@ -26,7 +26,7 @@ use std::{
     ffi::OsStr,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Once},
     time::{Duration, SystemTime},
 };
 use util::command::new_command;
@@ -47,6 +47,42 @@ impl std::error::Error for MissingDependencyError {}
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const NIGHTLY_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
+const APPLICATION_RELEASE_ASSET: &str = "orion-studio";
+const REMOTE_SERVER_RELEASE_ASSET: &str = "orion-studio-remote-server";
+
+fn update_explanation() -> Option<String> {
+    if let Some(canonical) = option_env!("ORION_STUDIO_UPDATE_EXPLANATION") {
+        return Some(canonical.to_owned());
+    }
+    match env::var("ORION_STUDIO_UPDATE_EXPLANATION") {
+        Ok(canonical) => return Some(canonical),
+        Err(env::VarError::NotPresent) => {}
+        Err(error) => {
+            log::warn!("ignoring invalid ORION_STUDIO_UPDATE_EXPLANATION: {error}");
+            return None;
+        }
+    }
+
+    let legacy = option_env!("ZED_UPDATE_EXPLANATION")
+        .map(ToOwned::to_owned)
+        .or_else(|| match env::var("ZED_UPDATE_EXPLANATION") {
+            Ok(legacy) => Some(legacy),
+            Err(env::VarError::NotPresent) => None,
+            Err(error) => {
+                log::warn!("ignoring invalid ZED_UPDATE_EXPLANATION: {error}");
+                None
+            }
+        });
+    if legacy.is_some() {
+        // Read the old variable only so existing package-manager integrations
+        // keep working while they migrate to the Orion Studio name.
+        static LEGACY_WARNING: Once = Once::new();
+        LEGACY_WARNING.call_once(|| {
+            log::warn!("ZED_UPDATE_EXPLANATION is deprecated; use ORION_STUDIO_UPDATE_EXPLANATION");
+        });
+    }
+    legacy
+}
 
 #[cfg(target_os = "linux")]
 fn linux_rsync_install_hint() -> &'static str {
@@ -276,10 +312,7 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
             .map(|channel| channel.poll_for_updates())
             .unwrap_or(false);
 
-        if option_env!("ZED_UPDATE_EXPLANATION").is_none()
-            && env::var("ZED_UPDATE_EXPLANATION").is_err()
-            && poll_for_updates
-        {
+        if update_explanation().is_none() && poll_for_updates {
             let mut update_subscription = AutoUpdateSetting::get_global(cx)
                 .0
                 .then(|| updater.start_polling(cx));
@@ -302,13 +335,10 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 }
 
 pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
-    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION")
-        .map(ToOwned::to_owned)
-        .or_else(|| env::var("ZED_UPDATE_EXPLANATION").ok())
-    {
+    if let Some(message) = update_explanation() {
         drop(window.prompt(
             gpui::PromptLevel::Info,
-            "Zed was installed via a package manager.",
+            "Orion Studio was installed via a package manager.",
             Some(&message),
             &["OK"],
             cx,
@@ -350,9 +380,11 @@ pub fn release_notes_url(cx: &mut App) -> Option<String> {
             auto_updater.client.http_client().build_url(&path)
         }
         ReleaseChannel::Nightly => {
-            "https://github.com/zed-industries/zed/commits/nightly/".to_string()
+            "https://github.com/orion-agents/orion-studio/commits/nightly/".to_string()
         }
-        ReleaseChannel::Dev => "https://github.com/zed-industries/zed/commits/main/".to_string(),
+        ReleaseChannel::Dev => {
+            "https://github.com/orion-agents/orion-studio/commits/main/".to_string()
+        }
     };
     Some(url)
 }
@@ -364,7 +396,9 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {
 }
 
 #[cfg(not(target_os = "windows"))]
-const INSTALLER_DIR_PREFIX: &str = "zed-auto-update";
+const INSTALLER_DIR_PREFIX: &str = "orion-studio-auto-update";
+#[cfg(any(rust_analyzer, all(not(target_os = "windows"), not(test))))]
+const LEGACY_INSTALLER_DIR_PREFIX: &str = "zed-auto-update";
 
 #[cfg(not(target_os = "windows"))]
 struct InstallerDir(tempfile::TempDir);
@@ -392,10 +426,16 @@ impl InstallerDir {
     async fn new() -> Result<Self> {
         let installer_dir = std::env::current_exe()?
             .parent()
-            .context("No parent dir for Zed.exe")?
+            .context("No parent directory for the Orion Studio executable")?
             .join("updates");
-        if smol::fs::metadata(&installer_dir).await.is_ok() {
-            smol::fs::remove_dir_all(&installer_dir).await?;
+        match smol::fs::metadata(&installer_dir).await {
+            Ok(_) => smol::fs::remove_dir_all(&installer_dir).await?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to inspect Windows update directory {installer_dir:?}")
+                });
+            }
         }
         smol::fs::create_dir(&installer_dir).await?;
         Ok(Self(installer_dir))
@@ -418,6 +458,15 @@ impl UpdateCheckType {
     }
 }
 
+fn installer_filename(os: &str) -> Result<&'static str> {
+    match os {
+        "macos" => Ok("Orion-Studio.dmg"),
+        "linux" => Ok("orion-studio.tar.gz"),
+        "windows" => Ok("Orion-Studio.exe"),
+        unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
+    }
+}
+
 impl AutoUpdater {
     pub fn get(cx: &mut App) -> Option<Entity<Self>> {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
@@ -427,7 +476,7 @@ impl AutoUpdater {
         // On windows, executable files cannot be overwritten while they are
         // running, so we must wait to overwrite the application until quitting
         // or restarting. When quitting the app, we spawn the auto update helper
-        // to finish the auto update process after Zed exits. When restarting
+        // to finish the auto update process after Orion Studio exits. When restarting
         // the app after an update, we use `set_restart_path` to run the auto
         // update helper instead of the app, so that it can overwrite the app
         // and then spawn the new binary.
@@ -558,7 +607,7 @@ impl AutoUpdater {
         true
     }
 
-    // If you are packaging Zed and need to override the place it downloads SSH remotes from,
+    // If you are packaging Orion Studio and need to override the place it downloads SSH remotes from,
     // you can override this function. You should also update get_remote_server_release_url to return
     // Ok(None).
     pub async fn download_remote_server_release(
@@ -581,7 +630,7 @@ impl AutoUpdater {
             &this,
             release_channel,
             version,
-            "zed-remote-server",
+            REMOTE_SERVER_RELEASE_ASSET,
             os,
             arch,
             cx,
@@ -592,13 +641,26 @@ impl AutoUpdater {
         let channel_dir = servers_dir.join(release_channel.dev_name());
         let platform_dir = channel_dir.join(format!("{}-{}", os, arch));
         let version_path = platform_dir.join(format!("{}.gz", release.version));
-        smol::fs::create_dir_all(&platform_dir).await.ok();
+        smol::fs::create_dir_all(&platform_dir)
+            .await
+            .with_context(|| {
+                format!("failed to create Orion remote server cache directory {platform_dir:?}")
+            })?;
 
         let client = this.read_with(cx, |this, _| this.client.http_client());
 
-        if smol::fs::metadata(&version_path).await.is_err() {
+        let should_download = match smol::fs::metadata(&version_path).await {
+            Ok(_) => false,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to inspect cached Orion remote server {version_path:?}")
+                });
+            }
+        };
+        if should_download {
             log::info!(
-                "downloading zed-remote-server {os} {arch} version {}",
+                "downloading {REMOTE_SERVER_RELEASE_ASSET} {os} {arch} version {}",
                 release.version
             );
             set_status("Downloading remote server", cx);
@@ -632,9 +694,16 @@ impl AutoUpdater {
                 .context("auto-update not initialized")
         })?;
 
-        let release =
-            Self::get_release_asset(&this, channel, version, "zed-remote-server", os, arch, cx)
-                .await?;
+        let release = Self::get_release_asset(
+            &this,
+            channel,
+            version,
+            REMOTE_SERVER_RELEASE_ASSET,
+            os,
+            arch,
+            cx,
+        )
+        .await?;
 
         Ok(Some(release.url))
     }
@@ -670,7 +739,7 @@ impl AutoUpdater {
         let http_client = client.http_client();
 
         let path = format!("/releases/{}/{}/asset", release_channel.dev_name(), version,);
-        let url = http_client.build_zed_cloud_url_with_query(
+        let url = http_client.build_orion_cloud_url_with_query(
             &path,
             AssetQuery {
                 os,
@@ -721,8 +790,16 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let fetched_release_data =
-            Self::get_release_asset(&this, release_channel, None, "zed", OS, ARCH, cx).await?;
+        let fetched_release_data = Self::get_release_asset(
+            &this,
+            release_channel,
+            None,
+            APPLICATION_RELEASE_ASSET,
+            OS,
+            ARCH,
+            cx,
+        )
+        .await?;
         let fetched_version = fetched_release_data.clone().version;
         let app_commit_sha = Ok(cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full())));
         let newer_version = Self::check_if_fetched_version_is_newer(
@@ -882,14 +959,7 @@ impl AutoUpdater {
     }
 
     async fn target_path(installer_dir: &InstallerDir) -> Result<PathBuf> {
-        let filename = match OS {
-            "macos" => anyhow::Ok("Zed.dmg"),
-            "linux" => Ok("zed.tar.gz"),
-            "windows" => Ok("Zed.exe"),
-            unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
-        }?;
-
-        Ok(installer_dir.path().join(filename))
+        Ok(installer_dir.path().join(installer_filename(OS)?))
     }
 
     #[cfg_attr(test, allow(dead_code))]
@@ -1095,7 +1165,7 @@ async fn install_release_linux(
 ) -> Result<Option<PathBuf>> {
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
 
-    let extracted = temp_dir.path().join("zed");
+    let extracted = temp_dir.path().join("orion-studio");
     fs::create_dir_all(&extracted)
         .await
         .context("failed to create directory into which to extract update")?;
@@ -1123,17 +1193,21 @@ async fn install_release_linux(
     } else {
         String::default()
     };
-    let app_folder_name = format!("zed{}.app", suffix);
+    let app_folder_name = format!("orion-studio{}.app", suffix);
 
     let from = extracted.join(&app_folder_name);
     let mut to = home_dir.join(".local");
 
-    let expected_suffix = format!("{}/libexec/zed-editor", app_folder_name);
+    let expected_suffix = format!("{}/libexec/orion-studio", app_folder_name);
+    let legacy_expected_suffix = format!("zed{suffix}.app/libexec/zed-editor");
 
-    if let Some(prefix) = running_app_path
-        .to_str()
-        .and_then(|str| str.strip_suffix(&expected_suffix))
-    {
+    if let Some(prefix) = running_app_path.to_str().and_then(|path| {
+        path.strip_suffix(&expected_suffix).or_else(|| {
+            // A pre-Orion process may report the old path during an in-place
+            // upgrade; use it only to locate the install root.
+            path.strip_suffix(&legacy_expected_suffix)
+        })
+    }) {
         to = PathBuf::from(prefix);
     }
 
@@ -1146,7 +1220,7 @@ async fn install_release_linux(
 
     anyhow::ensure!(
         output.status.success(),
-        "failed to copy Zed update from {:?} to {:?}: {:?}",
+        "failed to copy Orion Studio update from {:?} to {:?}: {:?}",
         from,
         to,
         String::from_utf8_lossy(&output.stderr)
@@ -1165,7 +1239,7 @@ async fn install_release_macos(
         .file_name()
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
 
-    let mount_path = temp_dir.path().join("Zed");
+    let mount_path = temp_dir.path().join("Orion Studio");
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
 
     mounted_app_path.push("/");
@@ -1211,7 +1285,7 @@ async fn install_release_macos(
     Ok(None)
 }
 
-/// Removes stale installer dirs from the system temp dir. Older Zed versions
+/// Removes stale installer dirs from the system temp dir. Pre-Orion builds
 /// leaked one per update by deleting the dir while the downloaded disk image
 /// was still mounted inside it, which made the deletion fail silently.
 #[cfg(any(rust_analyzer, all(not(target_os = "windows"), not(test))))]
@@ -1224,26 +1298,46 @@ async fn cleanup_stale_installer_dirs() {
         return;
     };
     while let Some(entry) = entries.next().await {
-        let Ok(entry) = entry else {
-            continue;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                log::warn!("failed to read installer temp directory entry: {error}");
+                continue;
+            }
         };
-        if !entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(INSTALLER_DIR_PREFIX)
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        // The old prefix is cleanup-only compatibility for directories left by
+        // builds from before the Orion Studio migration.
+        if !file_name.starts_with(INSTALLER_DIR_PREFIX)
+            && !file_name.starts_with(LEGACY_INSTALLER_DIR_PREFIX)
         {
             continue;
         }
         // Leave recent dirs alone, as they may belong to an update currently
-        // in progress in another Zed instance.
-        let is_stale = entry.metadata().await.ok().is_some_and(|metadata| {
-            metadata.is_dir()
-                && metadata.modified().ok().is_some_and(|modified| {
-                    SystemTime::now()
-                        .duration_since(modified)
-                        .is_ok_and(|age| age > STALE_INSTALLER_DIR_AGE)
-                })
-        });
+        // in progress in another Orion Studio instance.
+        let is_stale = match entry.metadata().await {
+            Ok(metadata) if metadata.is_dir() => match metadata.modified() {
+                Ok(modified) => SystemTime::now()
+                    .duration_since(modified)
+                    .is_ok_and(|age| age > STALE_INSTALLER_DIR_AGE),
+                Err(error) => {
+                    log::warn!(
+                        "failed to read modification time for installer dir {:?}: {error}",
+                        entry.path()
+                    );
+                    false
+                }
+            },
+            Ok(_) => false,
+            Err(error) => {
+                log::warn!(
+                    "failed to inspect possible stale installer dir {:?}: {error}",
+                    entry.path()
+                );
+                false
+            }
+        };
         if is_stale {
             if let Err(error) = fs::remove_dir_all(entry.path()).await {
                 log::warn!(
@@ -1260,13 +1354,18 @@ async fn cleanup_stale_installer_dirs() {
 async fn cleanup_windows() -> Result<()> {
     let parent = std::env::current_exe()?
         .parent()
-        .context("No parent dir for Zed.exe")?
+        .context("No parent directory for the Orion Studio executable")?
         .to_owned();
 
     // keep in sync with crates/auto_update_helper/src/updater.rs
-    _ = smol::fs::remove_dir(parent.join("updates")).await;
-    _ = smol::fs::remove_dir(parent.join("install")).await;
-    _ = smol::fs::remove_dir(parent.join("old")).await;
+    for directory_name in ["updates", "install", "old"] {
+        let path = parent.join(directory_name);
+        if let Err(error) = smol::fs::remove_dir(&path).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("failed to remove stale Windows update directory {path:?}: {error}");
+        }
+    }
 
     Ok(())
 }
@@ -1287,17 +1386,25 @@ async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<P
     // deleting the old one, and launching the new binary.
     let helper_path = std::env::current_exe()?
         .parent()
-        .context("No parent dir for Zed.exe")?
+        .context("No parent directory for the Orion Studio executable")?
         .join("tools")
         .join("auto_update_helper.exe");
     Ok(Some(helper_path))
 }
 
 pub async fn finalize_auto_update_on_quit() {
-    let Some(installer_path) = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.join("updates")))
+    let current_executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            log::warn!("failed to locate Orion Studio while finalizing auto-update: {error}");
+            return;
+        }
+    };
+    let Some(installer_path) = current_executable
+        .parent()
+        .map(|parent| parent.join("updates"))
     else {
+        log::warn!("Orion Studio executable has no parent directory: {current_executable:?}");
         return;
     };
 
@@ -1311,8 +1418,15 @@ pub async fn finalize_auto_update_on_quit() {
         let mut command = util::command::new_command(helper);
         command.arg("--launch");
         command.arg("false");
-        if let Ok(mut cmd) = command.spawn() {
-            _ = cmd.status().await;
+        match command.spawn() {
+            Ok(mut child) => match child.status().await {
+                Ok(status) if !status.success() => {
+                    log::warn!("auto-update helper exited with status {status}");
+                }
+                Ok(_) => {}
+                Err(error) => log::warn!("failed to wait for auto-update helper: {error}"),
+            },
+            Err(error) => log::warn!("failed to launch auto-update helper: {error}"),
         }
     }
 }
@@ -1344,6 +1458,25 @@ mod tests {
     pub(super) struct InstallOverride(pub Rc<dyn Fn(&Path, &AsyncApp) -> Result<Option<PathBuf>>>);
     impl Global for InstallOverride {}
 
+    #[test]
+    fn release_asset_names_match_orion_artifacts() {
+        assert_eq!(APPLICATION_RELEASE_ASSET, "orion-studio");
+        assert_eq!(REMOTE_SERVER_RELEASE_ASSET, "orion-studio-remote-server");
+        assert!(matches!(
+            installer_filename("macos"),
+            Ok("Orion-Studio.dmg")
+        ));
+        assert!(matches!(
+            installer_filename("linux"),
+            Ok("orion-studio.tar.gz")
+        ));
+        assert!(matches!(
+            installer_filename("windows"),
+            Ok("Orion-Studio.exe")
+        ));
+        assert!(installer_filename("unsupported").is_err());
+    }
+
     #[gpui::test]
     fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1368,6 +1501,7 @@ mod tests {
         let (dmg_tx, dmg_rx) = oneshot::channel::<String>();
 
         cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
             settings::init(cx);
 
             let current_version = semver::Version::new(0, 100, 0);
@@ -1381,6 +1515,12 @@ mod tests {
                 let dmg_rx = dmg_rx.clone();
                 async move {
                 if req.uri().path() == "/releases/stable/latest/asset" {
+                    assert!(
+                        req.uri().query().is_some_and(|query| query
+                            .split('&')
+                            .any(|parameter| parameter == "asset=orion-studio")),
+                        "update requests must use the canonical Orion Studio asset"
+                    );
                     if release_available {
                         return Ok(Response::builder().status(200).body(
                             r#"{"version":"0.100.1","url":"https://test.example/new-download"}"#.into()
@@ -1433,7 +1573,9 @@ mod tests {
             }
         );
 
-        dmg_tx.send("<fake-zed-update>".to_owned()).unwrap();
+        dmg_tx
+            .send("<fake-orion-studio-update>".to_owned())
+            .unwrap();
 
         let tmp_dir = Arc::new(tempdir().unwrap());
 
@@ -1441,7 +1583,7 @@ mod tests {
             let tmp_dir = tmp_dir.clone();
             cx.set_global(InstallOverride(Rc::new(move |target_path, _cx| {
                 let tmp_dir = tmp_dir.clone();
-                let dest_path = tmp_dir.path().join("zed");
+                let dest_path = tmp_dir.path().join("orion-studio");
                 std::fs::copy(&target_path, &dest_path)?;
                 Ok(Some(dest_path))
             })));
@@ -1465,8 +1607,11 @@ mod tests {
         let will_restart = cx.expect_restart();
         cx.update(|cx| cx.restart());
         let path = will_restart.await.unwrap().unwrap();
-        assert_eq!(path, tmp_dir.path().join("zed"));
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-zed-update>");
+        assert_eq!(path, tmp_dir.path().join("orion-studio"));
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "<fake-orion-studio-update>"
+        );
     }
 
     #[gpui::test]
@@ -1491,7 +1636,7 @@ mod tests {
         });
 
         let temp_dir = tempdir().unwrap();
-        let target_path = temp_dir.path().join("zed-download");
+        let target_path = temp_dir.path().join("orion-studio-download");
         let release = ReleaseAsset {
             version: "1.0.0".to_string(),
             url: "https://test.example/download".to_string(),
@@ -1551,7 +1696,7 @@ mod tests {
         });
 
         let temp_dir = tempdir().unwrap();
-        let target_path = temp_dir.path().join("zed-download");
+        let target_path = temp_dir.path().join("orion-studio-download");
         let release = ReleaseAsset {
             version: "1.0.0".to_string(),
             url: "https://test.example/download".to_string(),

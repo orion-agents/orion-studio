@@ -1,11 +1,32 @@
 #!/usr/bin/env bash
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 [production|staging|...]"
+set -euo pipefail
+
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "Usage: $0 [production|staging] [collab|api]" >&2
   exit 1
 fi
 
-export ZED_KUBE_NAMESPACE=$1
+ORION_STUDIO_KUBE_NAMESPACE=$1
+ORION_STUDIO_SERVICE_NAME=${2:-collab}
+case "$ORION_STUDIO_KUBE_NAMESPACE" in
+  production|staging) ;;
+  *)
+    echo "Invalid Orion Studio namespace: $ORION_STUDIO_KUBE_NAMESPACE" >&2
+    exit 1
+    ;;
+esac
+case "$ORION_STUDIO_SERVICE_NAME" in
+  collab|api) ;;
+  *)
+    echo "Invalid Orion Studio service: $ORION_STUDIO_SERVICE_NAME" >&2
+    exit 1
+    ;;
+esac
 
-pod=$(kubectl --namespace=${ZED_KUBE_NAMESPACE} get pods --selector=app=zed --output=jsonpath='{.items[*].metadata.name}')
-exec kubectl --namespace $ZED_KUBE_NAMESPACE exec --tty --stdin $pod -- /bin/bash
+pod=$(kubectl --namespace="$ORION_STUDIO_KUBE_NAMESPACE" get pods --selector="app=$ORION_STUDIO_SERVICE_NAME" --field-selector=status.phase=Running --output=jsonpath='{.items[0].metadata.name}')
+if [[ -z "$pod" ]]; then
+  echo "No running $ORION_STUDIO_SERVICE_NAME pod found in $ORION_STUDIO_KUBE_NAMESPACE" >&2
+  exit 1
+fi
+exec kubectl --namespace="$ORION_STUDIO_KUBE_NAMESPACE" exec --tty --stdin "$pod" -- /bin/bash

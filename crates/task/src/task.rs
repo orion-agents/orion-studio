@@ -1,4 +1,4 @@
-//! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
+//! Baseline interface for tasks in Orion Studio.
 
 mod adapter_schema;
 mod debug_format;
@@ -20,7 +20,7 @@ use std::sync::Arc;
 pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
     AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest,
-    Request, TcpArgumentsTemplate, ZedDebugConfig,
+    OrionDebugConfig, Request, TcpArgumentsTemplate,
 };
 pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, SaveStrategy, TaskHook, TaskTemplate,
@@ -37,7 +37,7 @@ pub use zed_actions::RevealTarget;
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct TaskId(pub String);
 
-/// Contains all information needed by Zed to spawn a new terminal tab for the given task.
+/// Contains all information needed by Orion Studio to spawn a new terminal tab for the given task.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct SpawnInTerminal {
     /// Id of the task to use when determining task tab affinity.
@@ -146,7 +146,7 @@ impl ResolvedTask {
     }
 }
 
-/// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].
+/// Variables available when Orion Studio resolves a [`TaskTemplate`] into a [`ResolvedTask`].
 /// Name of the variable must be a valid shell variable identifier, which generally means that it is
 /// a word  consisting only  of alphanumeric characters and underscores,
 /// and beginning with an alphabetic character or an  underscore.
@@ -215,7 +215,10 @@ impl FromStr for VariableName {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let without_prefix = s.strip_prefix(ZED_VARIABLE_NAME_PREFIX).ok_or(())?;
+        let without_prefix = s
+            .strip_prefix(ORION_STUDIO_VARIABLE_NAME_PREFIX)
+            .or_else(|| s.strip_prefix(LEGACY_ZED_VARIABLE_NAME_PREFIX))
+            .ok_or(())?;
         let value = match without_prefix {
             "FILE" => Self::File,
             "FILENAME" => Self::Filename,
@@ -237,8 +240,7 @@ impl FromStr for VariableName {
             "GIT_REPOSITORY_PATH" => Self::GitRepositoryPath,
             "GIT_REF" => Self::GitRef,
             _ => {
-                if let Some(custom_name) =
-                    without_prefix.strip_prefix(ZED_CUSTOM_VARIABLE_NAME_PREFIX)
+                if let Some(custom_name) = without_prefix.strip_prefix(CUSTOM_VARIABLE_NAME_PREFIX)
                 {
                     Self::Custom(Cow::Owned(custom_name.to_owned()))
                 } else {
@@ -250,62 +252,103 @@ impl FromStr for VariableName {
     }
 }
 
-/// A prefix that all [`VariableName`] variants are prefixed with when used in environment variables and similar template contexts.
+/// The canonical prefix for [`VariableName`] values in environment variables and templates.
+pub const ORION_STUDIO_VARIABLE_NAME_PREFIX: &str = "ORION_STUDIO_";
+/// The legacy public prefix retained for source and task-template compatibility.
 pub const ZED_VARIABLE_NAME_PREFIX: &str = "ZED_";
-const ZED_CUSTOM_VARIABLE_NAME_PREFIX: &str = "CUSTOM_";
+pub(crate) const LEGACY_ZED_VARIABLE_NAME_PREFIX: &str = ZED_VARIABLE_NAME_PREFIX;
+const CUSTOM_VARIABLE_NAME_PREFIX: &str = "CUSTOM_";
 
 impl std::fmt::Display for VariableName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.fmt_with_prefix(f, ORION_STUDIO_VARIABLE_NAME_PREFIX)
+    }
+}
+
+impl VariableName {
+    fn fmt_with_prefix(&self, f: &mut std::fmt::Formatter, prefix: &str) -> std::fmt::Result {
         match self {
-            Self::File => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILE"),
-            Self::Filename => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILENAME"),
-            Self::RelativeFile => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_FILE"),
-            Self::RelativeDir => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_DIR"),
-            Self::Dirname => write!(f, "{ZED_VARIABLE_NAME_PREFIX}DIRNAME"),
-            Self::Stem => write!(f, "{ZED_VARIABLE_NAME_PREFIX}STEM"),
-            Self::WorktreeRoot => write!(f, "{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT"),
-            Self::Symbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SYMBOL"),
-            Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
-            Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
-            Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
-            Self::Language => write!(f, "{ZED_VARIABLE_NAME_PREFIX}LANGUAGE"),
-            Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
-            Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
-            Self::MainGitWorktree => write!(f, "{ZED_VARIABLE_NAME_PREFIX}MAIN_GIT_WORKTREE"),
-            Self::GitSha => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_SHA"),
-            Self::GitShaShort => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_SHA_SHORT"),
-            Self::GitRepositoryName => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_NAME"),
-            Self::GitRepositoryPath => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_PATH"),
-            Self::GitRef => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REF"),
-            Self::Custom(s) => write!(
-                f,
-                "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"
-            ),
+            Self::File => write!(f, "{prefix}FILE"),
+            Self::Filename => write!(f, "{prefix}FILENAME"),
+            Self::RelativeFile => write!(f, "{prefix}RELATIVE_FILE"),
+            Self::RelativeDir => write!(f, "{prefix}RELATIVE_DIR"),
+            Self::Dirname => write!(f, "{prefix}DIRNAME"),
+            Self::Stem => write!(f, "{prefix}STEM"),
+            Self::WorktreeRoot => write!(f, "{prefix}WORKTREE_ROOT"),
+            Self::Symbol => write!(f, "{prefix}SYMBOL"),
+            Self::Row => write!(f, "{prefix}ROW"),
+            Self::Column => write!(f, "{prefix}COLUMN"),
+            Self::SelectedText => write!(f, "{prefix}SELECTED_TEXT"),
+            Self::Language => write!(f, "{prefix}LANGUAGE"),
+            Self::RunnableSymbol => write!(f, "{prefix}RUNNABLE_SYMBOL"),
+            Self::PickProcessId => write!(f, "{prefix}PICK_PID"),
+            Self::MainGitWorktree => write!(f, "{prefix}MAIN_GIT_WORKTREE"),
+            Self::GitSha => write!(f, "{prefix}GIT_SHA"),
+            Self::GitShaShort => write!(f, "{prefix}GIT_SHA_SHORT"),
+            Self::GitRepositoryName => write!(f, "{prefix}GIT_REPOSITORY_NAME"),
+            Self::GitRepositoryPath => write!(f, "{prefix}GIT_REPOSITORY_PATH"),
+            Self::GitRef => write!(f, "{prefix}GIT_REF"),
+            Self::Custom(s) => write!(f, "{prefix}{CUSTOM_VARIABLE_NAME_PREFIX}{s}"),
         }
     }
 }
 
-/// Container for predefined environment variables that describe state of Zed at the time the task was spawned.
+struct TaskVariableAlias<'a> {
+    variable: &'a VariableName,
+    prefix: &'static str,
+}
+
+impl std::ops::Deref for TaskVariableAlias<'_> {
+    type Target = VariableName;
+
+    fn deref(&self) -> &Self::Target {
+        self.variable
+    }
+}
+
+impl std::fmt::Display for TaskVariableAlias<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.variable.fmt_with_prefix(f, self.prefix)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct TaskVariables(HashMap<VariableName, String>);
+struct TaskVariableMap(HashMap<VariableName, String>);
+
+impl TaskVariableMap {
+    fn iter(&self) -> impl Iterator<Item = (TaskVariableAlias<'_>, &String)> {
+        self.0.iter().flat_map(|(variable, value)| {
+            // Older task files still consume the ZED_* aliases during migration.
+            [
+                ORION_STUDIO_VARIABLE_NAME_PREFIX,
+                LEGACY_ZED_VARIABLE_NAME_PREFIX,
+            ]
+            .map(|prefix| (TaskVariableAlias { variable, prefix }, value))
+        })
+    }
+}
+
+/// Container for predefined environment variables that describe Orion Studio state when a task is spawned.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct TaskVariables(TaskVariableMap);
 
 impl TaskVariables {
     /// Inserts another variable into the container, overwriting the existing one if it already exists — in this case, the old value is returned.
     pub fn insert(&mut self, variable: VariableName, value: String) -> Option<String> {
-        self.0.insert(variable, value)
+        self.0.0.insert(variable, value)
     }
 
     /// Extends the container with another one, overwriting the existing variables on collision.
     pub fn extend(&mut self, other: Self) {
-        self.0.extend(other.0);
+        self.0.0.extend(other.0.0);
     }
     /// Get the value associated with given variable name, if there is one.
     pub fn get(&self, key: &VariableName) -> Option<&str> {
-        self.0.get(key).map(|s| s.as_str())
+        self.0.0.get(key).map(|s| s.as_str())
     }
     /// Clear out variables obtained from tree-sitter queries, which are prefixed with '_' character
     pub fn sweep(&mut self) {
-        self.0.retain(|name, _| {
+        self.0.0.retain(|name, _| {
             if let VariableName::Custom(name) = name {
                 !name.starts_with('_')
             } else {
@@ -315,13 +358,13 @@ impl TaskVariables {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&VariableName, &String)> {
-        self.0.iter()
+        self.0.0.iter()
     }
 }
 
 impl FromIterator<(VariableName, String)> for TaskVariables {
     fn from_iter<T: IntoIterator<Item = (VariableName, String)>>(iter: T) -> Self {
-        Self(HashMap::from_iter(iter))
+        Self(TaskVariableMap(HashMap::from_iter(iter)))
     }
 }
 
@@ -331,19 +374,19 @@ impl IntoIterator for TaskVariables {
     type IntoIter = hash_map::IntoIter<VariableName, String>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.0.0.into_iter()
     }
 }
 
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function).
-/// Keeps all Zed-related state inside, used to produce a resolved task out of its template.
+/// Keeps all Orion Studio-related state used to resolve a task from its template.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskContext {
     /// A path to a directory in which the task should be executed.
     pub cwd: Option<PathBuf>,
     /// Additional environment variables associated with a given task.
     pub task_variables: TaskVariables,
-    /// Environment variables obtained when loading the project into Zed.
+    /// Environment variables obtained when Orion Studio loads the project.
     /// This is the environment one would get when `cd`ing in a terminal
     /// into the project's root directory.
     pub project_env: HashMap<String, String>,
@@ -402,15 +445,15 @@ pub fn shell_to_proto(shell: Shell) -> proto::Shell {
 
 type VsCodeEnvVariable = String;
 type VsCodeCommand = String;
-type ZedEnvVariable = String;
+type OrionStudioEnvVariable = String;
 
 struct EnvVariableReplacer {
-    variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>,
-    commands: HashMap<VsCodeCommand, ZedEnvVariable>,
+    variables: HashMap<VsCodeEnvVariable, OrionStudioEnvVariable>,
+    commands: HashMap<VsCodeCommand, OrionStudioEnvVariable>,
 }
 
 impl EnvVariableReplacer {
-    fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
+    fn new(variables: HashMap<VsCodeEnvVariable, OrionStudioEnvVariable>) -> Self {
         Self {
             variables,
             commands: HashMap::default(),
@@ -419,7 +462,7 @@ impl EnvVariableReplacer {
 
     fn with_commands(
         mut self,
-        commands: impl IntoIterator<Item = (VsCodeCommand, ZedEnvVariable)>,
+        commands: impl IntoIterator<Item = (VsCodeCommand, OrionStudioEnvVariable)>,
     ) -> Self {
         self.commands = commands.into_iter().collect();
         self
@@ -439,7 +482,7 @@ impl EnvVariableReplacer {
             _ => input,
         }
     }
-    // Replaces occurrences of VsCode-specific environment variables with Zed equivalents.
+    // Replaces occurrences of VS Code-specific environment variables with Orion Studio equivalents.
     fn replace(&self, input: &str) -> String {
         shellexpand::env_with_context_no_errors(&input, |var: &str| {
             // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
@@ -462,7 +505,7 @@ impl EnvVariableReplacer {
                 }
             };
             if let Some(substitution) = self.variables.get(variable_name) {
-                // Got a VSCode->Zed hit, perform a substitution
+                // Got a VS Code to Orion Studio mapping; perform the substitution.
                 let mut name = format!("${{{substitution}");
                 append_previous_default(&mut name);
                 name.push('}');
@@ -478,5 +521,89 @@ impl EnvVariableReplacer {
             None
         })
         .into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_variable_names_are_canonical_and_parse_legacy_aliases() {
+        assert_eq!(
+            VariableName::WorktreeRoot.to_string(),
+            "ORION_STUDIO_WORKTREE_ROOT"
+        );
+        assert_eq!(
+            "ORION_STUDIO_WORKTREE_ROOT".parse::<VariableName>(),
+            Ok(VariableName::WorktreeRoot)
+        );
+        assert_eq!(
+            "ZED_WORKTREE_ROOT".parse::<VariableName>(),
+            Ok(VariableName::WorktreeRoot)
+        );
+    }
+
+    #[test]
+    fn resolved_tasks_export_canonical_variables_and_legacy_aliases() {
+        let template = TaskTemplate {
+            label: "variable aliases".to_string(),
+            command: "printf".to_string(),
+            args: vec![
+                "$ORION_STUDIO_WORKTREE_ROOT".to_string(),
+                "$ZED_WORKTREE_ROOT".to_string(),
+            ],
+            ..TaskTemplate::default()
+        };
+        let context = TaskContext {
+            task_variables: TaskVariables::from_iter([(
+                VariableName::WorktreeRoot,
+                "/workspace".to_string(),
+            )]),
+            ..TaskContext::default()
+        };
+
+        let resolved = template
+            .resolve_task("variable-aliases", &context)
+            .expect("canonical and legacy variables should resolve");
+
+        assert_eq!(resolved.resolved.args, ["/workspace", "/workspace"]);
+        assert_eq!(
+            resolved.resolved.env.get("ORION_STUDIO_WORKTREE_ROOT"),
+            Some(&"/workspace".to_string())
+        );
+        assert_eq!(
+            resolved.resolved.env.get("ZED_WORKTREE_ROOT"),
+            Some(&"/workspace".to_string())
+        );
+    }
+
+    #[test]
+    fn task_variable_aliases_preserve_empty_values() {
+        let template = TaskTemplate {
+            label: "empty variable".to_string(),
+            command: "true".to_string(),
+            ..TaskTemplate::default()
+        };
+        let context = TaskContext {
+            task_variables: TaskVariables::from_iter([(
+                VariableName::Custom(Cow::Borrowed("EMPTY")),
+                String::new(),
+            )]),
+            ..TaskContext::default()
+        };
+
+        let resolved = template
+            .resolve_task("empty-variable", &context)
+            .expect("an empty task variable should remain present");
+
+        assert_eq!(
+            resolved.resolved.env.get("ORION_STUDIO_CUSTOM_EMPTY"),
+            Some(&String::new())
+        );
+        assert_eq!(
+            resolved.resolved.env.get("ZED_CUSTOM_EMPTY"),
+            Some(&String::new())
+        );
     }
 }

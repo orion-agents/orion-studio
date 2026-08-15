@@ -3,8 +3,9 @@ use gh_workflow::*;
 use crate::tasks::workflows::{
     runners,
     steps::{
-        self, CommonPermissionSets, DownloadArtifactStep, FluentBuilder, IfNoFilesFound, NamedJob,
-        RepositoryTarget, TokenPermissions, UploadArtifactStep, ZippyGitIdentity, named, use_clang,
+        self, AutomationGitIdentity, CommonPermissionSets, DownloadArtifactStep, FluentBuilder,
+        IfNoFilesFound, NamedJob, RepositoryTarget, TokenPermissions, UploadArtifactStep, named,
+        use_clang,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
@@ -135,11 +136,11 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
             git commit -am "Autofix"
             git push
         "#})
-        .with_zippy_git_identity()
+        .with_orion_automation_git_identity()
         .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy()
+    let (authenticate, token) = steps::authenticate_as_orion_automation()
         .for_repository(RepositoryTarget::current())
         .with_permissions([
             (TokenPermissions::Contents, Level::Write),

@@ -449,7 +449,12 @@ impl RemoteConnection for SshRemoteConnection {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
-        const VARS: [&str; 3] = ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"];
+        const VARS: [&str; 4] = [
+            "RUST_LOG",
+            "RUST_BACKTRACE",
+            "ORION_STUDIO_GENERATE_MINIDUMPS",
+            "ZED_GENERATE_MINIDUMPS",
+        ];
         delegate.set_status(Some("Starting proxy"), cx);
 
         let Some(remote_binary_path) = self.remote_binary_path.clone() else {
@@ -815,7 +820,7 @@ impl SshRemoteConnection {
             _ => version.to_string(),
         };
         let binary_name = format!(
-            "zed-remote-server-{}-{}{}",
+            "orion-studio-remote-server-{}-{}{}",
             release_channel.dev_name(),
             version_str,
             if self.ssh_platform.os.is_windows() {
@@ -1478,7 +1483,7 @@ impl SshSocket {
                 "AMD64" => RemoteArch::X86_64,
                 "ARM64" => RemoteArch::Aarch64,
                 arch => anyhow::bail!(
-                    "Prebuilt remote servers are not yet available for windows-{arch}. See https://zed.dev/docs/remote-development"
+                    "Prebuilt remote servers are not yet available for windows-{arch}. See https://orion.dev/docs/remote-development"
                 ),
             },
         })

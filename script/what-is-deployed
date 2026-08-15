@@ -1,30 +1,140 @@
 #!/usr/bin/env bash
 
-set -eu
-source script/lib/deploy-helpers.sh
+set -euo pipefail
 
 if [[ $# != 1 ]]; then
-  echo "Usage: $0 <production|staging>"
+  echo "Usage: $0 <production|staging>" >&2
   exit 1
 fi
 
 environment=$1
-url="$(url_for_environment $environment)"
-tag="$(tag_for_environment $environment)"
+case "$environment" in
+  production)
+    expected_context="${ORION_STUDIO_PRODUCTION_KUBE_CONTEXT:?Set the reviewed production Kubernetes context}"
+    image_repository="${ORION_STUDIO_PRODUCTION_COLLAB_IMAGE_REPOSITORY:?Set the production collab image repository}"
+    ;;
+  staging)
+    expected_context="${ORION_STUDIO_STAGING_KUBE_CONTEXT:?Set the reviewed staging Kubernetes context}"
+    image_repository="${ORION_STUDIO_STAGING_COLLAB_IMAGE_REPOSITORY:?Set the staging collab image repository}"
+    ;;
+  *)
+    echo "Unknown collab deployment environment: $environment" >&2
+    exit 1
+    ;;
+esac
 
-target_zed_kube_cluster
+if [[ ! "$image_repository" =~ ^registry\.digitalocean\.com/orion-[a-z0-9]([a-z0-9-]{0,54}[a-z0-9])?/collab$ ]] || [[ "$image_repository" == *zed* ]]; then
+  echo "The collab image repository is not a reviewed lowercase Orion repository" >&2
+  exit 1
+fi
 
-deployed_image_id=$(
-  kubectl \
-    --namespace=${environment} \
-    get deployment collab \
-    -o 'jsonpath={.spec.template.spec.containers[0].image}' \
-    | cut -d: -f2
-)
+current_context="$(kubectl config current-context)"
+if [[ "$current_context" != "$expected_context" ]]; then
+  echo "Refusing to inspect $environment through Kubernetes context '$current_context'" >&2
+  exit 1
+fi
 
-echo "Deployed image version: $deployed_image_id"
+kubectl_for_environment() {
+  kubectl --context="$expected_context" "$@"
+}
 
-git fetch >/dev/null
-if [[ "$(git rev-parse tags/$tag)" != $deployed_image_id ]]; then
-    echo "NOTE: tags/$tag $(git rev-parse tags/$tag) is not yet deployed"
-fi;
+validate_service() {
+  local service_name=$1
+  local deployment_uid
+  local source_revision
+  local deployment_image
+  local rollout_revision
+  local expected_image_prefix
+  local expected_digest
+  local uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+  deployment_uid="$(kubectl_for_environment -n "$environment" get "deployment/$service_name" -o 'jsonpath={.metadata.uid}')"
+  source_revision="$(kubectl_for_environment -n "$environment" get "deployment/$service_name" -o 'jsonpath={.metadata.annotations.orion\.studio/source-revision}')"
+  deployment_image="$(kubectl_for_environment -n "$environment" get "deployment/$service_name" -o 'jsonpath={.spec.template.spec.containers[0].image}')"
+  rollout_revision="$(kubectl_for_environment -n "$environment" get "deployment/$service_name" -o 'jsonpath={.metadata.annotations.deployment\.kubernetes\.io/revision}')"
+
+  if [[ ! "$deployment_uid" =~ $uuid_pattern ]]; then
+    echo "$service_name Deployment does not expose a valid UID" >&2
+    return 1
+  fi
+  if [[ ! "$source_revision" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "$service_name Deployment does not expose a valid Orion source revision" >&2
+    return 1
+  fi
+  if [[ ! "$rollout_revision" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$service_name Deployment does not expose a valid rollout revision" >&2
+    return 1
+  fi
+  expected_image_prefix="${image_repository}@sha256:"
+  if [[ "$deployment_image" != "$expected_image_prefix"* ]] || [[ ! "${deployment_image#"$expected_image_prefix"}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "$service_name Deployment is not pinned to an immutable digest from $image_repository" >&2
+    return 1
+  fi
+  expected_digest="${deployment_image#*@}"
+
+  local replica_set_rows
+  local replica_set_name=""
+  local replica_set_matches=0
+  replica_set_rows="$(
+    kubectl_for_environment -n "$environment" get replicasets -l "app=$service_name" \
+      -o 'jsonpath={range .items[*]}{.metadata.name}{"\t"}{.metadata.ownerReferences[0].uid}{"\t"}{.metadata.annotations.deployment\.kubernetes\.io/revision}{"\t"}{.spec.template.metadata.annotations.orion\.studio/source-revision}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}'
+  )"
+  while IFS=$'\t' read -r candidate_name owner_uid candidate_revision candidate_source_revision candidate_image; do
+    [[ -n "$candidate_name" ]] || continue
+    if [[ "$owner_uid" == "$deployment_uid" && "$candidate_revision" == "$rollout_revision" ]]; then
+      if [[ "$candidate_source_revision" != "$source_revision" || "$candidate_image" != "$deployment_image" ]]; then
+        echo "$service_name ReplicaSet identity differs from its Deployment" >&2
+        return 1
+      fi
+      replica_set_name=$candidate_name
+      ((replica_set_matches += 1))
+    fi
+  done <<< "$replica_set_rows"
+  if (( replica_set_matches != 1 )); then
+    echo "$service_name has $replica_set_matches current ReplicaSets; expected exactly one" >&2
+    return 1
+  fi
+
+  local pod_rows
+  local current_pods=0
+  pod_rows="$(
+    kubectl_for_environment -n "$environment" get pods -l "app=$service_name" \
+      -o 'jsonpath={range .items[*]}{.metadata.name}{"\t"}{.metadata.ownerReferences[0].name}{"\t"}{.metadata.annotations.orion\.studio/source-revision}{"\t"}{.spec.containers[0].image}{"\t"}{.status.containerStatuses[0].imageID}{"\n"}{end}'
+  )"
+  while IFS=$'\t' read -r pod_name owner_name pod_revision pod_image pod_image_id; do
+    [[ -n "$pod_name" ]] || continue
+    [[ "$owner_name" == "$replica_set_name" ]] || continue
+    ((current_pods += 1))
+    if [[ "$pod_revision" != "$source_revision" || "$pod_image" != "$deployment_image" ]]; then
+      echo "$pod_name identity differs from the $service_name Deployment" >&2
+      return 1
+    fi
+    case "$pod_image_id" in
+      "$deployment_image"|"docker-pullable://$deployment_image"|"containerd://$expected_digest"|"docker://$expected_digest") ;;
+      *)
+        echo "$pod_name runtime imageID does not match $deployment_image" >&2
+        return 1
+        ;;
+    esac
+  done <<< "$pod_rows"
+  if (( current_pods == 0 )); then
+    echo "$service_name has no Pods owned by its current ReplicaSet" >&2
+    return 1
+  fi
+
+  VALIDATED_SOURCE_REVISION=$source_revision
+  VALIDATED_IMAGE=$deployment_image
+  echo "$service_name: source=$source_revision image=$deployment_image pods=$current_pods"
+}
+
+validate_service collab
+collab_revision=$VALIDATED_SOURCE_REVISION
+collab_image=$VALIDATED_IMAGE
+validate_service api
+
+if [[ "$VALIDATED_SOURCE_REVISION" != "$collab_revision" || "$VALIDATED_IMAGE" != "$collab_image" ]]; then
+  echo "collab and api are not running the same source revision and image digest" >&2
+  exit 1
+fi
+
+echo "$environment is consistently deployed at $collab_revision ($collab_image)"

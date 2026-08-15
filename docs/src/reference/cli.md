@@ -1,24 +1,29 @@
 ---
 title: CLI Reference
-description: "Reference for Zed's command-line interface (CLI), including opening files and directories, integrating with tools, and controlling Zed from scripts."
+description: "Reference for Orion Studio's command-line interface (CLI), including opening files and directories, integrating with tools, and controlling Orion Studio from scripts."
 ---
 
 # CLI Reference
 
-Use Zed's command-line interface (CLI) to open files and directories, integrate with other tools, and control Zed from scripts.
+Use Orion Studio's command-line interface (CLI) to open files and directories, integrate with other tools, and control Orion Studio from scripts.
 
 ## Installation
 
-**macOS:** Run the {#action cli::InstallCliBinary} command from the command palette ({#kb command_palette::Toggle}) to install the `zed` CLI to `/usr/local/bin/zed`.
+**macOS and Linux:** Orion Studio release bundles install `orion-studio` as the
+canonical launcher. The same bundles may also install `orion` as an optional
+short alias and `zed` as a deprecated compatibility alias. If you build from
+source, create the launcher symlink yourself or invoke the application binary
+directly.
 
-**Linux:** The CLI is included with Zed packages. The binary name may vary by distribution (commonly `zed` or `zeditor`).
+**Windows:** Add Orion Studio's installation directory to your `PATH`, or use
+the full path to `orion-studio.exe`.
 
-**Windows:** The CLI is included with Zed. Add Zed's installation directory to your PATH, or use the full path to `zed.exe`.
+The examples below use the canonical `orion-studio` command.
 
 ## Usage
 
 ```sh
-zed [OPTIONS] [PATHS]...
+orion-studio [OPTIONS] [PATHS]...
 ```
 
 ## Opening Files and Directories
@@ -26,26 +31,26 @@ zed [OPTIONS] [PATHS]...
 Open a file:
 
 ```sh
-zed myfile.txt
+orion-studio myfile.txt
 ```
 
 Open a directory as a workspace:
 
 ```sh
-zed ~/projects/myproject
+orion-studio ~/projects/myproject
 ```
 
 Open multiple files or directories:
 
 ```sh
-zed file1.txt file2.txt ~/projects/myproject
+orion-studio file1.txt file2.txt ~/projects/myproject
 ```
 
 Open a file at a specific line and column:
 
 ```sh
-zed myfile.txt:42        # Open at line 42
-zed myfile.txt:42:10     # Open at line 42, column 10
+orion-studio myfile.txt:42        # Open at line 42
+orion-studio myfile.txt:42:10     # Open at line 42, column 10
 ```
 
 ## Options
@@ -54,11 +59,11 @@ zed myfile.txt:42:10     # Open at line 42, column 10
 
 Wait for all opened files to be closed before the CLI exits. When opening a directory, waits until the window is closed.
 
-This is useful for integrating Zed with tools that expect an editor to block until editing is complete (e.g., `git commit`):
+This is useful for integrating Orion Studio with tools that expect an editor to block until editing is complete (e.g., `git commit`):
 
 ```sh
-export EDITOR="zed --wait"
-git commit  # Opens Zed and waits for you to close the commit message file
+export EDITOR="orion-studio --wait"
+git commit  # Opens Orion Studio and waits for you to close the commit message file
 ```
 
 ### `-n`, `--new`
@@ -66,7 +71,7 @@ git commit  # Opens Zed and waits for you to close the commit message file
 Open paths in a new workspace window, even if the paths are already open in an existing window:
 
 ```sh
-zed -n ~/projects/myproject
+orion-studio -n ~/projects/myproject
 ```
 
 ### `-a`, `--add`
@@ -74,7 +79,7 @@ zed -n ~/projects/myproject
 Add paths to the currently focused workspace instead of opening a new window. When multiple workspace windows are open, files open in the focused window:
 
 ```sh
-zed -a newfile.txt
+orion-studio -a newfile.txt
 ```
 
 ### `-r`, `--reuse`
@@ -82,15 +87,15 @@ zed -a newfile.txt
 Reuse an existing window, replacing its current workspace with the new paths:
 
 ```sh
-zed -r ~/projects/different-project
+orion-studio -r ~/projects/different-project
 ```
 
 ### `-e`, `--existing`
 
-Open paths in an existing Zed window instead of creating a new one:
+Open paths in an existing Orion Studio window instead of creating a new one:
 
 ```sh
-zed -e myfile.txt
+orion-studio -e myfile.txt
 ```
 
 By default (without `-n`, `-a`, `-r`, or `-e`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
@@ -100,16 +105,16 @@ By default (without `-n`, `-a`, `-r`, or `-e`), directories open in the current 
 Open a diff view comparing two files. Can be specified multiple times:
 
 ```sh
-zed --diff file1.txt file2.txt
-zed --diff old.rs new.rs --diff old2.rs new2.rs
+orion-studio --diff file1.txt file2.txt
+orion-studio --diff old.rs new.rs --diff old2.rs new2.rs
 ```
 
 ### `--foreground`
 
-Run Zed in the foreground, keeping the terminal attached. Useful for debugging:
+Run Orion Studio in the foreground, keeping the terminal attached. Useful for debugging:
 
 ```sh
-zed --foreground
+orion-studio --foreground
 ```
 
 ### `--user-data-dir <DIR>`
@@ -117,33 +122,33 @@ zed --foreground
 Use a custom directory for all user data (database, extensions, logs) instead of the default location:
 
 ```sh
-zed --user-data-dir ~/.zed-custom
+orion-studio --user-data-dir ~/.orion-studio-custom
 ```
 
 Default locations:
 
-- **macOS:** `~/Library/Application Support/Zed`
-- **Linux:** `$XDG_DATA_HOME/zed` (typically `~/.local/share/zed`)
-- **Windows:** `%LOCALAPPDATA%\Zed`
+- **macOS:** `~/Library/Application Support/Orion Studio`
+- **Linux:** `$XDG_DATA_HOME/orion-studio` (typically `~/.local/share/orion-studio`)
+- **Windows:** `%LOCALAPPDATA%\Orion Studio`
 
 ### `-v`, `--version`
 
-Print Zed's version and exit:
+Print Orion Studio's version and exit:
 
 ```sh
-zed --version
+orion-studio --version
 ```
 
 ### `--completions <SHELL>`
 
-Generate shell completions for the `zed` CLI:
+Generate shell completions for the `orion-studio` CLI:
 
 #### Bash
 
 Add to `~/.bashrc`:
 
 ```bash
-eval "$(zed --completions bash)"
+eval "$(orion-studio --completions bash)"
 ```
 
 #### Elvish
@@ -151,9 +156,9 @@ eval "$(zed --completions bash)"
 Add to `~/.config/elvish/rc.elv`:
 
 ```elvish
-set edit:completion:arg-completer[zed] = { |@args|
-    eval (zed --completions elvish | slurp)
-    $edit:completion:arg-completer[zed] $@args
+set edit:completion:arg-completer[orion-studio] = { |@args|
+    eval (orion-studio --completions elvish | slurp)
+    $edit:completion:arg-completer[orion-studio] $@args
 }
 ```
 
@@ -162,7 +167,7 @@ set edit:completion:arg-completer[zed] = { |@args|
 Add to `~/.config/fish/config.fish`:
 
 ```fish
-zed --completions fish | source
+orion-studio --completions fish | source
 ```
 
 #### Nushell
@@ -171,7 +176,7 @@ Add to `~/.config/nushell/config.nu`:
 
 ```nu
 mkdir ($nu.data-dir | path join "vendor/autoload")
-^zed --completions nushell | save --force ($nu.data-dir | path join "vendor/autoload/zed.nu")
+^orion-studio --completions nushell | save --force ($nu.data-dir | path join "vendor/autoload/orion-studio.nu")
 ```
 
 #### Powershell
@@ -179,7 +184,7 @@ mkdir ($nu.data-dir | path join "vendor/autoload")
 Add to `$PROFILE`:
 
 ```powershell
-(&zed --completions powershell) | Out-String | Invoke-Expression
+(&orion-studio --completions powershell) | Out-String | Invoke-Expression
 ```
 
 #### Zsh
@@ -187,57 +192,62 @@ Add to `$PROFILE`:
 Add to `~/.zshrc`:
 
 ```zsh
-eval "$(zed --completions zsh)"
+eval "$(orion-studio --completions zsh)"
 ```
 
 ### `--uninstall`
 
-Uninstall Zed and remove all related files (macOS and Linux only):
+Uninstall Orion Studio and remove all related files (macOS and Linux only):
 
 ```sh
-zed --uninstall
+orion-studio --uninstall
 ```
 
-### `--zed <PATH>`
+### `--orion-studio <PATH>`
 
-Specify a custom path to the Zed application or binary:
+Specify a custom path to the Orion Studio application or binary:
 
 ```sh
-zed --zed /path/to/Zed.app myfile.txt
+orion-studio --orion-studio "/path/to/Orion Studio.app" myfile.txt
 ```
+
+`--zed` remains a deprecated alias for upgrade compatibility.
 
 ## Reading from Standard Input
 
 Read content from stdin by passing `-` as the path:
 
 ```sh
-echo "Hello, World!" | zed -
-cat myfile.txt | zed -
-ps aux | zed -
+echo "Hello, World!" | orion-studio -
+cat myfile.txt | orion-studio -
+ps aux | orion-studio -
 ```
 
-This creates a temporary file with the stdin content and opens it in Zed.
+This creates a temporary file with the stdin content and opens it in Orion Studio.
 
 ## URL Handling
 
-The CLI can open `zed://`, `file://`, and `ssh://` URLs:
+The CLI can open `orion://`, `file://`, and `ssh://` URLs:
 
 ```sh
-zed zed://settings
-zed file:///Users/whatever/.zshrc
-zed ssh://me@example.com/abs/path
-zed ssh://me@example.com:/abs/path
-zed ssh://me@example.com/~/project
-zed ssh://me@example.com:~/project
+orion-studio orion://settings
+orion-studio file:///Users/whatever/.zshrc
+orion-studio ssh://me@example.com/abs/path
+orion-studio ssh://me@example.com:/abs/path
+orion-studio ssh://me@example.com/~/project
+orion-studio ssh://me@example.com:~/project
 ```
 
-## Using Zed as Your Default Editor
+`zed://` links are accepted only as a legacy compatibility format. New links
+should use `orion://`.
 
-Set Zed as your default editor for Git and other tools:
+## Using Orion Studio as Your Default Editor
+
+Set Orion Studio as your default editor for Git and other tools:
 
 ```sh
-export EDITOR="zed --wait"
-export VISUAL="zed --wait"
+export EDITOR="orion-studio --wait"
+export VISUAL="orion-studio --wait"
 ```
 
 Add these lines to your shell configuration file (e.g., `~/.bashrc`, `~/.zshrc`).
@@ -247,14 +257,14 @@ Add these lines to your shell configuration file (e.g., `~/.bashrc`, `~/.zshrc`)
 On macOS, you can launch a specific release channel by passing the channel name as the first argument:
 
 ```sh
-zed --stable myfile.txt
-zed --preview myfile.txt
-zed --nightly myfile.txt
+orion-studio --stable myfile.txt
+orion-studio --preview myfile.txt
+orion-studio --nightly myfile.txt
 ```
 
 ## WSL Integration (Windows)
 
-On Windows, the CLI supports opening paths from WSL distributions. This is handled automatically when launching Zed from within WSL.
+On Windows, the CLI supports opening paths from WSL distributions. This is handled automatically when launching Orion Studio from within WSL.
 
 ## Exit Codes
 

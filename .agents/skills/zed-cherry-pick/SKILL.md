@@ -1,27 +1,29 @@
 ---
 name: zed-cherry-pick
-description: Cherry-pick one or more merged PRs and/or commits into Zed's `preview` or `stable` release branch. Use this whenever the user mentions cherry-picking to preview/stable, a failed cherry-pick run, or wants to manually port fix(es) into a release branch.
+description: Cherry-pick one or more merged upstream Zed PRs or commits into an Orion Studio `preview` or `stable` release branch. Use this for explicit upstream compatibility ports, failed cherry-pick runs, or manual release-branch backports.
 ---
 
-# Zed Cherry-Pick
+# Upstream Zed Cherry-Pick for Orion Studio
 
-Zed ships from two long-lived release branches that live on `origin`:
+This compatibility skill ports selected changes from the upstream Zed project into Orion Studio. In this file, "Zed" always means the upstream project at `https://github.com/zed-industries/zed`; the current product and repository are Orion Studio.
+
+Orion Studio ships from two long-lived release branches that live on `origin`:
 
 - `preview` channel → branch like `v1.4.x`
 - `stable` channel → branch like `v1.3.x`
 
 The version numbers change with each release. **Never hardcode them — always discover the current mapping** (see [Finding the target branch](#finding-the-target-branch)).
 
-A merged PR on `main` gets ported to a release branch by `script/cherry-pick`, normally driven by the `cherry_pick` GitHub Actions workflow. When that workflow fails (almost always a merge conflict), use this skill to finish the job locally and open the cherry-pick PR by hand.
+An approved upstream change that is already available from Orion Studio's `origin` gets ported to a release branch by `script/cherry-pick`, normally driven by the `cherry_pick` GitHub Actions workflow. If an upstream commit is not available from `origin`, stop and use the repository's upstream-import process first; do not silently retarget `origin` or push to the upstream repository. When the workflow fails, use this skill to finish the Orion Studio backport locally and open the cherry-pick PR by hand.
 
 ## When to use
 
-Use this when the user asks to cherry-pick one or more commits and/or Pull Requests (by number or URL) to `preview` or `stable`.
+Use this when the user explicitly asks to cherry-pick one or more upstream Zed commits or pull requests (by number or URL) to Orion Studio's `preview` or `stable` channel.
 Optionally, the user may specify whether to resolve merge conflicts; if unspecified, attempt the cherry-pick, and then if there are merge conflicts in practice, stop and inform the user that there are merge conflicts and offer to resolve them. (Users may prefer to resolve the merge conflicts themselves before continuing.)
 
 ## The script you're emulating
 
-The canonical procedure lives in `script/cherry-pick` and the `cherry_pick` GitHub Actions workflow. Read the script first if anything looks off — your local steps must produce the same branch name, PR title, and PR body it would.
+The canonical Orion Studio release procedure lives in `script/cherry-pick` and the `cherry_pick` GitHub Actions workflow. Read the script first if anything looks off — your local steps must produce the same branch name, PR title, and PR body it would.
 
 Signature: `script/cherry-pick <branch-name> <commit-sha> <channel>`
 
@@ -48,10 +50,10 @@ A successful run prints both `BRANCH:` and `CHANNEL:` env vars; that's your mapp
 
 You need three things: the **merge commit SHA**, the **target branch**, and the **channel name**.
 
-If the user requested multiple PRs and/or commits, gather the metadata for all of them first and cherry-pick them in the order they landed on `main`, oldest to newest. For PRs, order by `mergedAt`; for raw commits, use their order on `main` when available, otherwise commit date. This tends to reduce avoidable conflicts because later changes may depend on earlier ones, but it does not guarantee a conflict-free cherry-pick when the release branch has diverged.
+If the user requested multiple upstream PRs and/or commits, gather the metadata for all of them first and cherry-pick them in the order they landed on upstream `main`, oldest to newest. For PRs, order by `mergedAt`; for raw commits, use their order on upstream `main` when available, otherwise commit date. This tends to reduce avoidable conflicts because later changes may depend on earlier ones, but it does not guarantee a conflict-free cherry-pick when the Orion Studio release branch has diverged.
 
 ```
-gh pr view <PR_NUMBER> --json title,number,mergeCommit,mergedAt,url
+gh pr view <PR_NUMBER> --repo zed-industries/zed --json title,number,mergeCommit,mergedAt,url
 ```
 
 If the user said the workflow failed, fetch its log to see exactly which command failed and which file conflicted:
@@ -79,7 +81,7 @@ The branch name **must** match `cherry-pick-<branch-name>-<short-sha>` exactly (
 
 If the cherry-pick conflicts, do not immediately resolve the conflicts manually.
 
-First determine whether the conflict is likely caused by other PRs or commits that are already on `main` but missing from the release branch. If so, point out those candidate prerequisite PRs/commits to the user, including PR links, and offer to either resolve the conflicts manually or let the user run the GitHub cherry-pick workflow for those commits first.
+First determine whether the conflict is likely caused by other upstream PRs or commits that are already on upstream `main` but missing from the Orion Studio release branch. If so, point out those candidate prerequisite PRs/commits to the user, including upstream links, and offer to either resolve the conflicts manually or let the user run the Orion Studio cherry-pick workflow for those commits first.
 
 If the user wants to run the workflow for the missing prerequisites, stop here. This often keeps cherry-picks clean and eligible for automatic approval.
 
@@ -92,7 +94,7 @@ Only resolve conflicts manually if:
 Do this only after checking for missing prerequisite cherry-picks.
 
 - Inspect every conflicted file with `grep -n '<<<<<<<\\|>>>>>>>\\|=======' <path>` to find the markers.
-- Conflicts are usually `diff3` style with three sections: HEAD (release branch), `||||||| parent of <sha>` (merge base on `main`), and the incoming change.
+- Conflicts are usually `diff3` style with three sections: HEAD (Orion Studio release branch), `||||||| parent of <sha>` (upstream merge base), and the incoming change.
 - Read the **original commit** (`git --no-pager show <commit-sha> -- <path>`) to understand the author's intent, then pick the resolution that produces the equivalent end state on the release branch.
 - Don't grab unrelated changes from `main` that happen to surround the conflict — keep the cherry-pick minimal.
 

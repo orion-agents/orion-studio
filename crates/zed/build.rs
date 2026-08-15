@@ -14,7 +14,7 @@ fn main() {
             if let Some(libdir) = pkg_config::get_variable(lib, "libdir").ok() {
                 rpath_dirs.insert(libdir);
             } else {
-                eprintln!("zed build.rs: {lib} not found in pkg-config's path");
+                eprintln!("Orion Studio build.rs: {lib} not found in pkg-config's path");
             }
         }
 
@@ -24,9 +24,9 @@ fn main() {
     }
 
     if cfg!(target_os = "macos") {
-        println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
+        println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=11.0");
 
-        // Weakly link ReplayKit to ensure Zed can be used on macOS 10.15+.
+        // Weakly link ReplayKit so Orion Studio can run on macOS 10.15+.
         println!("cargo:rustc-link-arg=-Wl,-weak_framework,ReplayKit");
 
         // Seems to be required to enable Swift concurrency
@@ -41,16 +41,23 @@ fn main() {
 
     // Populate git sha environment variable if git is available
     println!("cargo:rerun-if-changed=../../.git/logs/HEAD");
+    println!("cargo:rerun-if-env-changed=ORION_STUDIO_COMMIT_SHA");
+    println!("cargo:rerun-if-env-changed=ZED_COMMIT_SHA");
+    println!("cargo:rerun-if-env-changed=ORION_STUDIO_BUILD_ID");
+    println!("cargo:rerun-if-env-changed=ZED_BUILD_ID");
     println!(
         "cargo:rustc-env=TARGET={}",
         std::env::var("TARGET").unwrap()
     );
 
-    let git_sha = match std::env::var("ZED_COMMIT_SHA").ok() {
-        Some(git_sha) => {
-            // In deterministic build environments such as Nix, we inject the commit sha into the build script.
-            Some(git_sha)
-        }
+    // Canonical input is `ORION_STUDIO_COMMIT_SHA`; the legacy `ZED_COMMIT_SHA`
+    // is still accepted as a fallback (S02/S11). In deterministic build
+    // environments such as Nix, either variable is injected into the build.
+    let git_sha = match std::env::var("ORION_STUDIO_COMMIT_SHA")
+        .ok()
+        .or_else(|| std::env::var("ZED_COMMIT_SHA").ok())
+    {
+        Some(git_sha) => Some(git_sha),
         None => {
             if let Some(output) = Command::new("git")
                 .args(["rev-parse", "HEAD"])
@@ -67,9 +74,14 @@ fn main() {
     };
 
     if let Some(git_sha) = git_sha {
+        // Emit both the canonical `ORION_STUDIO_*` and the legacy `ZED_*` names
+        // so existing consumers (and binaries built before the rename) keep
+        // resolving the same value.
+        println!("cargo:rustc-env=ORION_STUDIO_COMMIT_SHA={git_sha}");
         println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
 
         if let Some(build_identifier) = option_env!("GITHUB_RUN_NUMBER") {
+            println!("cargo:rustc-env=ORION_STUDIO_BUILD_ID={build_identifier}");
             println!("cargo:rustc-env=ZED_BUILD_ID={build_identifier}");
         }
 
@@ -78,7 +90,9 @@ fn main() {
         {
             // This is currently the best way to make `cargo build ...`'s build script
             // to print something to stdout without extra verbosity.
-            println!("cargo::warning=Info: using '{git_sha}' hash for ZED_COMMIT_SHA env var");
+            println!(
+                "cargo::warning=Info: using '{git_sha}' hash for ORION_STUDIO_COMMIT_SHA env var"
+            );
         }
     }
 

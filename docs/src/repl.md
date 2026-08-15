@@ -1,13 +1,13 @@
 ---
-title: REPL - Jupyter Kernels in Zed
-description: Run code interactively in Zed with built-in Jupyter kernel support. Execute Python, TypeScript, R, and more inline.
+title: REPL - Jupyter Kernels in Orion Studio
+description: Run code interactively in Orion Studio with built-in Jupyter kernel support. Execute Python, TypeScript, R, and more inline.
 ---
 
 # REPL
 
 ## Getting started
 
-Zed's built-in REPL uses [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) so you can run code interactively in regular editor files.
+Orion Studio's built-in REPL uses [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) so you can run code interactively in regular editor files.
 
 <figure style="width: 100%; margin: 0; overflow: hidden; border-top-left-radius: 2px; border-top-right-radius: 2px;">
     <video loop controls playsinline>
@@ -19,16 +19,12 @@ Zed's built-in REPL uses [Jupyter kernels](https://docs.jupyter.org/en/latest/pr
             src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
             type='video/mp4; codecs="avc1.4D401E, mp4a.40.2"'
         />
-        <source
-          src="https://zed.dev/img/post/repl/typescript-deno-kernel-markdown.png"
-          type="image/png"
-        />
     </video>
 </figure>
 
 ## Installation
 
-Zed supports running code in multiple languages. To get started, you need to install a kernel for the language you want to use.
+Orion Studio supports running code in multiple languages. To get started, you need to install a kernel for the language you want to use.
 
 **Currently supported languages:**
 
@@ -51,7 +47,7 @@ Outputs can be cleared with the {#action repl::ClearOutputs} command, or from th
 
 ### Cell mode
 
-Zed supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
+Orion Studio supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
 
 The {#action repl::Run} command will run each block of code between the `# %%` markers as a separate cell.
 
@@ -96,7 +92,7 @@ pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
-> Note: **On macOS, your system Python will _not_ work**. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment. Zed uses separate selections for the Python [toolchain](./configuring-languages.md#toolchains) and REPL kernel. If diagnostics differ from the REPL, align the toolchain with the kernel using {#action toolchain::Select}. Read more about the [toolchain selector for Python](./languages/python.md#selecting-a-toolchain).
+> Note: **On macOS, your system Python will _not_ work**. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment. Orion Studio uses separate selections for the Python [toolchain](./configuring-languages.md#toolchains) and REPL kernel. If diagnostics differ from the REPL, align the toolchain with the kernel using {#action toolchain::Select}. Read more about the [toolchain selector for Python](./languages/python.md#selecting-a-toolchain).
 
 ### R (Ark Kernel) {#r-ark}
 
@@ -109,7 +105,7 @@ ark --install
 ### R (Xeus Kernel) {#r-xeus}
 
 - Install [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
-- Install the R Extension for Zed (search for `R` in Zed Extensions)
+- Install the R Extension for Orion Studio (search for `R` in Orion Studio Extensions)
 
 <!--
 TBD: Improve R REPL (Ark Kernel) instructions
@@ -130,7 +126,7 @@ TBD: Improve R REPL (Ark Kernel) instructions
 ### Julia
 
 - Download and install Julia from the [official website](https://julialang.org/downloads/).
-- Install the Julia Extension for Zed (search for `Julia` in Zed Extensions)
+- Install the Julia Extension for Orion Studio (search for `Julia` in Orion Studio Extensions)
 
 <!--
 TBD: Improve Julia REPL instructions
@@ -147,7 +143,7 @@ TBD: Improve Julia REPL instructions
 
 ## Changing which kernel is used per language {#changing-kernels}
 
-Zed automatically detects available kernels and organizes them in the kernel picker:
+Orion Studio automatically detects available kernels and organizes them in the kernel picker:
 
 - **Recommended**: The Python environment matching your active toolchain (if detected)
 - **Python Environments**: Virtual environments (venv, virtualenv, Poetry, Pipenv, Conda, uv, etc.)
@@ -156,15 +152,15 @@ Zed automatically detects available kernels and organizes them in the kernel pic
 
 ### Installing ipykernel
 
-Python environments appear in the picker even if ipykernel is not installed. Environments missing ipykernel are dimmed and labeled "ipykernel not installed." When you select one, Zed automatically runs `pip install ipykernel` in that environment and activates it once installation completes.
+Python environments appear in the picker even if ipykernel is not installed. Environments missing ipykernel are dimmed and labeled "ipykernel not installed." When you select one, Orion Studio automatically runs `pip install ipykernel` in that environment and activates it once installation completes.
 
-### How Zed Recommends Kernels
+### How Orion Studio Recommends Kernels
 
-When you run code, Zed selects a kernel automatically:
+When you run code, Orion Studio selects a kernel automatically:
 
-1. **Active toolchain match**: If a Python environment matches your active toolchain and has ipykernel, Zed uses it
+1. **Active toolchain match**: If a Python environment matches your active toolchain and has ipykernel, Orion Studio uses it
 2. **First available Python env**: Otherwise, the first Python environment with ipykernel
-3. **Language-based fallback**: If no Python envs are ready, Zed picks a Jupyter kernel matching the code block's language
+3. **Language-based fallback**: If no Python envs are ready, Orion Studio picks a Jupyter kernel matching the code block's language
 
 You can override this by explicitly selecting a kernel from the picker.
 
@@ -213,4 +209,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control this, run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
+> Note: Orion Studio makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control this, run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.

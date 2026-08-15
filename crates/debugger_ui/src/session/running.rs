@@ -47,8 +47,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
-    TaskContext, ZedDebugConfig, substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, OrionDebugConfig, SharedTaskContext, Shell, ShellBuilder,
+    SpawnInTerminal, TaskContext, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -1248,7 +1248,7 @@ impl RunningState {
                     })?
                     .await?;
 
-                let zed_config = ZedDebugConfig {
+                let orion_config = OrionDebugConfig {
                     label: label.clone(),
                     adapter: adapter.clone(),
                     request,
@@ -1257,7 +1257,7 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_zed_format(zed_config)
+                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_orion_format(orion_config)
                     .await?;
                 config = scenario.config;
                 util::merge_non_null_json_value_into(extra_config, &mut config);
@@ -1267,7 +1267,7 @@ impl RunningState {
                 let Err(e) = request_type else {
                     unreachable!();
                 };
-                anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
+                anyhow::bail!("Orion Studio cannot determine how to run this debug scenario. `build` field was not provided and the debug adapter won't accept the provided configuration because: {e}");
             };
 
             Ok(DebugTaskDefinition {

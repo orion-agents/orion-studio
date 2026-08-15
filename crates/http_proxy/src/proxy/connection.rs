@@ -793,12 +793,13 @@ fn deny_request(
     );
 
     let body = format!(
-        "Request blocked by the Zed sandbox network policy.\n\n  \
+        "Request blocked by the Orion Studio sandbox network policy.\n\n  \
          Reason: {}\n\n  \
          This is not a network or server failure — it's a policy decision.\n  \
          To proceed, ask the user to approve the host on the next terminal call.\n",
         reason.human_explanation()
     );
+    // These proxy tokens remain stable for clients that parse the existing wire contract.
     let response = format!(
         "HTTP/1.1 511 Network Authentication Required\r\n\
          Via: 1.1 zed-sandbox-proxy\r\n\

@@ -65,7 +65,7 @@ fn detect_changed_extensions() -> NamedJob {
     let output = StepOutput::new(&step, "changed_extensions");
 
     let job = Job::default()
-        .with_repository_owner_guard()
+        .with_repository_guard()
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(5u32)
         .add_step(steps::checkout_repo().with_custom_fetch_depth(2))

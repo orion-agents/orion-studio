@@ -12,14 +12,36 @@ permissions:
   contents: read
 jobs:
   check_nightly_tag:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio' && github.ref == 'refs/heads/main' && vars.ORION_STUDIO_NIGHTLY_RELEASE_ENABLED == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        fetch-depth: 0
+        persist-credentials: false
         fetch-tags: true
+    - name: release_nightly::check_nightly_tag
+      run: |
+        set -euo pipefail
+
+        if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+            echo "::error::nightly release must run from refs/heads/main"
+            exit 1
+        fi
+        if [[ ! "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GITHUB_SHA is not an immutable commit SHA"
+            exit 1
+        fi
+
+        git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+        checked_out_sha=$(git rev-parse 'HEAD^{commit}')
+        main_sha=$(git rev-parse 'refs/remotes/origin/main^{commit}')
+        if [[ "$checked_out_sha" != "$GITHUB_SHA" || "$main_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::nightly source does not match protected main"
+            exit 1
+        fi
     - id: check
       name: release_nightly::check_nightly_tag
       run: |
@@ -36,7 +58,7 @@ jobs:
   run_tests_linux:
     needs:
     - check_nightly_tag
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_nightly_tag.outputs.skip != 'true'
+    if: github.repository == 'orion-agents/orion-studio' && github.ref == 'refs/heads/main' && vars.ORION_STUDIO_NIGHTLY_RELEASE_ENABLED == 'true' && needs.check_nightly_tag.outputs.skip != 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -77,7 +99,7 @@ jobs:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        SCCACHE_BUCKET: ${{ vars.ORION_STUDIO_SCCACHE_R2_BUCKET }}
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
     - name: steps::show_sccache_stats
@@ -101,15 +123,15 @@ jobs:
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       CC: clang-18
       CXX: clang++-18
+      ORION_STUDIO_REQUIRE_SENTRY: '1'
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        persist-credentials: false
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -121,6 +143,34 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
+    - name: run_bundling::validate_release_channel
+      run: |
+        set -euo pipefail
+        channel=$(tr -d '\r\n' < crates/zed/RELEASE_CHANNEL)
+        case "$channel" in
+            stable)
+                if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "::error::stable artifacts require an exact vMAJOR.MINOR.PATCH tag"
+                    exit 1
+                fi
+                ;;
+            preview)
+                if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-pre$ ]]; then
+                    echo "::error::preview artifacts require an exact vMAJOR.MINOR.PATCH-pre tag"
+                    exit 1
+                fi
+                ;;
+            nightly)
+                if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+                    echo "::error::nightly artifacts must be built from refs/heads/main"
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "::error::release artifacts cannot use channel '$channel'"
+                exit 1
+                ;;
+        esac
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -131,34 +181,41 @@ jobs:
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
+      env:
+        ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+        ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+        ORION_STUDIO_SENTRY_ORGANIZATION: ${{ vars.ORION_STUDIO_SENTRY_ORGANIZATION }}
+        ORION_STUDIO_SENTRY_PROJECT: ${{ vars.ORION_STUDIO_SENTRY_PROJECT }}
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-linux-aarch64.tar.gz
-        path: target/release/zed-linux-aarch64.tar.gz
+        name: orion-studio-linux-aarch64.tar.gz
+        path: target/release/orion-studio-linux-aarch64.tar.gz
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-linux-aarch64.gz
-        path: target/zed-remote-server-linux-aarch64.gz
+        name: orion-studio-remote-server-linux-aarch64.gz
+        path: target/orion-studio-remote-server-linux-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
+    environment: production
   bundle_linux_x86_64:
     needs:
     - run_tests_linux
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
       CC: clang-18
       CXX: clang++-18
+      ORION_STUDIO_REQUIRE_SENTRY: '1'
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        persist-credentials: false
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -170,6 +227,34 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
+    - name: run_bundling::validate_release_channel
+      run: |
+        set -euo pipefail
+        channel=$(tr -d '\r\n' < crates/zed/RELEASE_CHANNEL)
+        case "$channel" in
+            stable)
+                if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "::error::stable artifacts require an exact vMAJOR.MINOR.PATCH tag"
+                    exit 1
+                fi
+                ;;
+            preview)
+                if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-pre$ ]]; then
+                    echo "::error::preview artifacts require an exact vMAJOR.MINOR.PATCH-pre tag"
+                    exit 1
+                fi
+                ;;
+            nightly)
+                if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+                    echo "::error::nightly artifacts must be built from refs/heads/main"
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "::error::release artifacts cannot use channel '$channel'"
+                exit 1
+                ;;
+        esac
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -180,19 +265,26 @@ jobs:
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
+      env:
+        ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+        ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+        ORION_STUDIO_SENTRY_ORGANIZATION: ${{ vars.ORION_STUDIO_SENTRY_ORGANIZATION }}
+        ORION_STUDIO_SENTRY_PROJECT: ${{ vars.ORION_STUDIO_SENTRY_PROJECT }}
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-linux-x86_64.tar.gz
-        path: target/release/zed-linux-x86_64.tar.gz
+        name: orion-studio-linux-x86_64.tar.gz
+        path: target/release/orion-studio-linux-x86_64.tar.gz
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-linux-x86_64.gz
-        path: target/zed-remote-server-linux-x86_64.gz
+        name: orion-studio-remote-server-linux-x86_64.gz
+        path: target/orion-studio-remote-server-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
+    environment: production
   build_static_bwrap_linux_aarch64:
     needs:
     - run_tests_linux
@@ -209,9 +301,9 @@ jobs:
     - name: run_bundling::build_static_bwrap
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
-        name: zed
-        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        name: ${{ vars.ORION_STUDIO_CACHIX_CACHE_NAME }}
         cachixArgs: -v
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
     - name: run_bundling::build_static_bwrap
       run: nix build nixpkgs#pkgsStatic.bubblewrap -L
     - name: run_bundling::build_static_bwrap
@@ -226,6 +318,7 @@ jobs:
         path: bwrap-linux-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
+    environment: production
   build_static_bwrap_linux_x86_64:
     needs:
     - run_tests_linux
@@ -242,9 +335,9 @@ jobs:
     - name: run_bundling::build_static_bwrap
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
-        name: zed
-        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        name: ${{ vars.ORION_STUDIO_CACHIX_CACHE_NAME }}
         cachixArgs: -v
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
     - name: run_bundling::build_static_bwrap
       run: nix build nixpkgs#pkgsStatic.bubblewrap -L
     - name: run_bundling::build_static_bwrap
@@ -259,24 +352,21 @@ jobs:
         path: bwrap-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
+    environment: production
   bundle_mac_aarch64:
     needs:
     - run_tests_linux
     runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
-      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
-      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+      ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
+      ORION_STUDIO_REQUIRE_SENTRY: '1'
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        persist-credentials: false
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -288,6 +378,34 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
+    - name: run_bundling::validate_release_channel
+      run: |
+        set -euo pipefail
+        channel=$(tr -d '\r\n' < crates/zed/RELEASE_CHANNEL)
+        case "$channel" in
+            stable)
+                if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "::error::stable artifacts require an exact vMAJOR.MINOR.PATCH tag"
+                    exit 1
+                fi
+                ;;
+            preview)
+                if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-pre$ ]]; then
+                    echo "::error::preview artifacts require an exact vMAJOR.MINOR.PATCH-pre tag"
+                    exit 1
+                fi
+                ;;
+            nightly)
+                if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+                    echo "::error::nightly artifacts must be built from refs/heads/main"
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "::error::release artifacts cannot use channel '$channel'"
+                exit 1
+                ;;
+        esac
     - name: steps::setup_node
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
@@ -302,37 +420,48 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
+      env:
+        ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+        ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+        ORION_STUDIO_SENTRY_ORGANIZATION: ${{ vars.ORION_STUDIO_SENTRY_ORGANIZATION }}
+        ORION_STUDIO_SENTRY_PROJECT: ${{ vars.ORION_STUDIO_SENTRY_PROJECT }}
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+        MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+        APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+        APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+        ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
+        ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
+        ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64 }}
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-aarch64.dmg
-        path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+        name: Orion-Studio-aarch64.dmg
+        path: target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-macos-aarch64.gz
-        path: target/zed-remote-server-macos-aarch64.gz
+        name: orion-studio-remote-server-macos-aarch64.gz
+        path: target/orion-studio-remote-server-macos-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
+    environment: production
   bundle_mac_x86_64:
     needs:
     - run_tests_linux
     runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
-      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
-      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+      ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
+      ORION_STUDIO_REQUIRE_SENTRY: '1'
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        persist-credentials: false
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -344,6 +473,34 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
+    - name: run_bundling::validate_release_channel
+      run: |
+        set -euo pipefail
+        channel=$(tr -d '\r\n' < crates/zed/RELEASE_CHANNEL)
+        case "$channel" in
+            stable)
+                if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "::error::stable artifacts require an exact vMAJOR.MINOR.PATCH tag"
+                    exit 1
+                fi
+                ;;
+            preview)
+                if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-pre$ ]]; then
+                    echo "::error::preview artifacts require an exact vMAJOR.MINOR.PATCH-pre tag"
+                    exit 1
+                fi
+                ;;
+            nightly)
+                if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+                    echo "::error::nightly artifacts must be built from refs/heads/main"
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "::error::release artifacts cannot use channel '$channel'"
+                exit 1
+                ;;
+        esac
     - name: steps::setup_node
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
@@ -358,41 +515,48 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
+      env:
+        ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+        ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+        ORION_STUDIO_SENTRY_ORGANIZATION: ${{ vars.ORION_STUDIO_SENTRY_ORGANIZATION }}
+        ORION_STUDIO_SENTRY_PROJECT: ${{ vars.ORION_STUDIO_SENTRY_PROJECT }}
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+        MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+        APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+        APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+        ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
+        ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
+        ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64 }}
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-x86_64.dmg
-        path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
+        name: Orion-Studio-x86_64.dmg
+        path: target/x86_64-apple-darwin/release/Orion-Studio-x86_64.dmg
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-macos-x86_64.gz
-        path: target/zed-remote-server-macos-x86_64.gz
+        name: orion-studio-remote-server-macos-x86_64.gz
+        path: target/orion-studio-remote-server-macos-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
+    environment: production
   bundle_windows_aarch64:
     needs:
     - run_tests_linux
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
-      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
-      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
-      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-      FILE_DIGEST: SHA256
-      TIMESTAMP_DIGEST: SHA256
-      TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+      ORION_STUDIO_REQUIRE_SENTRY: '1'
+      ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        persist-credentials: false
     - name: run_bundling::set_release_channel_to_nightly
       run: |
         $ErrorActionPreference = "Stop"
@@ -400,7 +564,33 @@ jobs:
         Write-Host "Publishing version: $version on release channel nightly"
         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
       shell: pwsh
-      working-directory: ${{ env.ZED_WORKSPACE }}
+      working-directory: ${{ github.workspace }}
+    - name: run_bundling::validate_release_channel
+      run: |
+        $ErrorActionPreference = "Stop"
+        $channel = (Get-Content "crates/zed/RELEASE_CHANNEL" -Raw).Trim()
+        switch ($channel) {
+            "stable" {
+                if ($env:GITHUB_REF_TYPE -ne "tag" -or $env:GITHUB_REF_NAME -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+                    throw "stable artifacts require an exact vMAJOR.MINOR.PATCH tag"
+                }
+            }
+            "preview" {
+                if ($env:GITHUB_REF_TYPE -ne "tag" -or $env:GITHUB_REF_NAME -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+-pre$') {
+                    throw "preview artifacts require an exact vMAJOR.MINOR.PATCH-pre tag"
+                }
+            }
+            "nightly" {
+                if ($env:GITHUB_REF -ne "refs/heads/main") {
+                    throw "nightly artifacts must be built from refs/heads/main"
+                }
+            }
+            default {
+                throw "release artifacts cannot use channel '$channel'"
+            }
+        }
+      shell: pwsh
+      working-directory: ${{ github.workspace }}
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -411,42 +601,52 @@ jobs:
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
-      working-directory: ${{ env.ZED_WORKSPACE }}
+      env:
+        ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+        ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+        ORION_STUDIO_SENTRY_ORGANIZATION: ${{ vars.ORION_STUDIO_SENTRY_ORGANIZATION }}
+        ORION_STUDIO_SENTRY_PROJECT: ${{ vars.ORION_STUDIO_SENTRY_PROJECT }}
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+        AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+        AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+        ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+        CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+        ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+        FILE_DIGEST: SHA256
+        TIMESTAMP_DIGEST: SHA256
+        TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+        ORION_STUDIO_WINDOWS_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_PUBLISHER }}
+        ORION_STUDIO_WINDOWS_APPX_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_APPX_PUBLISHER }}
+      working-directory: ${{ github.workspace }}
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-aarch64.exe
-        path: target/Zed-aarch64.exe
+        name: Orion-Studio-aarch64.exe
+        path: target/Orion-Studio-aarch64.exe
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-windows-aarch64.zip
-        path: target/zed-remote-server-windows-aarch64.zip
+        name: orion-studio-remote-server-windows-aarch64.zip
+        path: target/orion-studio-remote-server-windows-aarch64.zip
         if-no-files-found: error
     timeout-minutes: 60
+    environment: production
   bundle_windows_x86_64:
     needs:
     - run_tests_linux
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
-      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
-      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
-      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-      FILE_DIGEST: SHA256
-      TIMESTAMP_DIGEST: SHA256
-      TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+      ORION_STUDIO_REQUIRE_SENTRY: '1'
+      ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        persist-credentials: false
     - name: run_bundling::set_release_channel_to_nightly
       run: |
         $ErrorActionPreference = "Stop"
@@ -454,7 +654,33 @@ jobs:
         Write-Host "Publishing version: $version on release channel nightly"
         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
       shell: pwsh
-      working-directory: ${{ env.ZED_WORKSPACE }}
+      working-directory: ${{ github.workspace }}
+    - name: run_bundling::validate_release_channel
+      run: |
+        $ErrorActionPreference = "Stop"
+        $channel = (Get-Content "crates/zed/RELEASE_CHANNEL" -Raw).Trim()
+        switch ($channel) {
+            "stable" {
+                if ($env:GITHUB_REF_TYPE -ne "tag" -or $env:GITHUB_REF_NAME -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+                    throw "stable artifacts require an exact vMAJOR.MINOR.PATCH tag"
+                }
+            }
+            "preview" {
+                if ($env:GITHUB_REF_TYPE -ne "tag" -or $env:GITHUB_REF_NAME -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+-pre$') {
+                    throw "preview artifacts require an exact vMAJOR.MINOR.PATCH-pre tag"
+                }
+            }
+            "nightly" {
+                if ($env:GITHUB_REF -ne "refs/heads/main") {
+                    throw "nightly artifacts must be built from refs/heads/main"
+                }
+            }
+            default {
+                throw "release artifacts cannot use channel '$channel'"
+            }
+        }
+      shell: pwsh
+      working-directory: ${{ github.workspace }}
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -465,29 +691,47 @@ jobs:
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
-      working-directory: ${{ env.ZED_WORKSPACE }}
+      env:
+        ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+        ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+        ORION_STUDIO_SENTRY_ORGANIZATION: ${{ vars.ORION_STUDIO_SENTRY_ORGANIZATION }}
+        ORION_STUDIO_SENTRY_PROJECT: ${{ vars.ORION_STUDIO_SENTRY_PROJECT }}
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+        AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+        AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+        ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+        CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+        ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+        FILE_DIGEST: SHA256
+        TIMESTAMP_DIGEST: SHA256
+        TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+        ORION_STUDIO_WINDOWS_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_PUBLISHER }}
+        ORION_STUDIO_WINDOWS_APPX_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_APPX_PUBLISHER }}
+      working-directory: ${{ github.workspace }}
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: Zed-x86_64.exe
-        path: target/Zed-x86_64.exe
+        name: Orion-Studio-x86_64.exe
+        path: target/Orion-Studio-x86_64.exe
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: zed-remote-server-windows-x86_64.zip
-        path: target/zed-remote-server-windows-x86_64.zip
+        name: orion-studio-remote-server-windows-x86_64.zip
+        path: target/orion-studio-remote-server-windows-x86_64.zip
         if-no-files-found: error
     timeout-minutes: 60
+    environment: production
   build_nix_linux_x86_64:
     needs:
     - run_tests_linux
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+      ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+      ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
     - name: steps::checkout_repo
@@ -505,22 +749,23 @@ jobs:
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
-        name: zed
+        name: ${{ vars.ORION_STUDIO_CACHIX_CACHE_NAME }}
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
     - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
     timeout-minutes: 60
     continue-on-error: true
+    environment: production
   build_nix_mac_aarch64:
     needs:
     - run_tests_linux
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio'
     runs-on: namespace-profile-mac-large
     env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+      ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+      ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
     - name: steps::checkout_repo
@@ -544,7 +789,7 @@ jobs:
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
-        name: zed
+        name: ${{ vars.ORION_STUDIO_CACHIX_CACHE_NAME }}
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         cachixArgs: -v
     - name: nix_build::build_nix::build
@@ -560,6 +805,7 @@ jobs:
         fi
     timeout-minutes: 60
     continue-on-error: true
+    environment: production
   update_nightly_tag:
     needs:
     - bundle_linux_aarch64
@@ -570,15 +816,15 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: github.repository == 'orion-agents/orion-studio' && github.ref == 'refs/heads/main' && vars.ORION_STUDIO_NIGHTLY_RELEASE_ENABLED == 'true'
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - id: generate-token
-      name: steps::authenticate_as_zippy
+      name: steps::authenticate_as_orion_automation
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        app-id: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
@@ -597,23 +843,32 @@ jobs:
       run: |-
         mkdir -p release-artifacts/
 
-        mv ./artifacts/Zed-aarch64.dmg/Zed-aarch64.dmg release-artifacts/Zed-aarch64.dmg
-        mv ./artifacts/Zed-x86_64.dmg/Zed-x86_64.dmg release-artifacts/Zed-x86_64.dmg
-        mv ./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz release-artifacts/zed-linux-aarch64.tar.gz
-        mv ./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz release-artifacts/zed-linux-x86_64.tar.gz
+        mv ./artifacts/Orion-Studio-aarch64.dmg/Orion-Studio-aarch64.dmg release-artifacts/Orion-Studio-aarch64.dmg
+        mv ./artifacts/Orion-Studio-x86_64.dmg/Orion-Studio-x86_64.dmg release-artifacts/Orion-Studio-x86_64.dmg
+        mv ./artifacts/orion-studio-linux-aarch64.tar.gz/orion-studio-linux-aarch64.tar.gz release-artifacts/orion-studio-linux-aarch64.tar.gz
+        mv ./artifacts/orion-studio-linux-x86_64.tar.gz/orion-studio-linux-x86_64.tar.gz release-artifacts/orion-studio-linux-x86_64.tar.gz
         mv ./artifacts/bwrap-linux-aarch64.gz/bwrap-linux-aarch64.gz release-artifacts/bwrap-linux-aarch64.gz
         mv ./artifacts/bwrap-linux-x86_64.gz/bwrap-linux-x86_64.gz release-artifacts/bwrap-linux-x86_64.gz
-        mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
-        mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
-        mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz
-        mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
-        mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
-        mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
-        mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
-        mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
+        mv ./artifacts/Orion-Studio-x86_64.exe/Orion-Studio-x86_64.exe release-artifacts/Orion-Studio-x86_64.exe
+        mv ./artifacts/Orion-Studio-aarch64.exe/Orion-Studio-aarch64.exe release-artifacts/Orion-Studio-aarch64.exe
+        mv ./artifacts/orion-studio-remote-server-macos-aarch64.gz/orion-studio-remote-server-macos-aarch64.gz release-artifacts/orion-studio-remote-server-macos-aarch64.gz
+        mv ./artifacts/orion-studio-remote-server-macos-x86_64.gz/orion-studio-remote-server-macos-x86_64.gz release-artifacts/orion-studio-remote-server-macos-x86_64.gz
+        mv ./artifacts/orion-studio-remote-server-linux-aarch64.gz/orion-studio-remote-server-linux-aarch64.gz release-artifacts/orion-studio-remote-server-linux-aarch64.gz
+        mv ./artifacts/orion-studio-remote-server-linux-x86_64.gz/orion-studio-remote-server-linux-x86_64.gz release-artifacts/orion-studio-remote-server-linux-x86_64.gz
+        mv ./artifacts/orion-studio-remote-server-windows-aarch64.zip/orion-studio-remote-server-windows-aarch64.zip release-artifacts/orion-studio-remote-server-windows-aarch64.zip
+        mv ./artifacts/orion-studio-remote-server-windows-x86_64.zip/orion-studio-remote-server-windows-x86_64.zip release-artifacts/orion-studio-remote-server-windows-x86_64.zip
+    - name: release::create_sentry_release
+      uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
+      with:
+        environment: production
+      env:
+        SENTRY_ORG: ${{ vars.ORION_STUDIO_SENTRY_ORGANIZATION }}
+        SENTRY_PROJECT: ${{ vars.ORION_STUDIO_SENTRY_PROJECT }}
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: ./script/upload-nightly
       run: ./script/upload-nightly
       env:
+        ORION_STUDIO_NIGHTLY_BUCKET: ${{ vars.ORION_STUDIO_NIGHTLY_BUCKET }}
         DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
         DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     - name: steps::update_tag
@@ -628,15 +883,8 @@ jobs:
               force: true
           })
         github-token: ${{ steps.generate-token.outputs.token }}
-    - name: release::create_sentry_release
-      uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
-      with:
-        environment: production
-      env:
-        SENTRY_ORG: zed-dev
-        SENTRY_PROJECT: zed
-        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     timeout-minutes: 60
+    environment: production
   notify_on_failure:
     needs:
     - bundle_linux_aarch64
@@ -647,7 +895,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    if: failure()
+    if: github.repository == 'orion-agents/orion-studio' && github.ref == 'refs/heads/main' && vars.ORION_STUDIO_NIGHTLY_RELEASE_ENABLED == 'true' && failure()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: release::send_slack_message
@@ -655,6 +903,7 @@ jobs:
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
         SLACK_MESSAGE: '❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+    environment: production
 concurrency:
   group: release-nightly
   cancel-in-progress: true

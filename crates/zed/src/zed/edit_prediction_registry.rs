@@ -117,7 +117,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
     match provider {
         EditPredictionProvider::None => None,
         EditPredictionProvider::Copilot => Some(EditPredictionProviderConfig::Copilot),
-        EditPredictionProvider::Zed => {
+        EditPredictionProvider::Orion => {
             Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
         }
         EditPredictionProvider::Codestral => Some(EditPredictionProviderConfig::Codestral),

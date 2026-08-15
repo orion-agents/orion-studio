@@ -1,90 +1,87 @@
 ---
-title: Zed on macOS
-description: "Zed is developed primarily on macOS, making it a first-class platform with full feature support."
+title: Orion Studio on macOS
+description: "Orion Studio is developed primarily on macOS, making it a first-class platform with full feature support."
 ---
 
-# Zed on macOS
+# Orion Studio on macOS
 
-Zed is developed primarily on macOS, making it a first-class platform with full feature support.
+Orion Studio is developed primarily on macOS, making it a first-class platform with full feature support.
 
-## Installing Zed
+## Installing Orion Studio
 
-Download Zed from the [download page](https://zed.dev/download). The download is a `.dmg` file—open it and drag Zed to your Applications folder.
+No public Orion download or Homebrew cask is assumed to be available. Build
+from source using the guide below. If maintainers publish a signed `.dmg`, it
+will appear on [GitHub Releases](https://github.com/orion-agents/orion-studio/releases).
+Verify its signature, checksum, architecture, and release notes before dragging
+Orion Studio into Applications.
 
-For the preview build, which receives updates about a week ahead of stable, visit the [preview releases page](https://zed.dev/releases/preview).
-
-After installation, Zed checks for updates automatically and prompts you when a new version is available.
-
-### Homebrew
-
-You can also install Zed using Homebrew:
-
-```sh
-brew install --cask zed
-```
-
-For the preview version:
-
-```sh
-brew install --cask zed@preview
-```
+Do not install a Zed-branded cask when you intend to install Orion Studio; that
+cask belongs to the upstream product.
 
 ### Building from Source
 
-To build Zed from source, see the [macOS development documentation](./development/macos.md).
+To build Orion Studio from source, see the [macOS development documentation](./development/macos.md).
 
 ## System Requirements
 
 - macOS 10.15.7 (Catalina) or later
 - Apple Silicon (M1/M2/M3/M4) or Intel processor
 
-Zed uses Metal for GPU-accelerated rendering, which is available on all supported macOS versions.
+Orion Studio uses Metal for GPU-accelerated rendering, which is available on all supported macOS versions.
 
 ## Installing the CLI
 
-Zed includes a command-line tool for opening files and projects from Terminal. To install it:
-
-1. Open Zed
-2. Open the command palette with `Cmd+Shift+P`
-3. Run {#action cli::InstallCliBinary}
-
-This creates a `zed` command in `/usr/local/bin`. You can then open files and folders:
+The app bundle includes a command-line launcher. The in-app **Install CLI**
+action creates `/usr/local/bin/orion-studio`; release installation scripts use
+`~/.local/bin/orion-studio`. For a source or manually copied build, create the
+canonical symlink yourself and optionally add the short alias:
 
 ```sh
-zed .                    # Open current folder
-zed file.txt             # Open a file
-zed project/ file.txt    # Open a folder and a file
+mkdir -p ~/.local/bin
+ln -sf "/Applications/Orion Studio.app/Contents/MacOS/cli" ~/.local/bin/orion-studio
+ln -sf ~/.local/bin/orion-studio ~/.local/bin/orion
+```
+
+`orion` is only a short alias. `zed` is a deprecated migration alias and must
+not replace a launcher owned by an upstream Zed installation.
+
+Then open files and folders with the canonical command:
+
+```sh
+orion-studio .                    # Open current folder
+orion-studio file.txt             # Open a file
+orion-studio project/ file.txt    # Open a folder and a file
 ```
 
 See the [CLI Reference](./reference/cli.md) for all available options.
 
 ## Uninstall
 
-1. Quit Zed if it's running
-2. Drag Zed from Applications to the Trash
+1. Quit Orion Studio if it's running
+2. Drag Orion Studio from Applications to the Trash
 3. Optionally, remove your settings and extensions:
 
 ```sh
-rm -rf ~/.config/zed
-rm -rf ~/Library/Application\ Support/Zed
-rm -rf ~/Library/Caches/Zed
-rm -rf ~/Library/Logs/Zed
-rm -rf ~/Library/Saved\ Application\ State/dev.zed.Zed.savedState
+rm -rf ~/.config/orion-studio
+rm -rf ~/Library/Application\ Support/Orion Studio
+rm -rf ~/Library/Caches/Orion Studio
+rm -rf ~/Library/Logs/Orion Studio
+rm -rf ~/Library/Saved\ Application\ State/dev.orion.OrionStudio.savedState
 ```
 
 If you installed the CLI, remove it with:
 
 ```sh
-rm /usr/local/bin/zed
+rm -f ~/.local/bin/orion-studio ~/.local/bin/orion /usr/local/bin/orion-studio
 ```
 
 ## Troubleshooting
 
-### Zed won't open or shows "damaged" warning
+### Orion Studio won't open or shows "damaged" warning
 
-If macOS reports that Zed is damaged or can't be opened, it's likely a Gatekeeper issue. Try:
+If macOS reports that Orion Studio is damaged or can't be opened, it's likely a Gatekeeper issue. Try:
 
-1. Right-click (or Control-click) on Zed in Applications
+1. Right-click (or Control-click) on Orion Studio in Applications
 2. Select "Open" from the context menu
 3. Click "Open" in the dialog that appears
 
@@ -93,46 +90,46 @@ This tells macOS to trust the application.
 If that doesn't work, remove the quarantine attribute:
 
 ```sh
-xattr -cr /Applications/Zed.app
+xattr -cr /Applications/Orion Studio.app
 ```
 
 ### CLI command not found
 
-If the `zed` command isn't available after installation:
+If the `orion-studio` command is not available after installation:
 
-1. Check that `/usr/local/bin` is in your PATH
-2. Try reinstalling the CLI via {#action cli::InstallCliBinary} in the command palette
-3. Open a new terminal window to reload your PATH
+1. Check that `~/.local/bin` is in your `PATH`.
+2. Verify that the symlink points to the `cli` binary inside the app bundle.
+3. Open a new terminal window to reload your shell configuration.
 
 ### Can't install CLI {#cant-install-cli}
 
-{#action cli::InstallCliBinary} writes a `zed` symlink to `/usr/local/bin`, which requires administrator privileges. If your macOS account isn't in the `admin` group, Zed can't create that symlink and will report that it can't install the CLI automatically.
-
-Instead, you can add an alias pointing to the `cli` binary bundled inside the app. The path depends on where Zed is installed:
+If the in-app action cannot write `/usr/local/bin/orion-studio`, use a shell
+alias or symlink for the canonical command. The bundled `cli` path depends on
+where Orion Studio is installed:
 
 ```sh
-# Default install (Zed in /Applications)
-alias zed="/Applications/Zed.app/Contents/MacOS/cli"
+# Default install (Orion Studio in /Applications)
+alias orion-studio="/Applications/Orion Studio.app/Contents/MacOS/cli"
 
-# User install (Zed in ~/Applications)
-alias zed="$HOME/Applications/Zed.app/Contents/MacOS/cli"
+# User install (Orion Studio in ~/Applications)
+alias orion-studio="$HOME/Applications/Orion Studio.app/Contents/MacOS/cli"
 
-# Preview build (Zed Preview in ~/Applications)
-alias zed="$HOME/Applications/Zed Preview.app/Contents/MacOS/cli"
+# Preview build (Orion Studio Preview in ~/Applications)
+alias orion-studio="$HOME/Applications/Orion Studio Preview.app/Contents/MacOS/cli"
 ```
 
 Add the line that matches your install to your shell configuration file. Use `~/.zshrc` for Zsh (the default on modern macOS) or `~/.bashrc` for Bash.
 
-After you restart your shell, you will be able to use `zed` from your terminal:
+After restarting your shell, use `orion-studio` from the terminal:
 
 ```sh
-zed .              # Open current folder
-zed file.txt       # Open a file
+orion-studio .              # Open current folder
+orion-studio file.txt       # Open a file
 ```
 
 ### GPU or rendering issues
 
-Zed uses Metal for rendering. If you experience graphical glitches:
+Orion Studio uses Metal for rendering. If you experience graphical glitches:
 
 1. Ensure macOS is up to date
 2. Restart your Mac to reset the GPU state
@@ -140,10 +137,11 @@ Zed uses Metal for rendering. If you experience graphical glitches:
 
 ### High memory or CPU usage
 
-If Zed uses more resources than expected:
+If Orion Studio uses more resources than expected:
 
 1. Check for runaway language servers in the terminal output ({#action zed::OpenLog})
 2. Try disabling extensions one by one to identify conflicts
 3. For large projects, consider using [project settings](./reference/all-settings.md#file-scan-exclusions) to exclude unnecessary folders from indexing
 
-For additional help, see the [Troubleshooting guide](./troubleshooting.md) or visit the [Zed Discord](https://discord.gg/zed-community).
+For additional help, see the [Troubleshooting guide](./troubleshooting.md) or
+[open a GitHub issue](https://github.com/orion-agents/orion-studio/issues/new/choose).

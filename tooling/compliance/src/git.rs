@@ -1,5 +1,6 @@
 #![allow(clippy::disallowed_methods, reason = "This is only used in xtasks")]
 use std::{
+    env,
     fmt::{self, Debug},
     ops::Not,
     process::Command,
@@ -15,8 +16,134 @@ use regex::Regex;
 use semver::Version;
 use serde::Deserialize;
 
-pub(crate) const ZED_ZIPPY_LOGIN: &str = "zed-zippy[bot]";
-pub(crate) const ZED_ZIPPY_EMAIL: &str = "234243425+zed-zippy[bot]@users.noreply.github.com";
+pub const ORION_STUDIO_AUTOMATION_GIT_NAME_ENV: &str = "ORION_STUDIO_AUTOMATION_GIT_NAME";
+pub const ORION_STUDIO_AUTOMATION_GIT_EMAIL_ENV: &str = "ORION_STUDIO_AUTOMATION_GIT_EMAIL";
+pub const ORION_STUDIO_AUTOMATION_BOT_LOGIN_ENV: &str = "ORION_STUDIO_AUTOMATION_BOT_LOGIN";
+pub const ORION_STUDIO_RELEASE_COMPLIANCE_ENV: &str = "ORION_STUDIO_RELEASE_COMPLIANCE";
+
+pub(crate) const ORION_STUDIO_AUTOMATION_NAME: &str = "orion-studio-automation[bot]";
+pub(crate) const ORION_STUDIO_AUTOMATION_LOGIN: &str = "orion-studio-automation[bot]";
+pub(crate) const ORION_STUDIO_AUTOMATION_EMAIL: &str =
+    "orion-studio-automation[bot]@users.noreply.github.com";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AutomationIdentity {
+    git_name: String,
+    git_email: String,
+    github_login: String,
+}
+
+impl AutomationIdentity {
+    pub(crate) fn from_environment() -> Result<Self> {
+        let release_compliance = release_compliance_mode()?;
+
+        Self::from_values(
+            release_compliance,
+            env::var(ORION_STUDIO_AUTOMATION_GIT_NAME_ENV).ok(),
+            env::var(ORION_STUDIO_AUTOMATION_GIT_EMAIL_ENV).ok(),
+            env::var(ORION_STUDIO_AUTOMATION_BOT_LOGIN_ENV).ok(),
+        )
+    }
+
+    fn from_values(
+        release_compliance: bool,
+        git_name: Option<String>,
+        git_email: Option<String>,
+        github_login: Option<String>,
+    ) -> Result<Self> {
+        let any_configured = git_name.is_some() || git_email.is_some() || github_login.is_some();
+
+        if release_compliance || any_configured {
+            let git_name = git_name.with_context(|| {
+                format!("Missing required {ORION_STUDIO_AUTOMATION_GIT_NAME_ENV}")
+            })?;
+            let git_email = git_email.with_context(|| {
+                format!("Missing required {ORION_STUDIO_AUTOMATION_GIT_EMAIL_ENV}")
+            })?;
+            let github_login = github_login.with_context(|| {
+                format!("Missing required {ORION_STUDIO_AUTOMATION_BOT_LOGIN_ENV}")
+            })?;
+
+            return Self::new(git_name, git_email, github_login);
+        }
+
+        Self::new(
+            ORION_STUDIO_AUTOMATION_NAME.to_owned(),
+            ORION_STUDIO_AUTOMATION_EMAIL.to_owned(),
+            ORION_STUDIO_AUTOMATION_LOGIN.to_owned(),
+        )
+    }
+
+    fn new(git_name: String, git_email: String, github_login: String) -> Result<Self> {
+        if git_name != ORION_STUDIO_AUTOMATION_NAME {
+            anyhow::bail!(
+                "{ORION_STUDIO_AUTOMATION_GIT_NAME_ENV} must be {ORION_STUDIO_AUTOMATION_NAME:?}"
+            );
+        }
+
+        if github_login != ORION_STUDIO_AUTOMATION_LOGIN {
+            anyhow::bail!(
+                "{ORION_STUDIO_AUTOMATION_BOT_LOGIN_ENV} must be {ORION_STUDIO_AUTOMATION_LOGIN:?}"
+            );
+        }
+
+        static AUTOMATION_EMAIL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^(?:[0-9]+\+)?orion-studio-automation\[bot\]@users\.noreply\.github\.com$")
+                .expect("automation email regex must be valid")
+        });
+
+        if !AUTOMATION_EMAIL_REGEX.is_match(&git_email) {
+            anyhow::bail!(
+                "{ORION_STUDIO_AUTOMATION_GIT_EMAIL_ENV} must identify the Orion Studio automation GitHub App"
+            );
+        }
+
+        Ok(Self {
+            git_name,
+            git_email,
+            github_login,
+        })
+    }
+
+    pub(crate) fn git_name(&self) -> &str {
+        &self.git_name
+    }
+
+    pub(crate) fn git_email(&self) -> &str {
+        &self.git_email
+    }
+
+    pub(crate) fn github_login(&self) -> &str {
+        &self.github_login
+    }
+}
+
+fn release_compliance_mode() -> Result<bool> {
+    let explicitly_enabled = match env::var(ORION_STUDIO_RELEASE_COMPLIANCE_ENV) {
+        Ok(value) => parse_boolean_env_var(ORION_STUDIO_RELEASE_COMPLIANCE_ENV, &value)?,
+        Err(env::VarError::NotPresent) => false,
+        Err(env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("{ORION_STUDIO_RELEASE_COMPLIANCE_ENV} must contain valid UTF-8")
+        }
+    };
+    let github_tag = env_var_is_true("GITHUB_ACTIONS")
+        && (env::var("GITHUB_REF_TYPE").as_deref() == Ok("tag")
+            || env::var("GITHUB_REF").is_ok_and(|reference| reference.starts_with("refs/tags/")));
+
+    Ok(explicitly_enabled || github_tag)
+}
+
+fn parse_boolean_env_var(name: &str, value: &str) -> Result<bool> {
+    match value {
+        "1" | "true" | "TRUE" => Ok(true),
+        "0" | "false" | "FALSE" => Ok(false),
+        _ => anyhow::bail!("{name} must be one of 1, true, 0, or false"),
+    }
+}
+
+fn env_var_is_true(name: &str) -> bool {
+    env::var(name).is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE"))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutomatedChangeKind {
@@ -198,8 +325,8 @@ impl Committer {
         }
     }
 
-    pub(crate) fn is_zed_zippy(&self) -> bool {
-        self.email == ZED_ZIPPY_EMAIL
+    pub(crate) fn is_orion_studio_automation(&self, identity: &AutomationIdentity) -> bool {
+        self.name == identity.git_name() && self.email == identity.git_email()
     }
 }
 
@@ -673,7 +800,7 @@ mod tests {
     #[test]
     fn automated_change_detects_version_bump() {
         let line = format!(
-            "abc123{d}Zed Zippy{d}bot@test.com{d}Bump to 0.230.2 for @cole-miller",
+            "abc123{d}Orion Studio Automation{d}bot@test.com{d}Bump to 0.230.2 for @cole-miller",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
@@ -685,7 +812,7 @@ mod tests {
     #[test]
     fn automated_change_detects_stable_release_channel() {
         let line = format!(
-            "abc123{d}Zed Zippy{d}bot@test.com{d}v0.233.x stable for @cole-miller",
+            "abc123{d}Orion Studio Automation{d}bot@test.com{d}v0.233.x stable for @cole-miller",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
@@ -697,7 +824,7 @@ mod tests {
     #[test]
     fn automated_change_detects_preview_release_channel() {
         let line = format!(
-            "abc123{d}Zed Zippy{d}bot@test.com{d}v0.234.x preview for @cole-miller",
+            "abc123{d}Orion Studio Automation{d}bot@test.com{d}v0.234.x preview for @cole-miller",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
@@ -719,7 +846,7 @@ mod tests {
     #[test]
     fn automated_change_rejects_wrong_prefix() {
         let line = format!(
-            "abc123{d}Zed Zippy{d}bot@test.com{d}Fix thing for @cole-miller",
+            "abc123{d}Orion Studio Automation{d}bot@test.com{d}Fix thing for @cole-miller",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
@@ -729,7 +856,7 @@ mod tests {
     #[test]
     fn automated_change_rejects_trailing_text() {
         let line = format!(
-            "abc123{d}Zed Zippy{d}bot@test.com{d}Bump to 0.230.2 for @cole-miller extra",
+            "abc123{d}Orion Studio Automation{d}bot@test.com{d}Bump to 0.230.2 for @cole-miller extra",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
@@ -737,15 +864,74 @@ mod tests {
     }
 
     #[test]
-    fn committer_is_zed_zippy() {
-        let committer = Committer::new("Zed Zippy", ZED_ZIPPY_EMAIL);
-        assert!(committer.is_zed_zippy());
+    fn committer_is_orion_studio_automation() {
+        let identity = AutomationIdentity::from_values(false, None, None, None).unwrap();
+        let committer = Committer::new(ORION_STUDIO_AUTOMATION_NAME, ORION_STUDIO_AUTOMATION_EMAIL);
+        assert!(committer.is_orion_studio_automation(&identity));
     }
 
     #[test]
-    fn committer_is_not_zed_zippy() {
-        let committer = Committer::new("Alice", "alice@test.com");
-        assert!(!committer.is_zed_zippy());
+    fn committer_rejects_wrong_name_with_orion_email() {
+        let identity = AutomationIdentity::from_values(false, None, None, None).unwrap();
+        let committer = Committer::new("Alice", ORION_STUDIO_AUTOMATION_EMAIL);
+        assert!(!committer.is_orion_studio_automation(&identity));
+    }
+
+    #[test]
+    fn committer_rejects_legacy_automation_identity() {
+        let identity = AutomationIdentity::from_values(false, None, None, None).unwrap();
+        let committer = Committer::new(
+            "Zed Zippy",
+            "234243425+zed-zippy[bot]@users.noreply.github.com",
+        );
+        assert!(!committer.is_orion_studio_automation(&identity));
+    }
+
+    #[test]
+    fn release_compliance_requires_explicit_automation_identity() {
+        let result = AutomationIdentity::from_values(true, None, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_release_compliance_flag_is_rejected() {
+        let result = parse_boolean_env_var(ORION_STUDIO_RELEASE_COMPLIANCE_ENV, "yes");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn partial_automation_identity_configuration_is_rejected() {
+        let result = AutomationIdentity::from_values(
+            false,
+            Some(ORION_STUDIO_AUTOMATION_NAME.to_owned()),
+            None,
+            Some(ORION_STUDIO_AUTOMATION_LOGIN.to_owned()),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn configured_orion_automation_identity_accepts_github_app_email() {
+        let identity = AutomationIdentity::from_values(
+            true,
+            Some(ORION_STUDIO_AUTOMATION_NAME.to_owned()),
+            Some("123456+orion-studio-automation[bot]@users.noreply.github.com".to_owned()),
+            Some(ORION_STUDIO_AUTOMATION_LOGIN.to_owned()),
+        )
+        .unwrap();
+
+        assert_eq!(identity.github_login(), ORION_STUDIO_AUTOMATION_LOGIN);
+    }
+
+    #[test]
+    fn configured_legacy_automation_identity_is_rejected() {
+        let result = AutomationIdentity::from_values(
+            true,
+            Some("Zed Zippy".to_owned()),
+            Some("234243425+zed-zippy[bot]@users.noreply.github.com".to_owned()),
+            Some("zed-zippy[bot]".to_owned()),
+        );
+        assert!(result.is_err());
     }
 
     #[test]

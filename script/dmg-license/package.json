@@ -1,0 +1,10 @@
+{
+  "name": "orion-studio-dmg-license-tool",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned tooling for embedding the Orion Studio DMG license agreement",
+  "dependencies": {
+    "dmg-license": "1.0.11",
+    "minimist": "1.2.8"
+  }
+}

@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://www.schemastore.org/github-issue-config.json
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: Feature request
-    url: https://github.com/zed-industries/zed/discussions/new?category=feature-requests
-    about: To request a feature, open a new discussion under one of the appropriate categories.
-  - name: Our Discord community
-    url: https://discord.com/invite/zedindustries
-    about: Join our Discord server for real-time discussion and user support.
+  - name: Preview support guide
+    url: https://github.com/orion-agents/orion-studio/blob/main/SUPPORT.md
+    about: Check the supported Preview scope and the information to include in a report.
+  - name: Private security report
+    url: https://github.com/orion-agents/orion-studio/security/advisories/new
+    about: Report vulnerabilities and sensitive security details privately.

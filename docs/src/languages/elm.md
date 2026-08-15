@@ -1,18 +1,18 @@
 ---
 title: Elm
-description: "Configure Elm language support in Zed, including language servers, formatting, and debugging."
+description: "Configure Elm language support in Orion Studio, including language servers, formatting, and debugging."
 ---
 
 # Elm
 
-Elm support is available through the [Elm extension](https://github.com/zed-extensions/elm).
+Elm support is available through the upstream-Zed [Elm extension](https://github.com/zed-extensions/elm), which Orion Studio consumes through extension compatibility.
 
 - Tree-sitter: [elm-tooling/tree-sitter-elm](https://github.com/elm-tooling/tree-sitter-elm)
 - Language Server: [elm-tooling/elm-language-server](https://github.com/elm-tooling/elm-language-server)
 
 ## Setup
 
-Zed support for Elm requires installation of `elm`, `elm-format`, and `elm-review`.
+Orion Studio support for Elm requires installation of `elm`, `elm-format`, and `elm-review`.
 
 1. [Install Elm](https://guide.elm-lang.org/install/elm.html) (or run `brew install elm` on macOS).
 2. Install `elm-review` to support code linting:

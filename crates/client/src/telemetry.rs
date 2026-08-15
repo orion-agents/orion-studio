@@ -79,27 +79,69 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
-static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
-    option_env!("ZED_CLIENT_CHECKSUM_SEED")
-        .map(|s| s.as_bytes().into())
-        .or_else(|| {
-            env::var("ZED_CLIENT_CHECKSUM_SEED")
-                .ok()
-                .map(|s| s.as_bytes().into())
-        })
+const TELEMETRY_EVENT_SOURCE: &str = "orion-studio";
+static ORION_STUDIO_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
+    compile_or_runtime_environment_variable(
+        option_env!("ORION_STUDIO_CLIENT_CHECKSUM_SEED"),
+        "ORION_STUDIO_CLIENT_CHECKSUM_SEED",
+        option_env!("ZED_CLIENT_CHECKSUM_SEED"),
+        "ZED_CLIENT_CHECKSUM_SEED",
+    )
+    .map(|seed| seed.into_bytes())
 });
 
 pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
-    option_env!("ZED_MINIDUMP_ENDPOINT")
-        .map(str::to_string)
-        .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
+    compile_or_runtime_environment_variable(
+        option_env!("ORION_STUDIO_MINIDUMP_ENDPOINT"),
+        "ORION_STUDIO_MINIDUMP_ENDPOINT",
+        option_env!("ZED_MINIDUMP_ENDPOINT"),
+        "ZED_MINIDUMP_ENDPOINT",
+    )
 });
 
 pub fn should_install_crash_handler(channel: ReleaseChannel) -> bool {
-    matches!(
-        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || (channel != ReleaseChannel::Dev && MINIDUMP_ENDPOINT.is_some())
+    let generate_minidumps = env::var("ORION_STUDIO_GENERATE_MINIDUMPS").or_else(|error| {
+        if matches!(error, env::VarError::NotPresent) {
+            env::var("ZED_GENERATE_MINIDUMPS")
+        } else {
+            Err(error)
+        }
+    });
+    matches!(generate_minidumps.as_deref(), Ok("true" | "1"))
+        || (channel != ReleaseChannel::Dev && MINIDUMP_ENDPOINT.is_some())
+}
+
+fn compile_or_runtime_environment_variable(
+    canonical_compile_time: Option<&'static str>,
+    canonical_name: &str,
+    legacy_compile_time: Option<&'static str>,
+    legacy_name: &str,
+) -> Option<String> {
+    select_compile_or_runtime_environment_variable(
+        canonical_compile_time,
+        env::var(canonical_name),
+        legacy_compile_time,
+        || env::var(legacy_name),
+    )
+}
+
+fn select_compile_or_runtime_environment_variable(
+    canonical_compile_time: Option<&str>,
+    canonical_runtime: Result<String, env::VarError>,
+    legacy_compile_time: Option<&str>,
+    legacy_runtime: impl FnOnce() -> Result<String, env::VarError>,
+) -> Option<String> {
+    if let Some(value) = canonical_compile_time {
+        return Some(value.to_owned());
+    }
+
+    match canonical_runtime {
+        Ok(value) => Some(value),
+        Err(env::VarError::NotPresent) => legacy_compile_time
+            .map(str::to_owned)
+            .or_else(|| legacy_runtime().ok()),
+        Err(env::VarError::NotUnicode(_)) => None,
+    }
 }
 
 static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -350,7 +392,7 @@ impl Telemetry {
     }
 
     pub fn has_checksum_seed(&self) -> bool {
-        ZED_CLIENT_CHECKSUM_SEED.is_some()
+        ORION_STUDIO_CLIENT_CHECKSUM_SEED.is_some()
     }
 
     pub fn start(
@@ -572,11 +614,7 @@ impl Telemetry {
             return;
         }
 
-        match &mut event {
-            Event::Flexible(event) => event
-                .event_properties
-                .insert("event_source".into(), "zed".into()),
-        };
+        set_event_source(&mut event);
 
         if state.flush_events_task.is_none() {
             let this = self.clone();
@@ -653,6 +691,8 @@ impl Telemetry {
                     .as_ref(),
             )
             .header("Content-Type", "application/json")
+            // The hosted telemetry service still validates this inherited wire header.
+            // Rename it only with a coordinated server rollout.
             .header("x-zed-checksum", checksum)
             .body(json_bytes.into())?)
     }
@@ -716,8 +756,16 @@ impl Telemetry {
     }
 }
 
+fn set_event_source(event: &mut Event) {
+    match event {
+        Event::Flexible(event) => event
+            .event_properties
+            .insert("event_source".into(), TELEMETRY_EVENT_SOURCE.into()),
+    };
+}
+
 pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
-    let checksum_seed = ZED_CLIENT_CHECKSUM_SEED.as_ref()?;
+    let checksum_seed = ORION_STUDIO_CLIENT_CHECKSUM_SEED.as_ref()?;
 
     let mut summer = Sha256::new();
     summer.update(checksum_seed);
@@ -743,6 +791,57 @@ mod tests {
     use telemetry_events::FlexibleEvent;
     use util::rel_path::RelPath;
     use worktree::{PathChange, ProjectEntryId, WorktreeId};
+
+    #[test]
+    fn environment_variable_selection_preserves_canonical_semantics() {
+        let compile_time = select_compile_or_runtime_environment_variable(
+            Some("canonical"),
+            Ok("runtime".to_owned()),
+            Some("legacy"),
+            || Ok("legacy-runtime".to_owned()),
+        );
+        assert_eq!(compile_time.as_deref(), Some("canonical"));
+
+        let empty_runtime = select_compile_or_runtime_environment_variable(
+            None,
+            Ok(String::new()),
+            Some("legacy"),
+            || Ok("legacy-runtime".to_owned()),
+        );
+        assert_eq!(empty_runtime.as_deref(), Some(""));
+
+        let legacy = select_compile_or_runtime_environment_variable(
+            None,
+            Err(env::VarError::NotPresent),
+            Some("legacy"),
+            || Ok("legacy-runtime".to_owned()),
+        );
+        assert_eq!(legacy.as_deref(), Some("legacy"));
+
+        let invalid = select_compile_or_runtime_environment_variable(
+            None,
+            Err(env::VarError::NotUnicode("invalid".into())),
+            Some("legacy"),
+            || Ok("legacy-runtime".to_owned()),
+        );
+        assert_eq!(invalid, None);
+    }
+
+    #[test]
+    fn telemetry_event_source_uses_orion_studio_identity() {
+        let mut event = Event::Flexible(FlexibleEvent {
+            event_type: "test".to_owned(),
+            event_properties: HashMap::new(),
+        });
+
+        set_event_source(&mut event);
+
+        let Event::Flexible(event) = event;
+        assert_eq!(
+            event.event_properties.get("event_source"),
+            Some(&serde_json::Value::String("orion-studio".to_owned()))
+        );
+    }
 
     #[gpui::test]
     async fn test_telemetry_flush_on_max_queue_size(

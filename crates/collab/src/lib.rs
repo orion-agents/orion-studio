@@ -7,7 +7,7 @@ pub mod executor;
 pub mod rpc;
 pub mod services;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
 use aws_config::{BehaviorVersion, Region};
 use axum::{
     http::{HeaderMap, StatusCode},
@@ -16,13 +16,30 @@ use axum::{
 use db::Database;
 use executor::Executor;
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 use util::ResultExt;
 
 use crate::services::{CloudUserService, UserService};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
+
+// Orion clients still use these names on the wire. Removing or renaming them
+// before all supported clients negotiate Orion headers would break upgrades.
+pub const LEGACY_ZED_CHECKSUM_HEADER: &str = "x-zed-checksum";
+pub const LEGACY_ZED_SYSTEM_ID_HEADER: &str = "x-zed-system-id";
+pub const LEGACY_ZED_PROTOCOL_VERSION_HEADER: &str = "x-zed-protocol-version";
+pub const LEGACY_ZED_APP_VERSION_HEADER: &str = "x-zed-app-version";
+pub const LEGACY_ZED_RELEASE_CHANNEL_HEADER: &str = "x-zed-release-channel";
+pub const LEGACY_ZED_HEADER_RETIREMENT_CONTRACT: &str =
+    "Retire only after every supported Orion client sends negotiated Orion headers";
+
+pub type LegacyZedChecksumHeader = api::events::ZedChecksumHeader;
+pub type LegacyZedSystemIdHeader = api::SystemIdHeader;
+pub type LegacyZedProtocolVersionHeader = rpc::ProtocolVersion;
+pub type LegacyZedAppVersionHeader = rpc::AppVersionHeader;
+pub type LegacyZedReleaseChannelHeader = rpc::ReleaseChannelHeader;
+pub type LegacyZedVersion = rpc::ZedVersion;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -117,6 +134,48 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum OrionStudioEnvironment {
+    Development,
+    Staging,
+    Production,
+    #[cfg(feature = "test-support")]
+    Test,
+}
+
+impl OrionStudioEnvironment {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Development => "development",
+            Self::Staging => "staging",
+            Self::Production => "production",
+            #[cfg(feature = "test-support")]
+            Self::Test => "test",
+        }
+    }
+}
+
+impl AsRef<str> for OrionStudioEnvironment {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Deref for OrionStudioEnvironment {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for OrionStudioEnvironment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Deserialize)]
 pub struct Config {
     pub http_port: u16,
@@ -136,31 +195,42 @@ pub struct Config {
     pub kinesis_stream: Option<String>,
     pub kinesis_access_key: Option<String>,
     pub kinesis_secret_key: Option<String>,
-    pub zed_environment: Arc<str>,
-    pub zed_cloud_internal_api_key: String,
-    pub zed_client_checksum_seed: Option<String>,
+    pub orion_studio_environment: OrionStudioEnvironment,
+    pub orion_studio_web_url: String,
+    pub orion_studio_cloud_url: String,
+    pub orion_studio_cloud_internal_api_key: String,
+    pub orion_studio_client_checksum_seed: Option<String>,
 }
 
 impl Config {
     pub fn is_development(&self) -> bool {
-        self.zed_environment == "development".into()
+        self.orion_studio_environment == OrionStudioEnvironment::Development
     }
 
-    /// Returns the base `zed.dev` URL.
-    pub fn zed_dot_dev_url(&self) -> &str {
-        match self.zed_environment.as_ref() {
-            "development" => "http://localhost:3000",
-            "staging" => "https://staging.zed.dev",
-            _ => "https://zed.dev",
-        }
+    /// Returns the base `orion.dev` URL.
+    pub fn orion_dev_url(&self) -> &str {
+        &self.orion_studio_web_url
     }
 
-    /// Returns the base Zed Cloud URL.
-    pub fn zed_cloud_url(&self) -> &str {
-        match self.zed_environment.as_ref() {
-            "development" => "http://localhost:8787",
-            _ => "https://cloud.zed.dev",
+    /// Returns the base Orion Cloud URL.
+    pub fn orion_cloud_url(&self) -> &str {
+        &self.orion_studio_cloud_url
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let web_url = validate_base_url("ORION_STUDIO_WEB_URL", &self.orion_studio_web_url)?;
+        let cloud_url = validate_base_url("ORION_STUDIO_CLOUD_URL", &self.orion_studio_cloud_url)?;
+        ensure!(
+            self.orion_studio_web_url != self.orion_studio_cloud_url,
+            "ORION_STUDIO_WEB_URL and ORION_STUDIO_CLOUD_URL must identify different services"
+        );
+        if !self.is_development() {
+            ensure!(
+                web_url.scheme() == "https" && cloud_url.scheme() == "https",
+                "staging and production Orion service URLs must use https"
+            );
         }
+        Ok(())
     }
 
     #[cfg(feature = "test-support")]
@@ -174,20 +244,52 @@ impl Config {
             livekit_secret: None,
             rust_log: None,
             log_json: None,
-            zed_environment: "test".into(),
-            zed_cloud_internal_api_key: "test-internal-api-key".into(),
+            orion_studio_environment: OrionStudioEnvironment::Test,
+            orion_studio_web_url: "http://orion.test".into(),
+            orion_studio_cloud_url: "http://cloud.orion.test".into(),
+            orion_studio_cloud_internal_api_key: "test-internal-api-key".into(),
             blob_store_url: None,
             blob_store_region: None,
             blob_store_access_key: None,
             blob_store_secret_key: None,
             blob_store_bucket: None,
-            zed_client_checksum_seed: None,
+            orion_studio_client_checksum_seed: None,
             kinesis_region: None,
             kinesis_access_key: None,
             kinesis_secret_key: None,
             kinesis_stream: None,
         }
     }
+}
+
+fn validate_base_url(variable_name: &str, value: &str) -> anyhow::Result<reqwest::Url> {
+    let parsed = reqwest::Url::parse(value)
+        .with_context(|| format!("{variable_name} must be an absolute HTTP(S) URL"))?;
+    ensure!(
+        matches!(parsed.scheme(), "http" | "https"),
+        "{variable_name} must use http or https"
+    );
+    ensure!(
+        parsed.host_str().is_some(),
+        "{variable_name} must include a host"
+    );
+    ensure!(
+        parsed.username().is_empty() && parsed.password().is_none(),
+        "{variable_name} must not contain credentials"
+    );
+    ensure!(
+        parsed.query().is_none() && parsed.fragment().is_none(),
+        "{variable_name} must not contain a query or fragment"
+    );
+    ensure!(
+        parsed.path() == "/",
+        "{variable_name} must be an origin without a path"
+    );
+    ensure!(
+        !value.ends_with('/'),
+        "{variable_name} must not end with a slash"
+    );
+    Ok(parsed)
 }
 
 /// The service mode that collab should run in.
@@ -222,6 +324,7 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
+        config.validate()?;
         let mut db_options = db::ConnectOptions::new(config.database_url.clone());
         db_options.max_connections(config.database_max_connections);
         let mut db = Database::new(db_options).await?;
@@ -262,8 +365,8 @@ impl AppState {
             },
             user_service: Arc::new(CloudUserService::new(
                 http_client,
-                config.zed_cloud_url().to_string(),
-                config.zed_cloud_internal_api_key.clone(),
+                config.orion_cloud_url().to_string(),
+                config.orion_studio_cloud_internal_api_key.clone(),
             )),
             config,
         };

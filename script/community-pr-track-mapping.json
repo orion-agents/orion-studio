@@ -1,5 +1,5 @@
 {
-  "_comment": "Tracks are ordered by specificity (fewest labels first). When a PR has labels matching multiple tracks, the first match wins. To add a new track, insert it at the position that reflects its size. To add a label to an existing track, append it to that track's labels array.",
+  "_comment": "Tracks are ordered by specificity (fewest labels first). When a PR has labels matching multiple tracks, the first match wins. Canonical Orion labels and the matching GitHub Project Track option must be provisioned before this mapping is enabled; there is intentionally no legacy-label fallback, and a missing Track option fails the workflow closed.",
   "tracks": [
     {
       "name": "Edit Predictions",
@@ -72,14 +72,14 @@
       ]
     },
     {
-      "name": "Auth & Zed.dev",
+      "name": "Auth & Orion Studio",
       "labels": [
         "area:auth",
         "area:billing",
         "area:permissions",
-        "area:zed account",
-        "area:zed.dev",
-        "area:zed.dev/theme builder"
+        "area:orion account",
+        "area:orion.dev",
+        "area:orion.dev/theme builder"
       ]
     },
     {

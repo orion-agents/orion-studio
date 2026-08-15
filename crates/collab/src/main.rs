@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use axum::headers::HeaderMapExt;
 use axum::{
     Extension, Router,
@@ -15,6 +15,7 @@ use collab::{
 use collab::{REVISION, ServiceMode, VERSION};
 use db::Database;
 use std::{
+    collections::BTreeMap,
     env::args,
     net::{SocketAddr, TcpListener},
     sync::Arc,
@@ -27,6 +28,63 @@ use tracing_subscriber::{
     Layer, filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt,
 };
 use util::ResultExt as _;
+
+const LEGACY_CONFIG_ENVIRONMENT_VARIABLES: [(&str, &str); 3] = [
+    ("ORION_STUDIO_ENVIRONMENT", "ZED_ENVIRONMENT"),
+    (
+        "ORION_STUDIO_CLOUD_INTERNAL_API_KEY",
+        "ZED_CLOUD_INTERNAL_API_KEY",
+    ),
+    (
+        "ORION_STUDIO_CLIENT_CHECKSUM_SEED",
+        "ZED_CLIENT_CHECKSUM_SEED",
+    ),
+];
+
+fn config_from_environment() -> Result<Config, envy::Error> {
+    config_from_environment_variables(std::env::vars())
+}
+
+fn config_from_environment_variables(
+    variables: impl IntoIterator<Item = (String, String)>,
+) -> Result<Config, envy::Error> {
+    let mut variables = variables.into_iter().collect::<BTreeMap<_, _>>();
+    let legacy_environment = if variables.contains_key("ORION_STUDIO_ENVIRONMENT") {
+        None
+    } else {
+        variables.get("ZED_ENVIRONMENT").cloned()
+    };
+
+    for (canonical_name, legacy_name) in LEGACY_CONFIG_ENVIRONMENT_VARIABLES {
+        if !variables.contains_key(canonical_name) {
+            if let Some(legacy_value) = variables.get(legacy_name).cloned() {
+                variables.insert(canonical_name.to_owned(), legacy_value);
+            }
+        }
+        variables.remove(legacy_name);
+    }
+
+    if let Some(legacy_environment) = legacy_environment {
+        let web_url_missing = !variables.contains_key("ORION_STUDIO_WEB_URL");
+        let cloud_url_missing = !variables.contains_key("ORION_STUDIO_CLOUD_URL");
+
+        if web_url_missing && cloud_url_missing {
+            let endpoints = match legacy_environment.as_str() {
+                "development" => Some(("http://localhost:3000", "http://localhost:8787")),
+                "staging" => Some(("https://staging.orion.dev", "https://cloud.orion.dev")),
+                "production" => Some(("https://orion.dev", "https://cloud.orion.dev")),
+                _ => None,
+            };
+
+            if let Some((web_url, cloud_url)) = endpoints {
+                variables.insert("ORION_STUDIO_WEB_URL".to_owned(), web_url.to_owned());
+                variables.insert("ORION_STUDIO_CLOUD_URL".to_owned(), cloud_url.to_owned());
+            }
+        }
+    }
+
+    envy::from_iter(variables)
+}
 
 #[expect(clippy::result_large_err)]
 #[tokio::main]
@@ -53,7 +111,8 @@ async fn main() -> Result<()> {
                 }
             };
 
-            let config = envy::from_env::<Config>().expect("error loading config");
+            let config = config_from_environment().context("error loading config")?;
+            config.validate()?;
             init_tracing(&config);
             init_panic_hook();
 
@@ -75,7 +134,7 @@ async fn main() -> Result<()> {
                 if mode.is_collab() {
                     let epoch = state
                         .db
-                        .create_server(&state.config.zed_environment)
+                        .create_server(&state.config.orion_studio_environment)
                         .await?;
                     let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                     rpc_server.start().await?;
@@ -193,7 +252,10 @@ async fn setup_app_database(config: &Config) -> Result<()> {
 }
 
 async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
-    format!("zed:{mode} v{VERSION} ({})", REVISION.unwrap_or("unknown"))
+    format!(
+        "orion-studio:{mode} v{VERSION} ({})",
+        REVISION.unwrap_or("unknown")
+    )
 }
 
 async fn handle_liveness_probe(app_state: Option<Extension<Arc<AppState>>>) -> Result<String> {
@@ -250,4 +312,377 @@ fn init_panic_hook() {
             .map(|loc| format!("{}:{}", loc.file(), loc.line()));
         tracing::error!(panic = true, ?location, %panic_message, %backtrace, "Server Panic");
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use collab::{
+        LEGACY_ZED_APP_VERSION_HEADER, LEGACY_ZED_CHECKSUM_HEADER,
+        LEGACY_ZED_HEADER_RETIREMENT_CONTRACT, LEGACY_ZED_PROTOCOL_VERSION_HEADER,
+        LEGACY_ZED_RELEASE_CHANNEL_HEADER, LEGACY_ZED_SYSTEM_ID_HEADER, LegacyZedAppVersionHeader,
+        LegacyZedChecksumHeader, LegacyZedProtocolVersionHeader, LegacyZedReleaseChannelHeader,
+        LegacyZedSystemIdHeader, OrionStudioEnvironment,
+    };
+
+    fn config_for(
+        environment: &str,
+        web_url: &str,
+        cloud_url: &str,
+    ) -> Result<Config, envy::Error> {
+        config_from_environment_variables(
+            [
+                ("HTTP_PORT", "8080"),
+                ("DATABASE_URL", "postgres://database.test/collab"),
+                ("DATABASE_MAX_CONNECTIONS", "5"),
+                ("ORION_STUDIO_ENVIRONMENT", environment),
+                ("ORION_STUDIO_WEB_URL", web_url),
+                ("ORION_STUDIO_CLOUD_URL", cloud_url),
+                ("ORION_STUDIO_CLOUD_INTERNAL_API_KEY", "test-key"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+        )
+    }
+
+    fn legacy_only_config(environment: &str) -> Result<Config, envy::Error> {
+        config_from_environment_variables(
+            [
+                ("HTTP_PORT", "8080"),
+                ("DATABASE_URL", "postgres://database.test/collab"),
+                ("DATABASE_MAX_CONNECTIONS", "5"),
+                ("ZED_ENVIRONMENT", environment),
+                ("ZED_CLOUD_INTERNAL_API_KEY", "legacy-key"),
+                ("ZED_CLIENT_CHECKSUM_SEED", "legacy-seed"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+        )
+    }
+
+    fn dotenv_variables(contents: &str) -> Vec<(String, String)> {
+        let variables: toml::Table =
+            toml::from_str(contents).expect("default .env.toml should contain valid TOML");
+
+        variables
+            .into_iter()
+            .map(|(name, value)| {
+                let value = match value {
+                    toml::Value::String(value) => value,
+                    toml::Value::Integer(value) => value.to_string(),
+                    toml::Value::Float(value) => value.to_string(),
+                    toml::Value::Boolean(value) => value.to_string(),
+                    _ => panic!("default .env.toml values must be scalars"),
+                };
+                (name, value)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn canonical_environment_variables_take_precedence_and_legacy_values_fall_back() {
+        let canonical = config_from_environment_variables(
+            [
+                ("HTTP_PORT", "8080"),
+                ("DATABASE_URL", "postgres://database.test/collab"),
+                ("DATABASE_MAX_CONNECTIONS", "5"),
+                ("ORION_STUDIO_ENVIRONMENT", "development"),
+                ("ZED_ENVIRONMENT", "production"),
+                ("ORION_STUDIO_WEB_URL", "http://orion.localhost:3000"),
+                (
+                    "ORION_STUDIO_CLOUD_URL",
+                    "http://cloud.orion.localhost:8787",
+                ),
+                ("ORION_STUDIO_CLOUD_INTERNAL_API_KEY", "canonical-key"),
+                ("ZED_CLOUD_INTERNAL_API_KEY", "legacy-key"),
+                ("ORION_STUDIO_CLIENT_CHECKSUM_SEED", "canonical-seed"),
+                ("ZED_CLIENT_CHECKSUM_SEED", "legacy-seed"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+        )
+        .expect("canonical config should deserialize");
+
+        assert_eq!(
+            canonical.orion_studio_environment,
+            OrionStudioEnvironment::Development
+        );
+        assert_eq!(
+            canonical.orion_studio_cloud_internal_api_key,
+            "canonical-key"
+        );
+        assert_eq!(
+            canonical.orion_studio_client_checksum_seed.as_deref(),
+            Some("canonical-seed")
+        );
+
+        let empty_canonical = config_from_environment_variables(
+            [
+                ("HTTP_PORT", "8080"),
+                ("DATABASE_URL", "postgres://database.test/collab"),
+                ("DATABASE_MAX_CONNECTIONS", "5"),
+                ("ORION_STUDIO_ENVIRONMENT", "development"),
+                ("ORION_STUDIO_WEB_URL", "http://orion.localhost:3000"),
+                (
+                    "ORION_STUDIO_CLOUD_URL",
+                    "http://cloud.orion.localhost:8787",
+                ),
+                ("ORION_STUDIO_CLOUD_INTERNAL_API_KEY", ""),
+                ("ZED_CLOUD_INTERNAL_API_KEY", "legacy-key"),
+                ("ORION_STUDIO_CLIENT_CHECKSUM_SEED", ""),
+                ("ZED_CLIENT_CHECKSUM_SEED", "legacy-seed"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+        )
+        .expect("present canonical values should not fall back");
+
+        assert!(
+            empty_canonical
+                .orion_studio_cloud_internal_api_key
+                .is_empty()
+        );
+        assert_eq!(
+            empty_canonical.orion_studio_client_checksum_seed.as_deref(),
+            Some("")
+        );
+
+        let legacy = legacy_only_config("development")
+            .expect("legacy config should fall back into canonical fields");
+
+        assert_eq!(
+            legacy.orion_studio_environment,
+            OrionStudioEnvironment::Development
+        );
+        assert_eq!(legacy.orion_studio_cloud_internal_api_key, "legacy-key");
+        assert_eq!(
+            legacy.orion_studio_client_checksum_seed.as_deref(),
+            Some("legacy-seed")
+        );
+    }
+
+    #[test]
+    fn legacy_only_development_derives_orion_endpoints() {
+        let config =
+            legacy_only_config("development").expect("legacy development config should load");
+
+        assert_eq!(
+            config.orion_studio_environment,
+            OrionStudioEnvironment::Development
+        );
+        assert_eq!(config.orion_dev_url(), "http://localhost:3000");
+        assert_eq!(config.orion_cloud_url(), "http://localhost:8787");
+        config
+            .validate()
+            .expect("derived development endpoints should validate");
+    }
+
+    #[test]
+    fn legacy_only_staging_derives_orion_endpoints() {
+        let config = legacy_only_config("staging").expect("legacy staging config should load");
+
+        assert_eq!(
+            config.orion_studio_environment,
+            OrionStudioEnvironment::Staging
+        );
+        assert_eq!(config.orion_dev_url(), "https://staging.orion.dev");
+        assert_eq!(config.orion_cloud_url(), "https://cloud.orion.dev");
+        config
+            .validate()
+            .expect("derived staging endpoints should validate");
+    }
+
+    #[test]
+    fn legacy_only_production_derives_orion_endpoints() {
+        let config =
+            legacy_only_config("production").expect("legacy production config should load");
+
+        assert_eq!(
+            config.orion_studio_environment,
+            OrionStudioEnvironment::Production
+        );
+        assert_eq!(config.orion_dev_url(), "https://orion.dev");
+        assert_eq!(config.orion_cloud_url(), "https://cloud.orion.dev");
+        config
+            .validate()
+            .expect("derived production endpoints should validate");
+    }
+
+    #[test]
+    fn default_dotenv_deserializes_and_validates() {
+        let config =
+            config_from_environment_variables(dotenv_variables(include_str!("../.env.toml")))
+                .expect("default .env.toml should deserialize into Config");
+
+        assert_eq!(
+            config.orion_studio_environment,
+            OrionStudioEnvironment::Development
+        );
+        assert_eq!(config.orion_dev_url(), "http://localhost:3000");
+        assert_eq!(config.orion_cloud_url(), "http://localhost:8787");
+        config
+            .validate()
+            .expect("default .env.toml should pass startup validation");
+    }
+
+    #[test]
+    fn environments_and_cloud_urls_are_explicit() {
+        let development = config_for(
+            "development",
+            "http://orion.localhost:3000",
+            "http://cloud.orion.localhost:8787",
+        )
+        .expect("development config should deserialize");
+        assert_eq!(
+            development.orion_studio_environment,
+            OrionStudioEnvironment::Development
+        );
+        development
+            .validate()
+            .expect("development URLs should validate");
+
+        let staging = config_for(
+            "staging",
+            "https://studio.staging.example.test",
+            "https://cloud.staging.example.test",
+        )
+        .expect("staging config should deserialize");
+        assert_eq!(
+            staging.orion_studio_environment,
+            OrionStudioEnvironment::Staging
+        );
+        assert_eq!(
+            staging.orion_cloud_url(),
+            "https://cloud.staging.example.test"
+        );
+        staging.validate().expect("staging URLs should validate");
+
+        let production = config_for(
+            "production",
+            "https://studio.example.test",
+            "https://cloud.example.test",
+        )
+        .expect("production config should deserialize");
+        assert_eq!(
+            production.orion_studio_environment,
+            OrionStudioEnvironment::Production
+        );
+        production
+            .validate()
+            .expect("production URLs should validate");
+
+        let insecure_staging = config_for(
+            "staging",
+            "http://studio.staging.example.test",
+            "http://cloud.staging.example.test",
+        )
+        .expect("insecure staging config should deserialize before validation");
+        assert!(insecure_staging.validate().is_err());
+    }
+
+    #[test]
+    fn unknown_environment_and_missing_staging_url_fail_closed() {
+        assert!(
+            config_for(
+                "qa",
+                "https://web.example.test",
+                "https://cloud.example.test"
+            )
+            .is_err()
+        );
+        assert!(
+            envy::from_iter::<_, Config>(
+                [
+                    ("HTTP_PORT", "8080"),
+                    ("DATABASE_URL", "postgres://database.test/collab"),
+                    ("DATABASE_MAX_CONNECTIONS", "5"),
+                    ("ORION_STUDIO_ENVIRONMENT", "staging"),
+                    (
+                        "ORION_STUDIO_WEB_URL",
+                        "https://studio.staging.example.test"
+                    ),
+                    ("ORION_STUDIO_CLOUD_INTERNAL_API_KEY", "test-key"),
+                ]
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value.to_owned())),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn canonical_environment_without_urls_fails_closed() {
+        let result = config_from_environment_variables(
+            [
+                ("HTTP_PORT", "8080"),
+                ("DATABASE_URL", "postgres://database.test/collab"),
+                ("DATABASE_MAX_CONNECTIONS", "5"),
+                ("ORION_STUDIO_ENVIRONMENT", "development"),
+                ("ZED_ENVIRONMENT", "production"),
+                ("ORION_STUDIO_CLOUD_INTERNAL_API_KEY", "canonical-key"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn legacy_environment_with_only_one_canonical_url_fails_closed() {
+        for (url_name, url) in [
+            ("ORION_STUDIO_WEB_URL", "https://staging.orion.dev"),
+            ("ORION_STUDIO_CLOUD_URL", "https://cloud.orion.dev"),
+        ] {
+            let result = config_from_environment_variables(
+                [
+                    ("HTTP_PORT", "8080"),
+                    ("DATABASE_URL", "postgres://database.test/collab"),
+                    ("DATABASE_MAX_CONNECTIONS", "5"),
+                    ("ZED_ENVIRONMENT", "staging"),
+                    (url_name, url),
+                    ("ZED_CLOUD_INTERNAL_API_KEY", "legacy-key"),
+                ]
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value.to_owned())),
+            );
+
+            assert!(
+                result.is_err(),
+                "{url_name} must not be mixed with fallback"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn root_identifies_orion_studio() {
+        let response = handle_root(Extension(ServiceMode::Collab)).await;
+        assert!(response.starts_with("orion-studio:collab "));
+        assert!(!response.to_ascii_lowercase().contains("zed:"));
+    }
+
+    #[test]
+    fn legacy_zed_headers_remain_an_explicit_upgrade_contract() {
+        assert_eq!(
+            <LegacyZedChecksumHeader as axum::headers::Header>::name().as_str(),
+            LEGACY_ZED_CHECKSUM_HEADER
+        );
+        assert_eq!(
+            <LegacyZedSystemIdHeader as axum::headers::Header>::name().as_str(),
+            LEGACY_ZED_SYSTEM_ID_HEADER
+        );
+        assert_eq!(
+            <LegacyZedProtocolVersionHeader as axum::headers::Header>::name().as_str(),
+            LEGACY_ZED_PROTOCOL_VERSION_HEADER
+        );
+        assert_eq!(
+            <LegacyZedAppVersionHeader as axum::headers::Header>::name().as_str(),
+            LEGACY_ZED_APP_VERSION_HEADER
+        );
+        assert_eq!(
+            <LegacyZedReleaseChannelHeader as axum::headers::Header>::name().as_str(),
+            LEGACY_ZED_RELEASE_CHANNEL_HEADER
+        );
+        assert!(LEGACY_ZED_HEADER_RETIREMENT_CONTRACT.contains("every supported Orion client"));
+    }
 }

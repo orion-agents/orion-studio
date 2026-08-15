@@ -59,6 +59,23 @@ use std::{
 use thiserror::Error;
 use util::{ResultExt, command::new_command};
 
+/// Canonical diagnostic names for the Orion Studio remote server and proxy.
+/// These appear in crash reports and logs and must never carry a `zed` prefix.
+const REMOTE_SERVER_BINARY_NAME: &str = "orion-studio-remote-server";
+const REMOTE_PROXY_BINARY_NAME: &str = "orion-studio-remote-proxy";
+
+/// Temp-dir prefixes for the crash handler state of the Orion Studio remote
+/// server and proxy.
+const REMOTE_SERVER_CRASH_HANDLER_DIR_PREFIX: &str = "orion-studio-remote-server-crash-handler-";
+const REMOTE_PROXY_CRASH_HANDLER_DIR_PREFIX: &str =
+    "orion-studio-remote-server-proxy-crash-handler-";
+
+/// Prefix used to locate and delete remote server binaries that were installed
+/// by the previous Zed build. This MUST stay `zed-` prefixed so we can still
+/// clean up legacy on-disk binaries after the rebrand; do not change it to an
+/// Orion prefix.
+const OLD_REMOTE_SERVER_BINARY_PREFIX: &str = "zed-remote-server-";
+
 #[derive(Subcommand)]
 pub enum Commands {
     Run {
@@ -108,12 +125,14 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
                 ReleaseChannel::Stable | ReleaseChannel::Preview => {
-                    println!("{}", env!("ZED_PKG_VERSION"))
+                    println!("{}", env!("ORION_STUDIO_PKG_VERSION"))
                 }
                 ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                    let commit_sha =
-                        option_env!("ZED_COMMIT_SHA").unwrap_or(release_channel.dev_name());
-                    let build_id = option_env!("ZED_BUILD_ID");
+                    let commit_sha = option_env!("ORION_STUDIO_COMMIT_SHA")
+                        .or(option_env!("ZED_COMMIT_SHA"))
+                        .unwrap_or_else(|| release_channel.dev_name());
+                    let build_id =
+                        option_env!("ORION_STUDIO_BUILD_ID").or(option_env!("ZED_BUILD_ID"));
                     if let Some(build_id) = build_id {
                         println!("{}+{}", build_id, commit_sha)
                     } else {
@@ -127,10 +146,14 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
 }
 
 pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
-    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION").to_owned(),
+    ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ORION_STUDIO_PKG_VERSION").to_owned(),
     ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-        let commit_sha = option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha");
-        let build_identifier = option_env!("ZED_BUILD_ID");
+        // Canonical `ORION_STUDIO_COMMIT_SHA` / `ORION_STUDIO_BUILD_ID` first,
+        // legacy `ZED_*` retained as a fallback.
+        let commit_sha = option_env!("ORION_STUDIO_COMMIT_SHA")
+            .or(option_env!("ZED_COMMIT_SHA"))
+            .unwrap_or("missing-commit-sha");
+        let build_identifier = option_env!("ORION_STUDIO_BUILD_ID").or(option_env!("ZED_BUILD_ID"));
         if let Some(build_id) = build_identifier {
             format!("{build_id}+{commit_sha}")
         } else {
@@ -574,25 +597,32 @@ pub fn execute_run(
         client::telemetry::should_install_crash_handler(*RELEASE_CHANNEL);
 
     let crash_handler = if should_install_crash_handler {
-        Some(app.background_executor().spawn(crashes::init(
-            crashes::InitCrashHandler {
-                session_id: id,
-                zed_version: VERSION.to_owned(),
-                binary: "zed-remote-server".to_string(),
-                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-                commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-            },
-            {
-                let background_executor = app.background_executor();
-                move |task| {
-                    background_executor.spawn(task).detach();
-                }
-            },
-            |pid| paths::temp_dir().join(format!("zed-remote-server-crash-handler-{pid}")),
-            // we are running outside gpui
-            #[allow(clippy::disallowed_methods)]
-            |duration| FutureExt::map(Timer::after(duration), |_| ()),
-        )))
+        Some(
+            app.background_executor().spawn(crashes::init(
+                crashes::InitCrashHandler {
+                    session_id: id,
+                    zed_version: VERSION.to_owned(),
+                    binary: REMOTE_SERVER_BINARY_NAME.to_string(),
+                    release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                    commit_sha: option_env!("ORION_STUDIO_COMMIT_SHA")
+                        .or(option_env!("ZED_COMMIT_SHA"))
+                        .unwrap_or("no_sha")
+                        .to_owned(),
+                },
+                {
+                    let background_executor = app.background_executor();
+                    move |task| {
+                        background_executor.spawn(task).detach();
+                    }
+                },
+                |pid| {
+                    paths::temp_dir().join(format!("{REMOTE_SERVER_CRASH_HANDLER_DIR_PREFIX}{pid}"))
+                },
+                // we are running outside gpui
+                #[allow(clippy::disallowed_methods)]
+                |duration| FutureExt::map(Timer::after(duration), |_| ()),
+            )),
+        )
     } else {
         crashes::force_backtrace();
         None
@@ -644,10 +674,12 @@ pub fn execute_run(
             .detach();
         }
         settings::init(cx);
-        let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
+        let app_commit_sha = option_env!("ORION_STUDIO_COMMIT_SHA")
+            .or(option_env!("ZED_COMMIT_SHA"))
+            .map(|s| AppCommitSha::new(s.to_owned()));
         let app_version = AppVersion::load(
-            env!("ZED_PKG_VERSION"),
-            option_env!("ZED_BUILD_ID"),
+            env!("ORION_STUDIO_PKG_VERSION"),
+            option_env!("ORION_STUDIO_BUILD_ID").or(option_env!("ZED_BUILD_ID")),
             app_commit_sha,
         );
         release_channel::init(app_version, cx);
@@ -688,7 +720,7 @@ pub fn execute_run(
                     ReqwestClient::proxy_and_user_agent(
                         proxy_url,
                         &format!(
-                            "Zed-Server/{} ({}; {})",
+                            "Orion-Studio-Server/{} ({}; {})",
                             env!("CARGO_PKG_VERSION"),
                             std::env::consts::OS,
                             std::env::consts::ARCH
@@ -856,14 +888,17 @@ pub(crate) fn execute_proxy(
             crashes::InitCrashHandler {
                 session_id: id,
                 zed_version: VERSION.to_owned(),
-                binary: "zed-remote-proxy".to_string(),
+                binary: REMOTE_PROXY_BINARY_NAME.to_string(),
                 release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-                commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+                commit_sha: option_env!("ORION_STUDIO_COMMIT_SHA")
+                    .or(option_env!("ZED_COMMIT_SHA"))
+                    .unwrap_or("no_sha")
+                    .to_owned(),
             },
             |task| {
                 smol::spawn(task).detach();
             },
-            |pid| paths::temp_dir().join(format!("zed-remote-server-proxy-crash-handler-{pid}")),
+            |pid| paths::temp_dir().join(format!("{REMOTE_PROXY_CRASH_HANDLER_DIR_PREFIX}{pid}")),
             // we are running outside gpui
             #[allow(clippy::disallowed_methods)]
             |duration| FutureExt::map(Timer::after(duration), |_| ()),
@@ -1319,7 +1354,7 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
 fn cleanup_old_binaries() -> Result<()> {
     let server_dir = paths::remote_server_dir_relative();
     let release_channel = release_channel::RELEASE_CHANNEL.dev_name();
-    let prefix = format!("zed-remote-server-{}-", release_channel);
+    let prefix = format!("{OLD_REMOTE_SERVER_BINARY_PREFIX}{release_channel}-");
 
     for entry in std::fs::read_dir(server_dir.as_std_path())? {
         let path = entry?.path();
@@ -1349,7 +1384,7 @@ fn cleanup_old_binaries_wsl() {
 fn is_new_version(version: &str) -> bool {
     semver::Version::from_str(version)
         .ok()
-        .zip(semver::Version::from_str(env!("ZED_PKG_VERSION")).ok())
+        .zip(semver::Version::from_str(env!("ORION_STUDIO_PKG_VERSION")).ok())
         .is_some_and(|(version, current_version)| version >= current_version)
 }
 
@@ -1373,6 +1408,28 @@ fn is_file_in_use(file_name: &OsStr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_diagnostic_binary_names_are_orion_and_not_zed() {
+        assert!(REMOTE_SERVER_BINARY_NAME.starts_with("orion-studio-"));
+        assert!(REMOTE_PROXY_BINARY_NAME.starts_with("orion-studio-"));
+        assert!(!REMOTE_SERVER_BINARY_NAME.contains("zed"));
+        assert!(!REMOTE_PROXY_BINARY_NAME.contains("zed"));
+    }
+
+    #[test]
+    fn new_crash_handler_dir_prefixes_are_orion_and_not_zed() {
+        assert!(REMOTE_SERVER_CRASH_HANDLER_DIR_PREFIX.starts_with("orion-studio-"));
+        assert!(REMOTE_PROXY_CRASH_HANDLER_DIR_PREFIX.starts_with("orion-studio-"));
+    }
+
+    #[test]
+    fn old_binary_cleanup_prefix_is_legacy_zed_and_must_not_change() {
+        // This prefix intentionally matches binaries installed by the old Zed
+        // remote server so we can clean them up after migration. Changing it to
+        // an Orion prefix would orphan legacy binaries on disk.
+        assert!(OLD_REMOTE_SERVER_BINARY_PREFIX.starts_with("zed-remote-server-"));
+    }
 
     #[test]
     fn rotated_remote_log_path_uses_numbered_log_suffix() {

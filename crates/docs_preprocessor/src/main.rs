@@ -834,10 +834,11 @@ fn handle_postprocessing() -> Result<()> {
             .with_context(|| format!("Failed to find title in {:?}", pretty_path))
             .expect("Page has <title> element")[1];
 
-        title_tag_contents
-            .trim()
-            .strip_suffix("- Zed")
-            .unwrap_or(title_tag_contents)
+        let title = title_tag_contents.trim();
+        title
+            .strip_suffix("- Orion Studio")
+            .or_else(|| title.strip_suffix("- Zed"))
+            .unwrap_or(title)
             .trim()
             .to_string()
     }

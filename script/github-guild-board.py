@@ -41,8 +41,8 @@ MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
 
 GITHUB_API_URL = "https://api.github.com"
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "orion-agents"
+REPO_NAME = "orion-studio"
 # Cohort members are outside collaborators on the repo holding this custom
 # repository role, rather than members of an org team. Rotating the cohort is
 # then just adding/removing collaborators, with no org seats involved.

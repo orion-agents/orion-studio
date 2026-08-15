@@ -1,6 +1,6 @@
 use crate::tasks::workflows::{
     runners::{Arch, Platform},
-    steps::{CommonJobConditions, CommonPermissionSets, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob},
+    steps::{CommonJobConditions, CommonPermissionSets, DEFAULT_REPOSITORY_GUARD, NamedJob},
 };
 
 use super::{runners, steps, steps::named, vars};
@@ -57,7 +57,7 @@ fn nix_pr_jobs(labels: &[&str]) -> [NamedJob; 2] {
             &[],
         );
         job.job = job.job.cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} && \
+            "{DEFAULT_REPOSITORY_GUARD} && \
             ((github.event.action == 'labeled' && ({labeled})) || \
             (github.event.action == 'synchronize' && ({synchronized})))"
         )));
@@ -87,7 +87,7 @@ pub(crate) fn build_nix(
             "cachix-action",
             "0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad", // v16
         )
-        .add_with(("name", "zed"))
+        .add_with(("name", vars::ORION_STUDIO_CACHIX_CACHE_NAME))
         .add_with(("authToken", vars::CACHIX_AUTH_TOKEN))
         .add_with(("cachixArgs", "-v"));
         if let Some(cachix_filter) = cachix_filter {
@@ -137,13 +137,19 @@ pub(crate) fn build_nix(
     let mut job = Job::default()
         .timeout_minutes(60u32)
         .continue_on_error(true)
-        .with_repository_owner_guard()
+        .with_repository_guard()
         .runs_on(runner)
-        .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
-        .add_env(("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT))
         .add_env((
-            "ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON",
-            vars::ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON,
+            "ORION_STUDIO_CLIENT_CHECKSUM_SEED",
+            vars::ORION_STUDIO_CLIENT_CHECKSUM_SEED,
+        ))
+        .add_env((
+            "ORION_STUDIO_MINIDUMP_ENDPOINT",
+            vars::ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT,
+        ))
+        .add_env((
+            "ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON",
+            vars::ORION_STUDIO_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON,
         ))
         .add_env(("GIT_LFS_SKIP_SMUDGE", "1")) // breaks the livekit rust sdk examples which we don't actually depend on
         .add_step(steps::checkout_repo());

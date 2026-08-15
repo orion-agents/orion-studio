@@ -15,6 +15,8 @@ use workspace::{
     item::{ClosePosition, ShowCloseButton},
 };
 
+const ORION_STUDIO_TABBING_IDENTIFIER: &str = "orion-studio";
+
 actions!(
     window,
     [
@@ -64,7 +66,7 @@ impl SystemWindowTabs {
             was_use_system_window_tabs = use_system_window_tabs;
 
             let tabbing_identifier = if use_system_window_tabs {
-                Some(String::from("zed"))
+                Some(String::from(ORION_STUDIO_TABBING_IDENTIFIER))
             } else {
                 None
             };
@@ -380,6 +382,16 @@ impl SystemWindowTabs {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_window_tabbing_identifier_uses_orion_studio_identity() {
+        assert_eq!(ORION_STUDIO_TABBING_IDENTIFIER, "orion-studio");
     }
 }
 

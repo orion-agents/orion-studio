@@ -35,14 +35,16 @@ Extract concrete signals from the crash + analysis:
 
 ### Step 2: Search GitHub Issues
 
-Search **only** issues in `zed-industries/zed` (prefer `gh issue list` / `gh issue view` / GraphQL if available) by:
+Search **only** issues in the current Orion Studio repository, `orion-agents/orion-studio` (prefer `gh issue list` / `gh issue view` / GraphQL if available), by:
 
 1. Panic/error text
 2. Function/file names
 3. Crate/module names + symptom keywords
 4. Similar reproduction patterns
 
-Check both open and recently closed issues in `zed-industries/zed`.
+Check both open and recently closed issues in `orion-agents/orion-studio`.
+
+If the analysis identifies inherited upstream behavior, you may run a separate advisory search in the upstream Zed repository at `https://github.com/zed-industries/zed`. Label those results as upstream references, never use Orion Studio closing keywords for them, and do not mix them into the primary Orion Studio confidence groups.
 
 ### Step 3: Score Confidence
 
@@ -62,7 +64,7 @@ Write `LINKED_ISSUES.md` using this exact structure:
 # Potentially Related GitHub Issues
 
 ## High Confidence
-- [#12345](https://github.com/zed-industries/zed/issues/12345) — <title>
+- [#12345](https://github.com/orion-agents/orion-studio/issues/12345) — <title>
   - Why: <1-2 sentence evidence-backed rationale>
   - Evidence: <stack frame / error text / repro alignment>
 
@@ -83,7 +85,7 @@ If no credible matches are found, keep sections present and write `- None found`
 ## Rules
 
 - Do not fabricate issues or URLs.
-- Do not include issues from any repository other than `zed-industries/zed`.
+- Keep the primary shortlist limited to `orion-agents/orion-studio`; put any explicitly requested upstream Zed references in a separate advisory section.
 - Do not add closing keywords automatically.
 - Keep rationale short and evidence-based.
 - Favor precision over recall.

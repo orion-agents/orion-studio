@@ -83,13 +83,13 @@ let
   gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
     let
-      zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
+      orionStudioCargoManifest = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
       stdenv' = stdenv;
     in
     rec {
-      pname = "zed-editor";
+      pname = "orion-studio";
       version =
-        zedCargoLock.package.version
+        orionStudioCargoManifest.package.version
         + "-nightly"
         + lib.optionalString (commitSha != null) "+${builtins.substring 0 7 commitSha}";
       src = builtins.path {
@@ -202,7 +202,7 @@ let
         (darwinMinVersionHook "10.15")
       ];
 
-      cargoExtraArgs = "-p zed -p cli --locked --features=gpui_platform/runtime_shaders";
+      cargoExtraArgs = "-p orion-studio -p cli --locked --features=gpui_platform/runtime_shaders";
 
       stdenv =
         pkgs:
@@ -228,8 +228,12 @@ let
             ../assets/fonts/ibm-plex-sans
           ];
         };
-        ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
+        ORION_STUDIO_UPDATE_EXPLANATION = "Orion Studio has been installed using Nix. Auto-updates have thus been disabled.";
+        # Compatibility until the runtime consumes the Orion Studio variable.
+        ZED_UPDATE_EXPLANATION = "Orion Studio has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
+        ORION_STUDIO_COMMIT_SHA = lib.optionalString (commitSha != null) "${commitSha}";
+        # Compatibility until the runtime consumes the Orion Studio variable.
         ZED_COMMIT_SHA = lib.optionalString (commitSha != null) "${commitSha}";
         LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
         PROTOC = "${protobuf}/bin/protoc";
@@ -340,14 +344,17 @@ craneLib.buildPackage (
           popd
 
           mkdir -p $out/Applications $out/bin
-          # Zed expects git next to its own binary
+          # Orion Studio expects git next to its own binary.
           ln -s ${git}/bin/git "$app_path/Contents/MacOS/git"
           mv $TARGET_DIR/cli "$app_path/Contents/MacOS/cli"
+          bundle_name="$(basename "$app_path")"
           mv "$app_path" $out/Applications/
 
           # Physical location of the CLI must be inside the app bundle as this is used
           # to determine which app to start
-          ln -s "$out/Applications/Zed Nightly.app/Contents/MacOS/cli" $out/bin/zed
+          ln -s "$out/Applications/$bundle_name/Contents/MacOS/cli" $out/bin/orion
+          ln -s orion $out/bin/orion-studio
+          ln -s orion $out/bin/zed
 
           runHook postInstall
         ''
@@ -356,26 +363,29 @@ craneLib.buildPackage (
           runHook preInstall
 
           mkdir -p $out/bin $out/libexec
-          cp $TARGET_DIR/zed $out/libexec/zed-editor
-          cp $TARGET_DIR/cli  $out/bin/zed
-          ln -s $out/bin/zed $out/bin/zeditor  # home-manager expects the CLI binary to be here
+          cp $TARGET_DIR/orion-studio $out/libexec/orion-studio
+          cp $TARGET_DIR/cli $out/bin/orion
+          ln -s orion $out/bin/orion-studio
+          ln -s orion $out/bin/zed
+          ln -s orion $out/bin/zeditor
 
 
           install -D "crates/zed/resources/app-icon-nightly@2x.png" \
-            "$out/share/icons/hicolor/1024x1024@2x/apps/zed.png"
+            "$out/share/icons/hicolor/1024x1024@2x/apps/orion-studio.png"
           install -D crates/zed/resources/app-icon-nightly.png \
-            $out/share/icons/hicolor/512x512/apps/zed.png
+            $out/share/icons/hicolor/512x512/apps/orion-studio.png
 
-          # TODO: icons should probably be named "zed-nightly"
           (
             export DO_STARTUP_NOTIFY="true"
-            export APP_CLI="zed"
-            export APP_ICON="zed"
-            export APP_NAME="Zed Nightly"
+            export APP_CLI="orion"
+            export APP_ICON="orion-studio"
+            export APP_NAME="Orion Studio Nightly"
             export APP_ARGS="%U"
             mkdir -p "$out/share/applications"
-            ${lib.getExe envsubst} < "crates/zed/resources/zed.desktop.in" > "$out/share/applications/dev.zed.Zed-Nightly.desktop"
-            chmod +x "$out/share/applications/dev.zed.Zed-Nightly.desktop"
+            ${lib.getExe envsubst} < "crates/zed/resources/orion-studio.desktop.in" \
+              | sed '/^# To add Orion Studio /d; /^# Upstream reports describe /d; /^# If this happens /d' \
+              > "$out/share/applications/com.orion.OrionStudio.Nightly.desktop"
+            chmod +x "$out/share/applications/com.orion.OrionStudio.Nightly.desktop"
           )
 
           runHook postInstall
@@ -383,15 +393,15 @@ craneLib.buildPackage (
 
     # TODO: why isn't this also done on macOS?
     postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
-      wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
+      wrapProgram $out/libexec/orion-studio --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
     '';
 
     meta = {
-      description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
-      homepage = "https://zed.dev";
-      changelog = "https://zed.dev/releases/preview";
+      description = "High-performance collaborative code editor";
+      homepage = "https://orion.dev";
+      changelog = "https://orion.dev/releases/preview";
       license = lib.licenses.gpl3Only;
-      mainProgram = "zed";
+      mainProgram = "orion";
       platforms = lib.platforms.linux ++ lib.platforms.darwin;
     };
   }

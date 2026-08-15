@@ -1,18 +1,23 @@
 use gh_workflow::{
-    Event, Expression, Input, Job, Level, Permissions, Push, Run, Step, Use, UsesJob, Workflow,
-    WorkflowCall, WorkflowCallSecret, WorkflowDispatch,
+    Concurrency, Event, Expression, Input, Job, Level, Permissions, Push, Run, Step, Use, UsesJob,
+    Workflow, WorkflowCall, WorkflowCallSecret,
 };
 
 use crate::tasks::workflows::{
-    runners,
+    production_environment, runners,
     steps::{
-        self, CommonJobConditions, CommonPermissionSets, FluentBuilder as _, NamedJob,
-        UploadArtifactStep, named, release_job,
+        self, CommonPermissionSets, FluentBuilder as _, NamedJob, UploadArtifactStep, named,
+        release_job,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
 
 const BUILD_OUTPUT_DIR: &str = "target/deploy";
+const PRODUCTION_SIDE_EFFECT_JOBS: &[&str] = &["deploy_docs"];
+
+pub(super) fn add_production_environments(workflow: &mut serde_yaml::Value) -> anyhow::Result<()> {
+    production_environment::add_to_jobs(workflow, PRODUCTION_SIDE_EFFECT_JOBS)
+}
 
 pub(crate) enum DocsChannel {
     Nightly,
@@ -26,14 +31,6 @@ impl DocsChannel {
             Self::Nightly => "/docs/nightly/",
             Self::Preview => "/docs/preview/",
             Self::Stable => "/docs/",
-        }
-    }
-
-    pub(crate) fn project_name(&self) -> &'static str {
-        match self {
-            Self::Nightly => "docs-nightly",
-            Self::Preview => "docs-preview",
-            Self::Stable => "docs",
         }
     }
 
@@ -78,21 +75,30 @@ pub(crate) fn build_docs_book(docs_channel: String, site_url: String) -> Step<Ru
 fn docs_build_steps(
     job: Job,
     checkout_ref: Option<String>,
+    source_verification: Option<Step<Run>>,
     docs_channel: impl Into<String>,
     site_url: impl Into<String>,
 ) -> Job {
     let docs_channel = docs_channel.into();
     let site_url = site_url.into();
 
-    steps::use_clang(
-        job.add_env(("DOCS_AMPLITUDE_API_KEY", vars::DOCS_AMPLITUDE_API_KEY))
-            .add_env(("DOCS_CONSENT_IO_INSTANCE", vars::DOCS_CONSENT_IO_INSTANCE))
-            .add_step(
-                steps::checkout_repo().when_some(checkout_ref, |step, checkout_ref| {
+    let mut job = job
+        .add_env(("DOCS_AMPLITUDE_API_KEY", vars::DOCS_AMPLITUDE_API_KEY))
+        .add_env(("DOCS_CONSENT_IO_INSTANCE", vars::DOCS_CONSENT_IO_INSTANCE))
+        .add_step(
+            steps::checkout_repo()
+                .with_full_history()
+                .without_persisted_credentials()
+                .when_some(checkout_ref, |step, checkout_ref| {
                     step.with_ref(checkout_ref)
                 }),
-            )
-            .runs_on(runners::LINUX_XL)
+        );
+    if let Some(source_verification) = source_verification {
+        job = job.add_step(source_verification);
+    }
+
+    steps::use_clang(
+        job.runs_on(runners::LINUX_XL)
             .add_step(steps::setup_cargo_config(runners::Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
@@ -104,7 +110,53 @@ fn docs_build_steps(
     )
 }
 
-fn docs_deploy_steps(job: Job, project_name: &StepOutput) -> Job {
+fn docs_deploy_steps(
+    job: Job,
+    channel: &StepOutput,
+    site_url: &StepOutput,
+    project_name: &StepOutput,
+    pages_origin: &StepOutput,
+) -> Job {
+    fn render_worker_configs() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            set -euo pipefail
+            config_directory="target/cloudflare-deploy"
+            rm -rf "$config_directory"
+            mkdir -p "$config_directory"
+            node .cloudflare/render-wrangler-config.mjs docs-proxy "$config_directory/docs-proxy.toml"
+            node .cloudflare/render-wrangler-config.mjs open-source-website-assets "$config_directory/open-source-website-assets.toml"
+        "#})
+        .add_env(("ORION_STUDIO_CLOUDFLARE_ZONE_NAME", "orion.dev"))
+        .add_env((
+            "ORION_STUDIO_DOCS_ROUTE_PATTERN",
+            vars::ORION_STUDIO_DOCS_ROUTE_PATTERN,
+        ))
+        .add_env((
+            "ORION_STUDIO_DOCS_STABLE_ORIGIN",
+            vars::ORION_STUDIO_DOCS_STABLE_ORIGIN,
+        ))
+        .add_env((
+            "ORION_STUDIO_DOCS_PREVIEW_ORIGIN",
+            vars::ORION_STUDIO_DOCS_PREVIEW_ORIGIN,
+        ))
+        .add_env((
+            "ORION_STUDIO_DOCS_NIGHTLY_ORIGIN",
+            vars::ORION_STUDIO_DOCS_NIGHTLY_ORIGIN,
+        ))
+        .add_env((
+            "ORION_STUDIO_WEBSITE_ORIGIN",
+            vars::ORION_STUDIO_WEBSITE_ORIGIN,
+        ))
+        .add_env((
+            "ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_ROUTE_PATTERN",
+            vars::ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_ROUTE_PATTERN,
+        ))
+        .add_env((
+            "ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME",
+            vars::ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME,
+        ))
+    }
+
     fn deploy_to_cf_pages(project_name: &StepOutput) -> Step<Use> {
         named::uses(
             "cloudflare",
@@ -122,7 +174,7 @@ fn docs_deploy_steps(job: Job, project_name: &StepOutput) -> Job {
         ))
     }
 
-    fn upload_install_script() -> Step<Use> {
+    fn dry_run_docs_worker() -> Step<Use> {
         named::uses(
             "cloudflare",
             "wrangler-action",
@@ -132,8 +184,60 @@ fn docs_deploy_steps(job: Job, project_name: &StepOutput) -> Job {
         .add_with(("accountId", vars::CLOUDFLARE_ACCOUNT_ID))
         .add_with((
             "command",
-            "r2 object put -f script/install.sh zed-open-source-website-assets/install.sh",
+            "deploy --dry-run --outdir target/cloudflare-dry-run/docs-proxy --config target/cloudflare-deploy/docs-proxy.toml",
         ))
+    }
+
+    fn dry_run_assets_worker() -> Step<Use> {
+        named::uses(
+            "cloudflare",
+            "wrangler-action",
+            "da0e0dfe58b7a431659754fdf3f186c529afbe65",
+        ) // v3
+        .add_with(("apiToken", vars::CLOUDFLARE_API_TOKEN))
+        .add_with(("accountId", vars::CLOUDFLARE_ACCOUNT_ID))
+        .add_with((
+            "command",
+            "deploy --dry-run --outdir target/cloudflare-dry-run/open-source-website-assets --config target/cloudflare-deploy/open-source-website-assets.toml",
+        ))
+    }
+
+    fn upload_versioned_install_script() -> Step<Use> {
+        named::uses(
+            "cloudflare",
+            "wrangler-action",
+            "da0e0dfe58b7a431659754fdf3f186c529afbe65",
+        ) // v3
+        .add_with(("apiToken", vars::CLOUDFLARE_API_TOKEN))
+        .add_with(("accountId", vars::CLOUDFLARE_ACCOUNT_ID))
+        .add_with((
+            "command",
+            format!(
+                "r2 object put --config target/cloudflare-deploy/open-source-website-assets.toml -f script/install.sh {}/releases/${{{{ github.sha }}}}/install.sh",
+                vars::ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME,
+            ),
+        ))
+    }
+
+    fn promote_install_script(channel: &StepOutput) -> Step<Use> {
+        named::uses(
+            "cloudflare",
+            "wrangler-action",
+            "da0e0dfe58b7a431659754fdf3f186c529afbe65",
+        ) // v3
+        .add_with(("apiToken", vars::CLOUDFLARE_API_TOKEN))
+        .add_with(("accountId", vars::CLOUDFLARE_ACCOUNT_ID))
+        .add_with((
+            "command",
+            format!(
+                "r2 object put --config target/cloudflare-deploy/open-source-website-assets.toml -f script/install.sh {}/install.sh",
+                vars::ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME,
+            ),
+        ))
+        .if_condition(Expression::new(format!(
+            "{} == 'stable'",
+            channel.expr()
+        )))
     }
 
     fn deploy_docs_worker() -> Step<Use> {
@@ -144,7 +248,24 @@ fn docs_deploy_steps(job: Job, project_name: &StepOutput) -> Job {
         ) // v3
         .add_with(("apiToken", vars::CLOUDFLARE_API_TOKEN))
         .add_with(("accountId", vars::CLOUDFLARE_ACCOUNT_ID))
-        .add_with(("command", "deploy .cloudflare/docs-proxy/src/worker.js"))
+        .add_with((
+            "command",
+            "deploy --config target/cloudflare-deploy/docs-proxy.toml",
+        ))
+    }
+
+    fn deploy_assets_worker() -> Step<Use> {
+        named::uses(
+            "cloudflare",
+            "wrangler-action",
+            "da0e0dfe58b7a431659754fdf3f186c529afbe65",
+        ) // v3
+        .add_with(("apiToken", vars::CLOUDFLARE_API_TOKEN))
+        .add_with(("accountId", vars::CLOUDFLARE_ACCOUNT_ID))
+        .add_with((
+            "command",
+            "deploy --config target/cloudflare-deploy/open-source-website-assets.toml",
+        ))
     }
 
     fn upload_wrangler_logs() -> UploadArtifactStep {
@@ -152,9 +273,53 @@ fn docs_deploy_steps(job: Job, project_name: &StepOutput) -> Job {
             .if_condition(Expression::new("always()"))
     }
 
-    job.add_step(deploy_to_cf_pages(project_name))
-        .add_step(upload_install_script())
+    fn smoke_pages_origin(pages_origin: &StepOutput) -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            set -euo pipefail
+            curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$PAGES_ORIGIN/docs/"
+        "#})
+        .add_env(("PAGES_ORIGIN", pages_origin.to_string()))
+    }
+
+    fn smoke_public_routes(site_url: &StepOutput) -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            set -euo pipefail
+            public_docs_url="${ORION_STUDIO_WEBSITE_ORIGIN%/}${SITE_URL}"
+            curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$public_docs_url"
+        "#})
+        .add_env(("SITE_URL", site_url.to_string()))
+        .add_env((
+            "ORION_STUDIO_WEBSITE_ORIGIN",
+            vars::ORION_STUDIO_WEBSITE_ORIGIN,
+        ))
+    }
+
+    fn smoke_public_install_script(channel: &StepOutput) -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            set -euo pipefail
+            curl --fail --location --retry 5 --retry-all-errors --max-time 30 "${ORION_STUDIO_WEBSITE_ORIGIN%/}/install.sh" >/dev/null
+        "#})
+        .if_condition(Expression::new(format!(
+            "{} == 'stable'",
+            channel.expr()
+        )))
+        .add_env((
+            "ORION_STUDIO_WEBSITE_ORIGIN",
+            vars::ORION_STUDIO_WEBSITE_ORIGIN,
+        ))
+    }
+
+    job.add_step(render_worker_configs())
+        .add_step(dry_run_docs_worker())
+        .add_step(dry_run_assets_worker())
+        .add_step(upload_versioned_install_script())
+        .add_step(deploy_to_cf_pages(project_name))
+        .add_step(smoke_pages_origin(pages_origin))
+        .add_step(deploy_assets_worker())
         .add_step(deploy_docs_worker())
+        .add_step(smoke_public_routes(site_url))
+        .add_step(promote_install_script(channel))
+        .add_step(smoke_public_install_script(channel))
         .add_step(upload_wrangler_logs())
 }
 
@@ -164,6 +329,7 @@ pub(crate) fn check_docs() -> NamedJob {
         job: docs_build_steps(
             release_job(&[]).add_step(steps::harden_runner()),
             None,
+            None,
             DocsChannel::Stable.channel_name(),
             DocsChannel::Stable.site_url(),
         ),
@@ -172,7 +338,7 @@ pub(crate) fn check_docs() -> NamedJob {
 
 fn resolve_channel_step(
     channel_expr: impl Into<String>,
-) -> (Step<Run>, StepOutput, StepOutput, StepOutput) {
+) -> (Step<Run>, StepOutput, StepOutput, StepOutput, StepOutput) {
     let step = Step::new("deploy_docs::resolve_channel_step").run(format!(
         indoc::indoc! {r#"
             if [ -z "$CHANNEL" ]; then
@@ -187,15 +353,18 @@ fn resolve_channel_step(
             case "$CHANNEL" in
                 "nightly")
                     SITE_URL="{nightly_site_url}"
-                    PROJECT_NAME="{nightly_project_name}"
+                    PROJECT_NAME="$ORION_STUDIO_DOCS_NIGHTLY_PROJECT"
+                    PAGES_ORIGIN="$ORION_STUDIO_DOCS_NIGHTLY_ORIGIN"
                     ;;
                 "preview")
                     SITE_URL="{preview_site_url}"
-                    PROJECT_NAME="{preview_project_name}"
+                    PROJECT_NAME="$ORION_STUDIO_DOCS_PREVIEW_PROJECT"
+                    PAGES_ORIGIN="$ORION_STUDIO_DOCS_PREVIEW_ORIGIN"
                     ;;
                 "stable")
                     SITE_URL="{stable_site_url}"
-                    PROJECT_NAME="{stable_project_name}"
+                    PROJECT_NAME="$ORION_STUDIO_DOCS_STABLE_PROJECT"
+                    PAGES_ORIGIN="$ORION_STUDIO_DOCS_STABLE_ORIGIN"
                     ;;
                 *)
                     echo "::error::Invalid docs channel '$CHANNEL'. Expected one of: nightly, preview, stable."
@@ -203,30 +372,102 @@ fn resolve_channel_step(
                     ;;
             esac
 
+            if [[ ! "$PROJECT_NAME" =~ ^orion-studio-[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+                echo "::error::The selected Cloudflare Pages project must be an Orion Studio resource name."
+                exit 1
+            fi
+
             {{
                 echo "channel=$CHANNEL"
                 echo "site_url=$SITE_URL"
                 echo "project_name=$PROJECT_NAME"
+                echo "pages_origin=$PAGES_ORIGIN"
             }} >> "$GITHUB_OUTPUT"
         "#},
         nightly_site_url = DocsChannel::Nightly.site_url(),
         preview_site_url = DocsChannel::Preview.site_url(),
         stable_site_url = DocsChannel::Stable.site_url(),
-        nightly_project_name = DocsChannel::Nightly.project_name(),
-        preview_project_name = DocsChannel::Preview.project_name(),
-        stable_project_name = DocsChannel::Stable.project_name(),
     ))
     .id("resolve-channel")
-    .add_env(("CHANNEL", channel_expr.into()));
+    .add_env(("CHANNEL", channel_expr.into()))
+    .add_env((
+        "ORION_STUDIO_DOCS_NIGHTLY_PROJECT",
+        vars::ORION_STUDIO_DOCS_NIGHTLY_PROJECT,
+    ))
+    .add_env((
+        "ORION_STUDIO_DOCS_PREVIEW_PROJECT",
+        vars::ORION_STUDIO_DOCS_PREVIEW_PROJECT,
+    ))
+    .add_env((
+        "ORION_STUDIO_DOCS_STABLE_PROJECT",
+        vars::ORION_STUDIO_DOCS_STABLE_PROJECT,
+    ))
+    .add_env((
+        "ORION_STUDIO_DOCS_NIGHTLY_ORIGIN",
+        vars::ORION_STUDIO_DOCS_NIGHTLY_ORIGIN,
+    ))
+    .add_env((
+        "ORION_STUDIO_DOCS_PREVIEW_ORIGIN",
+        vars::ORION_STUDIO_DOCS_PREVIEW_ORIGIN,
+    ))
+    .add_env((
+        "ORION_STUDIO_DOCS_STABLE_ORIGIN",
+        vars::ORION_STUDIO_DOCS_STABLE_ORIGIN,
+    ));
 
     let channel = StepOutput::new(&step, "channel");
     let site_url = StepOutput::new(&step, "site_url");
     let project_name = StepOutput::new(&step, "project_name");
-    (step, channel, site_url, project_name)
+    let pages_origin = StepOutput::new(&step, "pages_origin");
+    (step, channel, site_url, project_name, pages_origin)
 }
 
-fn docs_job(channel_expr: impl Into<String>, checkout_ref: Option<String>) -> NamedJob {
-    let (resolve_step, channel, site_url, project_name) = resolve_channel_step(channel_expr);
+fn verify_deploy_source(channel: &StepOutput) -> Step<Run> {
+    named::bash(indoc::indoc! {r#"
+        set -euo pipefail
+        actual_sha="$(git rev-parse HEAD)"
+        if [[ "$actual_sha" != "$GITHUB_SHA" ]]; then
+          echo "::error::Checked out SHA does not match the triggering event SHA."
+          exit 1
+        fi
+        if ! git merge-base --is-ancestor "$actual_sha" origin/main; then
+          echo "::error::Docs deployments are limited to commits reachable from main."
+          exit 1
+        fi
+
+        case "$CHANNEL" in
+          nightly)
+            if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "::error::Nightly docs may only deploy from a main branch push."
+              exit 1
+            fi
+            ;;
+          preview)
+            if [[ "$GITHUB_EVENT_NAME" != "release" || "$GITHUB_REF" != refs/tags/v*-pre || "$RELEASE_PRERELEASE" != "true" ]]; then
+              echo "::error::Preview docs require a published preview release tag."
+              exit 1
+            fi
+            ;;
+          stable)
+            if [[ "$GITHUB_EVENT_NAME" != "release" || "$GITHUB_REF" != refs/tags/v* || "$GITHUB_REF" = *-pre || "$RELEASE_PRERELEASE" != "false" ]]; then
+              echo "::error::Stable docs require a published stable release tag."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "::error::Unknown docs channel."
+            exit 1
+            ;;
+        esac
+    "#})
+    .add_env(("CHANNEL", channel.to_string()))
+    .add_env(("RELEASE_PRERELEASE", "${{ github.event.release.prerelease }}"))
+}
+
+fn docs_job(channel_expr: impl Into<String>) -> NamedJob {
+    let (resolve_step, channel, site_url, project_name, pages_origin) =
+        resolve_channel_step(channel_expr);
+    let source_verification = verify_deploy_source(&channel);
 
     NamedJob {
         name: "deploy_docs".to_owned(),
@@ -234,39 +475,39 @@ fn docs_job(channel_expr: impl Into<String>, checkout_ref: Option<String>) -> Na
             docs_build_steps(
                 release_job(&[])
                     .cond(Expression::new(
-                        "github.repository_owner == 'zed-industries'",
+                        "github.repository == 'orion-agents/orion-studio'",
                     ))
+                    .concurrency(
+                        Concurrency::new(Expression::new(
+                            "orion-studio-docs-${{ inputs.channel }}",
+                        ))
+                        .cancel_in_progress(false),
+                    )
                     .name("Build and Deploy Docs")
+                    .add_step(steps::harden_runner())
                     .add_step(resolve_step),
-                checkout_ref,
+                Some("${{ github.sha }}".to_owned()),
+                Some(source_verification),
                 channel.to_string(),
                 site_url.to_string(),
             ),
+            &channel,
+            &site_url,
             &project_name,
+            &pages_origin,
         ),
     }
 }
 
 pub(crate) fn deploy_docs_workflow_call(
     channel: impl Into<String>,
-    checkout_ref: impl Into<String>,
+    caller_condition: impl Into<String>,
 ) -> NamedJob<UsesJob> {
     let job = Job::default()
-        .with_repository_owner_guard()
+        .cond(Expression::new(caller_condition.into()))
         .permissions(Permissions::default().contents(Level::Read))
-        .uses(
-            "zed-industries",
-            "zed",
-            ".github/workflows/deploy_docs.yml",
-            // Pinned to a commit rather than the mutable `main` ref (supply-chain hardening).
-            // Same-repo reusable workflow; bump via Dependabot or alongside deploy_docs.yml changes.
-            "3f16f7b9082f8828e4d6ae207d2349b1ef932517",
-        )
-        .with(
-            Input::default()
-                .add("channel", channel.into())
-                .add("checkout_ref", checkout_ref.into()),
-        )
+        .uses_local(".github/workflows/deploy_docs.yml")
+        .with(Input::default().add("channel", channel.into()))
         .secrets(indexmap::IndexMap::from([
             (
                 "DOCS_AMPLITUDE_API_KEY".to_owned(),
@@ -292,41 +533,21 @@ pub(crate) fn deploy_docs_workflow_call(
     }
 }
 
-pub(crate) fn deploy_docs_job(
-    channel_input: &WorkflowInput,
-    checkout_ref_input: &WorkflowInput,
-) -> NamedJob {
-    docs_job(
-        channel_input.to_string(),
-        Some(format!(
-            "${{{{ {} != '' && {} || github.sha }}}}",
-            checkout_ref_input.expr(),
-            checkout_ref_input.expr()
-        )),
-    )
+pub(crate) fn deploy_docs_job(channel_input: &WorkflowInput) -> NamedJob {
+    docs_job(channel_input.to_string())
 }
 
 pub(crate) fn deploy_docs() -> Workflow {
-    let channel = WorkflowInput::string("channel", Some(String::new()))
+    let channel = WorkflowInput::string("channel", None)
         .description("Docs channel to deploy: nightly, preview, or stable");
-    let checkout_ref = WorkflowInput::string("checkout_ref", Some(String::new()))
-        .description("Git ref to checkout and deploy. Defaults to event SHA when omitted.");
-    let deploy_docs = deploy_docs_job(&channel, &checkout_ref);
+    let deploy_docs = deploy_docs_job(&channel);
 
     named::workflow()
         .with_minimal_permissions()
         .add_event(
-            Event::default().workflow_dispatch(
-                WorkflowDispatch::default()
-                    .add_input(channel.name, channel.input())
-                    .add_input(checkout_ref.name, checkout_ref.input()),
-            ),
-        )
-        .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()
                     .add_input(channel.name, channel.call_input())
-                    .add_input(checkout_ref.name, checkout_ref.call_input())
                     .secrets([
                         (
                             "DOCS_AMPLITUDE_API_KEY".to_owned(),
@@ -363,11 +584,47 @@ pub(crate) fn deploy_docs() -> Workflow {
 }
 
 pub(crate) fn deploy_nightly_docs() -> Workflow {
-    let deploy_docs = deploy_docs_workflow_call("nightly", "${{ github.sha }}");
+    let deploy_docs = deploy_docs_workflow_call(
+        "nightly",
+        "github.repository == 'orion-agents/orion-studio' && github.event_name == 'push' && github.ref == 'refs/heads/main'",
+    );
 
     named::workflow()
         .name("deploy_nightly_docs")
         .permissions(Permissions::default())
         .add_event(Event::default().push(Push::default().add_branch("main")))
         .add_job(deploy_docs.name, deploy_docs.job)
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Context as _, Result, ensure};
+    use serde_yaml::Value;
+
+    use super::*;
+
+    #[test]
+    fn docs_deployment_uses_the_protected_production_environment() -> Result<()> {
+        let content = deploy_docs()
+            .to_string()
+            .map_err(|error| anyhow::anyhow!("Unable to serialize docs workflow: {error:?}"))?;
+        let mut workflow: Value =
+            serde_yaml::from_str(&content).context("Unable to parse generated docs workflow")?;
+        add_production_environments(&mut workflow)?;
+
+        let environment = workflow
+            .as_mapping()
+            .and_then(|workflow| workflow.get(&production_environment::yaml_key("jobs")))
+            .and_then(Value::as_mapping)
+            .and_then(|jobs| jobs.get(&production_environment::yaml_key("deploy_docs")))
+            .and_then(Value::as_mapping)
+            .and_then(|job| job.get(&production_environment::yaml_key("environment")))
+            .and_then(Value::as_str);
+        ensure!(
+            environment == Some(production_environment::PRODUCTION_ENVIRONMENT),
+            "Docs deployment is not protected by the production environment"
+        );
+
+        Ok(())
+    }
 }

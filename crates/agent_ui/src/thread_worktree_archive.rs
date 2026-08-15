@@ -252,16 +252,16 @@ pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
     Ok(())
 }
 
-/// Confirms that the worktree on disk is still the one Zed created, by
+/// Confirms that the worktree on disk is still the one Orion Studio created, by
 /// comparing the creation time of its git metadata directory against the
-/// time recorded when Zed created it.
+/// time recorded when Orion Studio created it.
 ///
 /// Outcomes:
 /// - Creation time matches the recorded one: proceed.
 /// - Worktree directory no longer exists: proceed — there is nothing on
 ///   disk to protect, and removal will only clean up git metadata.
 /// - Creation time differs: the worktree was removed and recreated outside
-///   Zed. The registry record is removed (so subsequent archival attempts
+///   Orion Studio. The registry record is removed (so subsequent archival attempts
 ///   skip the worktree entirely) and an error is returned so the caller
 ///   leaves the directory untouched.
 /// - Creation time cannot be read: return an error but keep the record,
@@ -275,7 +275,7 @@ async fn verify_created_by_zed(root: &RootPlan, cx: &mut AsyncApp) -> Result<()>
         .map_err(|_| anyhow!("worktree creation time check was canceled"))?
         .with_context(|| {
             format!(
-                "refusing to delete worktree at {}: failed to verify that Zed created it",
+                "refusing to delete worktree at {}: failed to verify that Orion Studio created it",
                 root.root_path.display()
             )
         })?;
@@ -294,8 +294,8 @@ async fn verify_created_by_zed(root: &RootPlan, cx: &mut AsyncApp) -> Result<()>
             .await
             .log_err();
             Err(anyhow!(
-                "refusing to delete worktree at {}: it is not the worktree Zed created \
-                 (it was likely removed and recreated outside Zed)",
+                "refusing to delete worktree at {}: it is not the worktree Orion Studio created \
+                 (it was likely removed and recreated outside Orion Studio)",
                 root.root_path.display()
             ))
         }
@@ -1620,7 +1620,9 @@ mod tests {
             .await
             .expect_err("remove_root should refuse to delete a recreated worktree");
         assert!(
-            error.to_string().contains("not the worktree Zed created"),
+            error
+                .to_string()
+                .contains("not the worktree Orion Studio created"),
             "unexpected error: {error:#}"
         );
 

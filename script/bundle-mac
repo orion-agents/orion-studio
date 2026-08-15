@@ -1,17 +1,417 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-source script/lib/blob-store.sh
+
+script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+repository_root=$(cd "${script_directory}/.." && pwd -P)
+source "${script_directory}/lib/blob-store.sh"
 
 build_flag="--release"
 target_dir="release"
 open_result=false
 local_install=false
 can_code_sign=false
+signing_identity="${ORION_STUDIO_MACOS_SIGNING_IDENTITY:-}"
+signing_team_identifier="${ORION_STUDIO_MACOS_TEAM_ID:-}"
+provisioning_profile="${ORION_STUDIO_MACOS_PROVISIONING_PROFILE:-}"
+provisioning_profile_base64="${ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64:-}"
+sentry_organization="${ORION_STUDIO_SENTRY_ORGANIZATION:-}"
+sentry_project="${ORION_STUDIO_SENTRY_PROJECT:-}"
+require_signed_release="${ORION_STUDIO_REQUIRE_SIGNED_RELEASE:-0}"
+require_sentry="${ORION_STUDIO_REQUIRE_SENTRY:-0}"
+cargo_manifest="${repository_root}/crates/zed/Cargo.toml"
+cargo_manifest_directory="${repository_root}/crates/zed"
+manifest_owner_token="$$.${RANDOM}.${RANDOM}"
+manifest_lock_path="${cargo_manifest_directory}/.Cargo.toml.orion-bundle.lock"
+manifest_generated_path="${cargo_manifest_directory}/.Cargo.toml.orion-bundle-generated.${manifest_owner_token}"
+manifest_restore_path="${cargo_manifest_directory}/.Cargo.toml.orion-bundle-restore.${manifest_owner_token}"
+manifest_recovery_path="${cargo_manifest_directory}/Cargo.toml.orion-bundle-original.${manifest_owner_token}"
+manifest_original_sha256=""
+manifest_generated_sha256=""
+manifest_state="idle"
+temporary_root="${TMPDIR:-/tmp}"
+temporary_root=$(cd "${temporary_root}" && pwd -P)
+session_prefix="${temporary_root%/}/orion-studio-bundle."
+session_directory="${session_prefix}${manifest_owner_token}"
+session_directory_created=false
+manifest_original_file="${session_directory}/Cargo.toml.original"
+certificate_file="${session_directory}/signing-certificate.p12"
+signing_certificate_pem="${session_directory}/signing-certificate.pem"
+provisioning_profile_copy="${session_directory}/provisioning-profile.mobileprovision"
+provisioning_profile_plist="${session_directory}/provisioning-profile.plist"
+notarization_key_file="${session_directory}/notarization-key.p8"
+signing_keychain=""
+signing_keychain_created=false
+dmg_license_tool=""
+dmg_terms_file=""
+download_sequence=0
+app_entitlements="${repository_root}/crates/zed/resources/orion-studio.entitlements"
+remote_server_entitlements="${repository_root}/crates/zed/resources/orion-studio-remote-server.entitlements"
 
-# This must match the team in the provisioning profile.
-IDENTITY="Zed Industries, Inc."
-APPLE_NOTARIZATION_TEAM="MQ55VZLNZQ"
+sha256_file() {
+    shasum -a 256 "$1" | awk '{print $1}'
+}
+
+atomic_swap_files() {
+    local first_path=$1
+    local second_path=$2
+
+    if [[ ! -x /usr/bin/python3 ]]; then
+        echo "Xcode's /usr/bin/python3 is required for atomic manifest swaps." >&2
+        return 1
+    fi
+    /usr/bin/python3 -c '
+import ctypes
+import os
+import sys
+
+libc = ctypes.CDLL(None, use_errno=True)
+renamex_np = libc.renamex_np
+renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+renamex_np.restype = ctypes.c_int
+result = renamex_np(os.fsencode(sys.argv[1]), os.fsencode(sys.argv[2]), 0x12)
+if result != 0:
+    error_number = ctypes.get_errno()
+    raise OSError(error_number, os.strerror(error_number))
+' "${first_path}" "${second_path}"
+}
+
+release_manifest_lock() {
+    local lock_owner=""
+
+    if [[ ! -e "${manifest_lock_path}" ]]; then
+        return 0
+    fi
+    if ! IFS= read -r lock_owner < "${manifest_lock_path}"; then
+        echo "Failed to read the macOS bundle manifest lock: ${manifest_lock_path}" >&2
+        return 1
+    fi
+    if [[ "${lock_owner}" != "${manifest_owner_token}" ]]; then
+        return 0
+    fi
+    if ! rm -f "${manifest_lock_path}"; then
+        echo "Failed to remove the macOS bundle manifest lock: ${manifest_lock_path}" >&2
+        return 1
+    fi
+}
+
+preserve_original_manifest() {
+    if [[ ! -e "${manifest_recovery_path}" ]]; then
+        if ! cp -p "${manifest_original_file}" "${manifest_recovery_path}"; then
+            echo "Failed to preserve the pre-bundle Cargo manifest at ${manifest_recovery_path}." >&2
+            return 1
+        fi
+    fi
+    if [[ "$(sha256_file "${manifest_recovery_path}")" != "${manifest_original_sha256}" ]]; then
+        echo "The preserved pre-bundle Cargo manifest failed checksum verification." >&2
+        return 1
+    fi
+}
+
+restore_cargo_manifest() {
+    local current_sha256=""
+    local displaced_sha256=""
+
+    case "${manifest_state}" in
+        idle|preparing|prepared|restored)
+            release_manifest_lock
+            return
+            ;;
+        drifted)
+            return 1
+            ;;
+        replacing|modified|restoring)
+            ;;
+        *)
+            echo "Unknown Cargo manifest transaction state: ${manifest_state}" >&2
+            return 1
+            ;;
+    esac
+
+    if [[ ! -f "${cargo_manifest}" || ! -f "${manifest_original_file}" ]]; then
+        echo "Cannot restore ${cargo_manifest}; the current manifest or verified backup is missing." >&2
+        return 1
+    fi
+    if ! current_sha256=$(sha256_file "${cargo_manifest}"); then
+        echo "Cannot hash ${cargo_manifest} while restoring it." >&2
+        return 1
+    fi
+
+    if [[ "${current_sha256}" == "${manifest_original_sha256}" ]]; then
+        manifest_state="restored"
+    elif [[ "${current_sha256}" == "${manifest_generated_sha256}" ]]; then
+        manifest_state="restoring"
+        if ! cp -p "${manifest_original_file}" "${manifest_restore_path}"; then
+            echo "Failed to prepare the atomic restore for ${cargo_manifest}." >&2
+            return 1
+        fi
+        if [[ "$(sha256_file "${manifest_restore_path}")" != "${manifest_original_sha256}" ]]; then
+            echo "The prepared Cargo manifest restore failed checksum verification." >&2
+            return 1
+        fi
+        if ! atomic_swap_files "${manifest_restore_path}" "${cargo_manifest}"; then
+            echo "Failed to atomically swap the original Cargo manifest back into place." >&2
+            return 1
+        fi
+        displaced_sha256=$(sha256_file "${manifest_restore_path}")
+        if [[ "${displaced_sha256}" != "${manifest_generated_sha256}" ]]; then
+            if ! atomic_swap_files "${manifest_restore_path}" "${cargo_manifest}"; then
+                echo "Concurrent Cargo manifest changes were preserved in ${manifest_restore_path}, but could not be returned to ${cargo_manifest}." >&2
+                manifest_state="drifted"
+                if ! preserve_original_manifest; then
+                    echo "The private session still contains the pre-bundle manifest until cleanup finishes." >&2
+                fi
+                return 1
+            fi
+            manifest_state="drifted"
+            preserve_original_manifest
+            echo "A concurrent Cargo manifest change raced with restoration; it was returned to ${cargo_manifest}." >&2
+            echo "The pre-bundle manifest is preserved at ${manifest_recovery_path}." >&2
+            echo "The lock is intentionally retained at ${manifest_lock_path} for manual review." >&2
+            return 1
+        fi
+        manifest_state="restored"
+    else
+        manifest_state="drifted"
+        preserve_original_manifest
+        echo "Refusing to overwrite concurrent changes in ${cargo_manifest}." >&2
+        echo "The pre-bundle manifest is preserved at ${manifest_recovery_path}." >&2
+        echo "The lock is intentionally retained at ${manifest_lock_path} for manual recovery." >&2
+        return 1
+    fi
+
+    release_manifest_lock
+}
+
+cleanup() {
+    local exit_status=$?
+    local cleanup_status=0
+    trap - EXIT
+    trap '' HUP INT TERM
+
+    if ! restore_cargo_manifest; then
+        cleanup_status=1
+    fi
+
+    if [[ "${signing_keychain_created}" == true ]]; then
+        if ! /usr/bin/security delete-keychain "${signing_keychain}"; then
+            echo "Failed to delete the temporary signing keychain." >&2
+            cleanup_status=1
+        fi
+    fi
+
+    if [[ "${manifest_state}" != "drifted" ]]; then
+        if ! rm -f "${manifest_generated_path}" "${manifest_restore_path}"; then
+            echo "Failed to remove temporary Cargo manifest files." >&2
+            cleanup_status=1
+        fi
+    fi
+
+    case "${session_directory}" in
+        "${session_prefix}"*)
+            if [[ "${manifest_state}" == "drifted" ]]; then
+                echo "The private bundle session is retained for manifest recovery: ${session_directory}" >&2
+            elif [[ "${session_directory_created}" == true && -d "${session_directory}" ]] && ! rm -rf "${session_directory}"; then
+                echo "Failed to remove the private bundle session directory: ${session_directory}" >&2
+                cleanup_status=1
+            fi
+            ;;
+        *)
+            echo "Refusing to remove an invalid bundle session path: ${session_directory}" >&2
+            cleanup_status=1
+            ;;
+    esac
+
+    if [[ ${exit_status} -eq 0 && ${cleanup_status} -ne 0 ]]; then
+        exit_status=${cleanup_status}
+    fi
+    exit "${exit_status}"
+}
+
+handle_signal() {
+    exit "$1"
+}
+
+trap cleanup EXIT
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
+umask 077
+trap '' HUP INT TERM
+if mkdir -m 700 "${session_directory}"; then
+    session_directory_created=true
+    session_directory_creation_failed=false
+else
+    session_directory_creation_failed=true
+fi
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+if [[ "${session_directory_creation_failed}" == true ]]; then
+    echo "Failed to create the private bundle session directory: ${session_directory}" >&2
+    exit 1
+fi
+cd "${repository_root}"
+
+prepare_provisioning_profile() {
+    if [[ -n "${provisioning_profile}" && -n "${provisioning_profile_base64}" ]]; then
+        echo "Set only one of ORION_STUDIO_MACOS_PROVISIONING_PROFILE and ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64." >&2
+        return 1
+    fi
+
+    if [[ -n "${provisioning_profile_base64}" ]]; then
+        if ! printf '%s' "${provisioning_profile_base64}" | /usr/bin/base64 -D > "${provisioning_profile_copy}"; then
+            echo "ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64 is not valid base64." >&2
+            return 1
+        fi
+    elif [[ -n "${provisioning_profile}" ]]; then
+        if [[ ! -f "${provisioning_profile}" || -L "${provisioning_profile}" ]]; then
+            echo "The configured provisioning profile must be a regular non-symlink file: ${provisioning_profile}" >&2
+            return 1
+        fi
+        if ! cp "${provisioning_profile}" "${provisioning_profile_copy}"; then
+            echo "Failed to copy the configured provisioning profile into the private bundle session." >&2
+            return 1
+        fi
+    else
+        return 0
+    fi
+
+    chmod 600 "${provisioning_profile_copy}"
+    if [[ ! -s "${provisioning_profile_copy}" || -L "${provisioning_profile_copy}" ]]; then
+        echo "The private provisioning profile copy is empty or invalid." >&2
+        return 1
+    fi
+    provisioning_profile="${provisioning_profile_copy}"
+    provisioning_profile_base64=""
+}
+
+run_without_release_secrets() {
+    env \
+        -u MACOS_CERTIFICATE \
+        -u MACOS_CERTIFICATE_PASSWORD \
+        -u APPLE_NOTARIZATION_KEY \
+        -u APPLE_NOTARIZATION_KEY_ID \
+        -u APPLE_NOTARIZATION_ISSUER_ID \
+        -u ORION_STUDIO_MACOS_PROVISIONING_PROFILE \
+        -u ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64 \
+        -u SENTRY_AUTH_TOKEN \
+        "$@"
+}
+
+prepare_dmg_license_tool() {
+    local license_source_directory="${script_directory}/dmg-license"
+    local license_work_directory="${session_directory}/dmg-license"
+
+    if [[ -z "${ORION_STUDIO_DMG_TERMS_JSON:-}" ]]; then
+        return 0
+    fi
+    if [[ ! -f "${ORION_STUDIO_DMG_TERMS_JSON}" || -L "${ORION_STUDIO_DMG_TERMS_JSON}" ]]; then
+        echo "ORION_STUDIO_DMG_TERMS_JSON must be a regular non-symlink file: ${ORION_STUDIO_DMG_TERMS_JSON}" >&2
+        return 1
+    fi
+    if [[ ! -f "${license_source_directory}/package.json" || ! -f "${license_source_directory}/package-lock.json" ]]; then
+        echo "The pinned DMG license package manifest or lockfile is missing." >&2
+        return 1
+    fi
+    if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+        echo "Node.js and npm are required to embed a DMG license agreement." >&2
+        return 1
+    fi
+
+    mkdir -m 700 "${license_work_directory}"
+    cp "${license_source_directory}/package.json" "${license_work_directory}/package.json"
+    cp "${license_source_directory}/package-lock.json" "${license_work_directory}/package-lock.json"
+    dmg_terms_file="${session_directory}/dmg-terms.json"
+    cp "${ORION_STUDIO_DMG_TERMS_JSON}" "${dmg_terms_file}"
+    chmod 600 "${dmg_terms_file}"
+
+    (
+        cd "${license_work_directory}"
+        run_without_release_secrets \
+            npm ci \
+                --ignore-scripts \
+                --no-audit \
+                --fund=false
+    )
+
+    dmg_license_tool="${license_work_directory}/node_modules/dmg-license/bin/dmg-license.js"
+    if [[ ! -f "${dmg_license_tool}" || -L "${dmg_license_tool}" ]]; then
+        echo "npm ci did not produce the pinned dmg-license executable." >&2
+        return 1
+    fi
+}
+
+verify_imported_signing_identity() {
+    local identity_output=""
+    local identity_counts=""
+    local identity_count=0
+    local matching_identity_count=0
+    local certificate_count=0
+    local certificate_subject=""
+
+    if ! identity_output=$(/usr/bin/security find-identity -v -p codesigning "${signing_keychain}"); then
+        echo "Failed to enumerate code-signing identities in the isolated keychain." >&2
+        return 1
+    fi
+    identity_counts=$(printf '%s\n' "${identity_output}" | awk -v expected="${signing_identity}" '
+        /^[[:space:]]*[0-9]+\)/ {
+            count += 1
+            first_quote = index($0, "\"")
+            if (first_quote > 0) {
+                remainder = substr($0, first_quote + 1)
+                second_quote = index(remainder, "\"")
+                if (second_quote > 0 && substr(remainder, 1, second_quote - 1) == expected) {
+                    matching += 1
+                }
+            }
+        }
+        END { print count + 0 ":" matching + 0 }
+    ')
+    identity_count=${identity_counts%%:*}
+    matching_identity_count=${identity_counts##*:}
+    if [[ "${identity_count}" != "1" || "${matching_identity_count}" != "1" ]]; then
+        echo "The isolated keychain must contain exactly one valid identity matching ORION_STUDIO_MACOS_SIGNING_IDENTITY." >&2
+        return 1
+    fi
+
+    if ! /usr/bin/security find-certificate -c "${signing_identity}" -p "${signing_keychain}" > "${signing_certificate_pem}"; then
+        echo "Failed to export the signing certificate from the isolated keychain." >&2
+        return 1
+    fi
+    certificate_count=$(grep -c '^-----BEGIN CERTIFICATE-----$' "${signing_certificate_pem}" || true)
+    if [[ "${certificate_count}" != "1" ]]; then
+        echo "Expected exactly one signing certificate for the configured identity." >&2
+        return 1
+    fi
+    if ! certificate_subject=$(/usr/bin/openssl x509 -in "${signing_certificate_pem}" -noout -subject -nameopt RFC2253); then
+        echo "Failed to inspect the signing certificate subject." >&2
+        return 1
+    fi
+    certificate_subject=${certificate_subject#subject=}
+    certificate_subject=${certificate_subject#subject =}
+    if ! printf '%s\n' "${certificate_subject}" | grep -Eq "(^|,)OU=${signing_team_identifier}(,|$)"; then
+        echo "The signing certificate organizational unit does not match ORION_STUDIO_MACOS_TEAM_ID." >&2
+        return 1
+    fi
+}
+
+case "${require_signed_release}" in
+    0|1) ;;
+    *)
+        echo "ORION_STUDIO_REQUIRE_SIGNED_RELEASE must be 0 or 1." >&2
+        exit 1
+        ;;
+esac
+
+case "${require_sentry}" in
+    0|1) ;;
+    *)
+        echo "ORION_STUDIO_REQUIRE_SENTRY must be 0 or 1." >&2
+        exit 1
+        ;;
+esac
 
 # Function for displaying help info
 help_info() {
@@ -51,14 +451,76 @@ shift $((OPTIND-1))
 # Get release channel
 pushd crates/zed
 channel=$(<RELEASE_CHANNEL)
+export ORION_STUDIO_RELEASE_CHANNEL="${channel}"
+# Legacy build-time fallback consumed by crates that have not completed the env migration.
 export ZED_RELEASE_CHANNEL="${channel}"
 popd
 
+case "${channel}" in
+    stable)
+        expected_bundle_identifier="dev.orion.OrionStudio"
+        expected_bundle_name="Orion Studio.app"
+        ;;
+    preview)
+        expected_bundle_identifier="dev.orion.OrionStudio-Preview"
+        expected_bundle_name="Orion Studio Preview.app"
+        ;;
+    nightly)
+        expected_bundle_identifier="dev.orion.OrionStudio-Nightly"
+        expected_bundle_name="Orion Studio Nightly.app"
+        ;;
+    dev)
+        expected_bundle_identifier="dev.orion.OrionStudio-Dev"
+        expected_bundle_name="Orion Studio Dev.app"
+        ;;
+    *)
+        echo "Unsupported Orion Studio release channel: ${channel}" >&2
+        exit 1
+        ;;
+esac
+
+if [[ "${require_signed_release}" == "1" ]]; then
+    case "${channel}" in
+        stable)
+            if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "Stable releases require an exact vMAJOR.MINOR.PATCH Git tag." >&2
+                exit 1
+            fi
+            ;;
+        preview)
+            if [[ "${GITHUB_REF_TYPE:-}" != "tag" || ! "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-pre$ ]]; then
+                echo "Preview releases require an exact vMAJOR.MINOR.PATCH-pre Git tag." >&2
+                exit 1
+            fi
+            ;;
+        nightly)
+            ;;
+        dev)
+            echo "A dev-channel build cannot be emitted as a signed release artifact." >&2
+            exit 1
+            ;;
+    esac
+fi
+
+export ORION_STUDIO_BUNDLE=true
+# Legacy build-time fallback consumed by bundle diagnostics.
 export ZED_BUNDLE=true
 
+prepare_provisioning_profile
+prepare_dmg_license_tool
+
 cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
-if [ "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]; then
-    cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+if [[ "${require_signed_release}" == "1" || "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]]; then
+    cargo_bundle_install_args=(
+        install cargo-bundle
+        --locked
+        --git https://github.com/zed-industries/cargo-bundle.git
+        --rev 2be2669972dff3ddd4daf89a2cb29d2d06cad7c7
+    )
+    if [[ "${require_signed_release}" == "1" ]]; then
+        cargo_bundle_install_args+=(--force)
+    fi
+    cargo "${cargo_bundle_install_args[@]}"
 fi
 
 # Deal with versions of macOS that don't include libstdc++ headers
@@ -81,29 +543,210 @@ else
     exit 1
 fi
 
+acquire_manifest_lock() {
+    local lock_created=false
+    local existing_owner="unknown"
+
+    trap '' HUP INT TERM
+    if (set -o noclobber; printf '%s\n' "${manifest_owner_token}" > "${manifest_lock_path}") 2>/dev/null; then
+        lock_created=true
+    fi
+    trap 'handle_signal 129' HUP
+    trap 'handle_signal 130' INT
+    trap 'handle_signal 143' TERM
+
+    if [[ "${lock_created}" != true ]]; then
+        if [[ -r "${manifest_lock_path}" ]]; then
+            IFS= read -r existing_owner < "${manifest_lock_path}" || existing_owner="unreadable"
+        fi
+        echo "Another macOS bundle manifest transaction is active (${existing_owner})." >&2
+        echo "Refusing to modify ${cargo_manifest}." >&2
+        return 1
+    fi
+    manifest_state="preparing"
+}
+
+prepare_cargo_manifest() {
+    local current_sha256=""
+    local displaced_sha256=""
+    local channel_header="[package.metadata.bundle-${channel}]"
+    local channel_header_count=0
+    local standard_header_count=0
+
+    acquire_manifest_lock
+    if [[ ! -f "${cargo_manifest}" || -L "${cargo_manifest}" ]]; then
+        echo "The Cargo manifest must be a regular non-symlink file: ${cargo_manifest}" >&2
+        return 1
+    fi
+    if ! cp -p "${cargo_manifest}" "${manifest_original_file}"; then
+        echo "Failed to copy ${cargo_manifest} into the private bundle session." >&2
+        return 1
+    fi
+    manifest_original_sha256=$(sha256_file "${cargo_manifest}")
+    if [[ "$(sha256_file "${manifest_original_file}")" != "${manifest_original_sha256}" ]]; then
+        echo "The private Cargo manifest backup failed checksum verification." >&2
+        return 1
+    fi
+
+    channel_header_count=$(grep -Fxc "${channel_header}" "${manifest_original_file}" || true)
+    standard_header_count=$(grep -Fxc '[package.metadata.bundle]' "${manifest_original_file}" || true)
+    if [[ "${channel_header_count}" != "1" || "${standard_header_count}" != "0" ]]; then
+        echo "Expected exactly one ${channel_header} section and no active package.metadata.bundle section." >&2
+        return 1
+    fi
+
+    if ! sed "s/^\[package\.metadata\.bundle-${channel}\]$/[package.metadata.bundle]/" \
+        "${manifest_original_file}" > "${manifest_generated_path}"; then
+        echo "Failed to prepare channel-specific bundle metadata." >&2
+        return 1
+    fi
+    chmod "$(stat -f '%Lp' "${manifest_original_file}")" "${manifest_generated_path}"
+    manifest_generated_sha256=$(sha256_file "${manifest_generated_path}")
+    if [[ "${manifest_generated_sha256}" == "${manifest_original_sha256}" ]]; then
+        echo "Channel-specific bundle metadata was not activated." >&2
+        return 1
+    fi
+    manifest_state="prepared"
+
+    current_sha256=$(sha256_file "${cargo_manifest}")
+    if [[ "${current_sha256}" != "${manifest_original_sha256}" ]]; then
+        echo "${cargo_manifest} changed while preparing the bundle transaction." >&2
+        return 1
+    fi
+
+    manifest_state="replacing"
+    if ! atomic_swap_files "${manifest_generated_path}" "${cargo_manifest}"; then
+        echo "Failed to atomically activate channel-specific bundle metadata." >&2
+        return 1
+    fi
+    displaced_sha256=$(sha256_file "${manifest_generated_path}")
+    if [[ "${displaced_sha256}" != "${manifest_original_sha256}" ]]; then
+        if atomic_swap_files "${manifest_generated_path}" "${cargo_manifest}"; then
+            manifest_state="prepared"
+            echo "A concurrent Cargo manifest change raced with activation and was returned intact." >&2
+            return 1
+        fi
+        manifest_state="drifted"
+        preserve_original_manifest
+        echo "A concurrent Cargo manifest change is preserved at ${manifest_generated_path}." >&2
+        echo "The pre-bundle manifest is preserved at ${manifest_recovery_path}." >&2
+        echo "The lock is intentionally retained at ${manifest_lock_path} for manual recovery." >&2
+        return 1
+    fi
+    manifest_state="modified"
+}
+
+assert_application_path() {
+    local candidate_path=$1
+    local candidate_parent=""
+    local candidate_name=""
+    local expected_parent="${repository_root}/target/${target_triple}/${target_dir}/bundle/osx"
+
+    if [[ ! -d "${candidate_path}" || -L "${candidate_path}" ]]; then
+        echo "cargo bundle returned a missing or symlinked application path: ${candidate_path}" >&2
+        return 1
+    fi
+    candidate_parent=$(cd "$(dirname "${candidate_path}")" && pwd -P)
+    candidate_name=$(basename "${candidate_path}")
+    if [[ ! -d "${expected_parent}" ]]; then
+        echo "The expected cargo bundle output directory does not exist: ${expected_parent}" >&2
+        return 1
+    fi
+    expected_parent=$(cd "${expected_parent}" && pwd -P)
+    if [[ "${candidate_parent}" != "${expected_parent}" || "${candidate_name}" != "${expected_bundle_name}" ]]; then
+        echo "Refusing unexpected cargo bundle path: ${candidate_parent}/${candidate_name}" >&2
+        echo "Expected ${expected_parent}/${expected_bundle_name}." >&2
+        return 1
+    fi
+
+    candidate_path="${candidate_parent}/${candidate_name}"
+    if [[ "${candidate_path}" == "/" || ! -d "${candidate_path}/Contents" || -L "${candidate_path}/Contents" ]]; then
+        echo "Refusing an invalid application bundle: ${candidate_path}" >&2
+        return 1
+    fi
+    if [[ ! -f "${candidate_path}/Contents/Info.plist" || -L "${candidate_path}/Contents/Info.plist" ]]; then
+        echo "The application bundle is missing a regular Contents/Info.plist: ${candidate_path}" >&2
+        return 1
+    fi
+    if [[ ! -d "${candidate_path}/Contents/MacOS" || -L "${candidate_path}/Contents/MacOS" || \
+        ! -d "${candidate_path}/Contents/Resources" || -L "${candidate_path}/Contents/Resources" ]]; then
+        echo "The application bundle has missing or symlinked MacOS/Resources directories: ${candidate_path}" >&2
+        return 1
+    fi
+}
+
+create_application_bundle() {
+    local bundle_output=""
+    local raw_app_path=""
+    local app_path_count=0
+    local candidate_path=""
+    local candidate_parent=""
+    local candidate_name=""
+    local cargo_bundle_arguments=(bundle)
+
+    if [[ -n "${build_flag}" ]]; then
+        cargo_bundle_arguments+=("${build_flag}")
+    fi
+    cargo_bundle_arguments+=(--target "${target_triple}" --select-workspace-root)
+
+    prepare_cargo_manifest
+    # The pinned cargo-bundle uses term 0.4, which panics while printing progress when TERM=dumb.
+    bundle_output=$(cd "${repository_root}/crates/zed" && env -u TERM NO_COLOR=1 cargo "${cargo_bundle_arguments[@]}")
+    restore_cargo_manifest
+
+    app_path_count=$(printf '%s\n' "${bundle_output}" | awk '/\.app[[:space:]]*$/ { count += 1 } END { print count + 0 }')
+    raw_app_path=$(printf '%s\n' "${bundle_output}" | awk '/\.app[[:space:]]*$/ { value = $0 } END { print value }' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    if [[ "${app_path_count}" != "1" || -z "${raw_app_path}" ]]; then
+        echo "cargo bundle must emit exactly one application bundle path." >&2
+        return 1
+    fi
+
+    case "${raw_app_path}" in
+        /*) candidate_path="${raw_app_path}" ;;
+        *) candidate_path="${repository_root}/crates/zed/${raw_app_path}" ;;
+    esac
+    assert_application_path "${candidate_path}"
+    candidate_parent=$(cd "$(dirname "${candidate_path}")" && pwd -P)
+    candidate_name=$(basename "${candidate_path}")
+    app_path="${candidate_parent}/${candidate_name}"
+}
+
+normalize_bundle_info_plist() {
+    local info_plist="${app_path}/Contents/Info.plist"
+    local binary_plist="${session_directory}/Info.binary.plist"
+    local normalized_plist="${session_directory}/Info.normalized.plist"
+    local plist_mode=""
+
+    if [[ ! -f "${info_plist}" || -L "${info_plist}" ]]; then
+        echo "The application Info.plist must be a regular non-symlink file: ${info_plist}" >&2
+        return 1
+    fi
+
+    # The pinned cargo-bundle writes plist extension fragments twice. A parser round-trip
+    # keeps the final value for each dictionary key and removes the duplicate entries.
+    plist_mode=$(stat -f '%Lp' "${info_plist}")
+    /usr/bin/plutil -convert binary1 -o "${binary_plist}" "${info_plist}"
+    /usr/bin/plutil -convert xml1 -o "${normalized_plist}" "${binary_plist}"
+    /usr/bin/plutil -lint "${normalized_plist}" >/dev/null
+    chmod "${plist_mode}" "${normalized_plist}"
+    mv -f "${normalized_plist}" "${info_plist}"
+    rm -f "${binary_plist}"
+}
+
 # Generate the licenses first, so they can be baked into the binaries
-script/generate-licenses
+"${script_directory}/generate-licenses"
 
 rustup target add $target_triple
 
-echo "Compiling zed binaries"
-cargo build ${build_flag} --package zed --package cli --target $target_triple
+echo "Compiling Orion Studio binaries"
+cargo build ${build_flag} --package orion-studio --package cli --target $target_triple
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 cargo build ${build_flag} --package remote_server --target $target_triple
 
 echo "Creating application bundle"
-pushd crates/zed
-cp Cargo.toml Cargo.toml.backup
-sed \
-    -i.backup \
-    "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
-    Cargo.toml
-
-app_path=$(cargo bundle ${build_flag} --target $target_triple --select-workspace-root | xargs)
-
-mv Cargo.toml.backup Cargo.toml
-popd
+create_application_bundle
+normalize_bundle_info_plist
 echo "Bundled ${app_path}"
 
 # DocumentTypes.plist references CFBundleTypeIconFile "Document", so the bundle must contain Document.icns.
@@ -117,64 +760,158 @@ else
     echo "cargo::warning=Missing ${document_icon_source}; macOS document icons may not appear in Finder."
 fi
 
-if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_KEY:-}" && -n "${APPLE_NOTARIZATION_KEY_ID:-}" && -n "${APPLE_NOTARIZATION_ISSUER_ID:-}" ]]; then
+signing_variables=(
+    MACOS_CERTIFICATE
+    MACOS_CERTIFICATE_PASSWORD
+    APPLE_NOTARIZATION_KEY
+    APPLE_NOTARIZATION_KEY_ID
+    APPLE_NOTARIZATION_ISSUER_ID
+    ORION_STUDIO_MACOS_SIGNING_IDENTITY
+    ORION_STUDIO_MACOS_TEAM_ID
+)
+missing_signing_variables=()
+present_signing_input_count=0
+for variable_name in "${signing_variables[@]}"; do
+    if [[ -n "${!variable_name-}" ]]; then
+        present_signing_input_count=$((present_signing_input_count + 1))
+    else
+        missing_signing_variables+=("${variable_name}")
+    fi
+done
+if [[ -n "${provisioning_profile}" ]]; then
+    present_signing_input_count=$((present_signing_input_count + 1))
+else
+    missing_signing_variables+=("ORION_STUDIO_MACOS_PROVISIONING_PROFILE or ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64")
+fi
+
+if [[ ${#missing_signing_variables[@]} -eq 0 ]]; then
+    if [[ ! "${signing_team_identifier}" =~ ^[A-Z0-9]{10}$ ]]; then
+        echo "ORION_STUDIO_MACOS_TEAM_ID must be a 10-character Apple Team ID." >&2
+        exit 1
+    fi
+    if [[ "${signing_identity}" == *$'\n'* || "${signing_identity}" == *$'\r'* ]]; then
+        echo "ORION_STUDIO_MACOS_SIGNING_IDENTITY must not contain line breaks." >&2
+        exit 1
+    fi
+    if [[ ! -f "${provisioning_profile}" || -L "${provisioning_profile}" ]]; then
+        echo "The private Orion Studio provisioning profile copy is invalid: ${provisioning_profile}" >&2
+        exit 1
+    fi
+
+    if ! /usr/bin/security cms -D -i "${provisioning_profile}" > "${provisioning_profile_plist}"; then
+        echo "The configured Orion Studio provisioning profile is not a valid CMS profile." >&2
+        exit 1
+    fi
+    if ! profile_team_identifier=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "${provisioning_profile_plist}") || \
+        ! profile_entitlement_team_identifier=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.team-identifier' "${provisioning_profile_plist}") || \
+        ! profile_application_identifier=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "${provisioning_profile_plist}") || \
+        ! profile_expiration=$(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "${provisioning_profile_plist}"); then
+        echo "The provisioning profile is missing required team, application, or expiration fields." >&2
+        exit 1
+    fi
+    if [[ "${profile_team_identifier}" != "${signing_team_identifier}" || "${profile_entitlement_team_identifier}" != "${signing_team_identifier}" ]]; then
+        echo "The provisioning profile Team ID does not match ORION_STUDIO_MACOS_TEAM_ID." >&2
+        exit 1
+    fi
+    if [[ "${profile_application_identifier}" != "${signing_team_identifier}.${expected_bundle_identifier}" ]]; then
+        echo "The provisioning profile application identifier does not match ${expected_bundle_identifier}." >&2
+        exit 1
+    fi
+    if ! profile_expiration_epoch=$(LC_ALL=C date -j -f '%a %b %d %T %Z %Y' "${profile_expiration}" '+%s' 2>/dev/null); then
+        echo "Could not parse the provisioning profile expiration date." >&2
+        exit 1
+    fi
+    if [[ "${profile_expiration_epoch}" -le "$(date '+%s')" ]]; then
+        echo "The configured Orion Studio provisioning profile has expired." >&2
+        exit 1
+    fi
+
+    signing_keychain="${session_directory}/signing.keychain-db"
+
+    echo "Setting up an isolated keychain for Orion Studio code signing..."
+    trap '' HUP INT TERM
+    if /usr/bin/security create-keychain -p "${MACOS_CERTIFICATE_PASSWORD}" "${signing_keychain}"; then
+        signing_keychain_created=true
+        signing_keychain_creation_failed=false
+    else
+        signing_keychain_creation_failed=true
+    fi
+    trap 'handle_signal 129' HUP
+    trap 'handle_signal 130' INT
+    trap 'handle_signal 143' TERM
+    if [[ "${signing_keychain_creation_failed}" == true ]]; then
+        echo "Failed to create the isolated signing keychain." >&2
+        exit 1
+    fi
+    /usr/bin/security unlock-keychain -p "${MACOS_CERTIFICATE_PASSWORD}" "${signing_keychain}"
+    /usr/bin/security set-keychain-settings "${signing_keychain}"
+    if ! printf '%s' "${MACOS_CERTIFICATE}" | /usr/bin/base64 -D > "${certificate_file}"; then
+        echo "MACOS_CERTIFICATE is not valid base64." >&2
+        exit 1
+    fi
+    chmod 600 "${certificate_file}"
+    /usr/bin/security import "${certificate_file}" -k "${signing_keychain}" -P "${MACOS_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
+    /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${MACOS_CERTIFICATE_PASSWORD}" "${signing_keychain}"
+    verify_imported_signing_identity
     can_code_sign=true
-
-    echo "Setting up keychain for code signing..."
-    security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
-    security default-keychain -s zed.keychain
-    security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-    # Calling set-keychain-settings without `-t` disables the auto-lock timeout
-    security set-keychain-settings zed.keychain
-    echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
-    security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-    rm /tmp/zed-certificate.p12
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-
-    function cleanup() {
-        echo "Cleaning up keychain"
-        security default-keychain -s login.keychain
-        security delete-keychain zed.keychain
-    }
-
-    trap cleanup EXIT
+elif [[ ${present_signing_input_count} -gt 0 ]]; then
+    echo "Incomplete Orion Studio release signing configuration." >&2
+    printf 'Missing: %s\n' "${missing_signing_variables[*]}" >&2
+    exit 1
+elif [[ "${require_signed_release}" == "1" ]]; then
+    echo "A signed and notarized macOS artifact is required, but no signing configuration was provided." >&2
+    exit 1
 fi
 
 GIT_VERSION="v2.43.3"
 GIT_VERSION_SHA="fa29823"
+GIT_MACOS_ARM64_SHA256="f014b290f36d121bbc47b29b556044c4f6a2f6494cf78ed2eacfa501b77363b6"
+GIT_MACOS_X64_SHA256="02fb29a47a07e9a7f841888661f32ebc80a56930864dd19b674d80ffc429c96d"
 
 function download_and_unpack() {
     local url=$1
-    local path_to_unpack=$2
-    local target_path=$3
+    local expected_sha256=$2
+    local path_to_unpack=$3
+    local target_path=$4
+    local archive_file
+    local actual_sha256
+    local temporary_directory
 
-    temp_dir=$(mktemp -d)
+    download_sequence=$((download_sequence + 1))
+    temporary_directory="${session_directory}/download-${download_sequence}"
+    archive_file="${session_directory}/download-${download_sequence}.tar.gz"
+    mkdir -m 700 "${temporary_directory}"
 
     if ! command -v curl &> /dev/null; then
         echo "curl is not installed. Please install curl to continue."
         exit 1
     fi
 
-    curl --silent --fail --location "$url" | tar -xvz -C "$temp_dir" -f - $path_to_unpack
+    curl --silent --show-error --fail --location --output "${archive_file}" "${url}"
+    actual_sha256=$(sha256_file "${archive_file}")
+    if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
+        echo "Checksum verification failed for ${url}." >&2
+        exit 1
+    fi
+    tar -xvz -C "${temporary_directory}" -f "${archive_file}" "${path_to_unpack}"
 
-    mv "$temp_dir/$path_to_unpack" "$target_path"
-
-    rm -rf "$temp_dir"
+    mv "${temporary_directory}/${path_to_unpack}" "${target_path}"
 }
 
 function download_git() {
     local architecture=$1
     local target_binary=$2
+    local temporary_directory
 
-    tmp_dir=$(mktemp -d)
-    pushd "$tmp_dir"
+    temporary_directory="${session_directory}/git-${architecture}"
+    mkdir -m 700 "${temporary_directory}"
 
     case "$architecture" in
         aarch64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git ./git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" "${GIT_MACOS_ARM64_SHA256}" bin/git "${temporary_directory}/git"
             ;;
         x86_64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git ./git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" "${GIT_MACOS_X64_SHA256}" bin/git "${temporary_directory}/git"
             ;;
         *)
             echo "Unsupported architecture: $architecture"
@@ -182,103 +919,271 @@ function download_git() {
             ;;
     esac
 
-    popd
+    mv "${temporary_directory}/git" "${target_binary}"
+}
 
-    mv "${tmp_dir}/git" "${target_binary}"
-    rm -rf "$tmp_dir"
+verify_bundle_info_plist() {
+    local bundle_identifier=""
+    local bundle_executable=""
+    local info_plist="${app_path}/Contents/Info.plist"
+
+    if ! bundle_identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${info_plist}") || \
+        ! bundle_executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${info_plist}"); then
+        echo "The application Info.plist is missing its bundle identifier or executable." >&2
+        return 1
+    fi
+    if [[ "${bundle_identifier}" != "${expected_bundle_identifier}" ]]; then
+        echo "Application bundle identifier mismatch: expected ${expected_bundle_identifier}, found ${bundle_identifier}." >&2
+        return 1
+    fi
+    if [[ "${bundle_executable}" != "orion-studio" ]]; then
+        echo "Application bundle executable mismatch: expected orion-studio, found ${bundle_executable}." >&2
+        return 1
+    fi
+}
+
+verify_signature_metadata() {
+    local signed_path=$1
+    local label=$2
+    local expected_identifier=${3:-}
+    local metadata_file="${session_directory}/codesign-${label}.txt"
+    local team_identifier=""
+    local identifier=""
+    local authority=""
+    local team_count=0
+    local identifier_count=0
+    local authority_count=0
+
+    if ! /usr/bin/codesign -d --verbose=4 "${signed_path}" 2> "${metadata_file}"; then
+        echo "Failed to read code-signing metadata for ${signed_path}." >&2
+        return 1
+    fi
+    team_count=$(grep -c '^TeamIdentifier=' "${metadata_file}" || true)
+    identifier_count=$(grep -c '^Identifier=' "${metadata_file}" || true)
+    authority_count=$(grep -c '^Authority=' "${metadata_file}" || true)
+    team_identifier=$(sed -n 's/^TeamIdentifier=//p' "${metadata_file}")
+    identifier=$(sed -n 's/^Identifier=//p' "${metadata_file}")
+    authority=$(sed -n 's/^Authority=//p' "${metadata_file}" | head -n 1)
+
+    if [[ "${team_count}" != "1" || "${team_identifier}" != "${signing_team_identifier}" ]]; then
+        echo "Signed TeamIdentifier mismatch for ${signed_path}." >&2
+        return 1
+    fi
+    if [[ "${authority_count}" -lt 1 || "${authority}" != "${signing_identity}" ]]; then
+        echo "Signed certificate authority mismatch for ${signed_path}." >&2
+        return 1
+    fi
+    if [[ -n "${expected_identifier}" && ( "${identifier_count}" != "1" || "${identifier}" != "${expected_identifier}" ) ]]; then
+        echo "Signed identifier mismatch for ${signed_path}: expected ${expected_identifier}, found ${identifier}." >&2
+        return 1
+    fi
+}
+
+verify_signed_entitlements() {
+    local signed_path=$1
+    local expected_entitlements=$2
+    local label=$3
+    local expected_application_identifier=${4:-}
+    local actual_entitlements="${session_directory}/entitlements-${label}.plist"
+    local expected_normalized="${session_directory}/entitlements-${label}-expected.txt"
+    local actual_normalized="${session_directory}/entitlements-${label}-actual.txt"
+    local extraction_log="${session_directory}/entitlements-${label}.log"
+    local embedded_team_identifier=""
+    local embedded_application_identifier=""
+
+    if [[ ! -f "${expected_entitlements}" || -L "${expected_entitlements}" ]]; then
+        echo "Expected entitlements file is missing or symlinked: ${expected_entitlements}" >&2
+        return 1
+    fi
+    if ! /usr/bin/codesign -d --entitlements :- "${signed_path}" > "${actual_entitlements}" 2> "${extraction_log}"; then
+        echo "Failed to extract signed entitlements from ${signed_path}." >&2
+        return 1
+    fi
+    if ! /usr/bin/plutil -lint "${actual_entitlements}" >/dev/null || ! /usr/bin/plutil -lint "${expected_entitlements}" >/dev/null; then
+        echo "Signed or expected entitlements are not valid property lists for ${signed_path}." >&2
+        return 1
+    fi
+
+    embedded_team_identifier=$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${actual_entitlements}" 2>/dev/null || true)
+    if [[ -n "${embedded_team_identifier}" ]]; then
+        if [[ "${embedded_team_identifier}" != "${signing_team_identifier}" ]]; then
+            echo "Signed entitlement Team ID mismatch for ${signed_path}." >&2
+            return 1
+        fi
+        /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.team-identifier' "${actual_entitlements}"
+    fi
+
+    embedded_application_identifier=$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${actual_entitlements}" 2>/dev/null || true)
+    if [[ -n "${embedded_application_identifier}" ]]; then
+        if [[ -z "${expected_application_identifier}" || "${embedded_application_identifier}" != "${signing_team_identifier}.${expected_application_identifier}" ]]; then
+            echo "Signed application identifier entitlement mismatch for ${signed_path}." >&2
+            return 1
+        fi
+        /usr/libexec/PlistBuddy -c 'Delete :com.apple.application-identifier' "${actual_entitlements}"
+    fi
+
+    /usr/bin/plutil -p "${expected_entitlements}" > "${expected_normalized}"
+    /usr/bin/plutil -p "${actual_entitlements}" > "${actual_normalized}"
+    if ! cmp -s "${expected_normalized}" "${actual_normalized}"; then
+        echo "Signed entitlements do not match ${expected_entitlements} for ${signed_path}." >&2
+        diff -u "${expected_normalized}" "${actual_normalized}" >&2 || true
+        return 1
+    fi
+}
+
+verify_signed_item() {
+    local signed_path=$1
+    local label=$2
+    local expected_identifier=${3:-}
+    local verify_arguments=(--verify --strict --verbose=2)
+
+    if [[ -d "${signed_path}" ]]; then
+        verify_arguments+=(--deep)
+    fi
+    /usr/bin/codesign "${verify_arguments[@]}" "${signed_path}"
+    verify_signature_metadata "${signed_path}" "${label}" "${expected_identifier}"
 }
 
 function sign_app_binaries() {
+    assert_application_path "${app_path}"
+    verify_bundle_info_plist
     rm -rf "${app_path}/Contents/Frameworks"
     mkdir -p "${app_path}/Contents/Frameworks"
 
     echo "Downloading git binary"
     download_git "${target_triple}" "${app_path}/Contents/MacOS/git"
 
-    # Note: The app identifier for our development builds is the same as the app identifier for nightly.
-    cp crates/zed/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
-
     if [[ $can_code_sign = true ]]; then
+        cp "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"
+        if ! cmp -s "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"; then
+            echo "The embedded provisioning profile does not match the verified private copy." >&2
+            return 1
+        fi
         echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zed" -v
-        /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
+        /usr/bin/codesign --keychain "$signing_keychain" --deep --force --timestamp --options runtime --sign "$signing_identity" "${app_path}/Contents/MacOS/cli" -v
+        /usr/bin/codesign --keychain "$signing_keychain" --deep --force --timestamp --options runtime --sign "$signing_identity" "${app_path}/Contents/MacOS/git" -v
+        /usr/bin/codesign --keychain "$signing_keychain" --deep --force --timestamp --options runtime --entitlements "${app_entitlements}" --sign "$signing_identity" "${app_path}/Contents/MacOS/orion-studio" -v
+        /usr/bin/codesign --keychain "$signing_keychain" --force --timestamp --options runtime --entitlements "${app_entitlements}" --sign "$signing_identity" "${app_path}" -v
+
+        verify_signed_item "${app_path}/Contents/MacOS/cli" app-cli
+        verify_signed_item "${app_path}/Contents/MacOS/git" app-git
+        verify_signed_item "${app_path}/Contents/MacOS/orion-studio" app-executable
+        verify_signed_entitlements "${app_path}/Contents/MacOS/orion-studio" "${app_entitlements}" app-executable "${expected_bundle_identifier}"
+        verify_signed_item "${app_path}" application "${expected_bundle_identifier}"
+        verify_signed_entitlements "${app_path}" "${app_entitlements}" application "${expected_bundle_identifier}"
+        verify_bundle_info_plist
+        if ! cmp -s "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"; then
+            echo "The embedded provisioning profile changed during application signing." >&2
+            return 1
+        fi
     else
-        echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_KEY, APPLE_NOTARIZATION_KEY_ID, APPLE_NOTARIZATION_ISSUER_ID"
-
         echo "====== WARNING ======"
-        echo "This bundle is being signed without all entitlements, some features (e.g. universal links) will not work"
+        echo "Orion release signing inputs are absent; applying a local ad-hoc signature without associated-domain entitlements."
         echo "====== WARNING ======"
 
-        # NOTE: if you need to test universal links you have a few paths forward:
-        # - create a PR and tag it with the `run-bundling` label, and download the .dmg file from there.
-        # - get a signing key for the MQ55VZLNZQ team from Nathan.
-        # - create your own signing key, and update references to MQ55VZLNZQ to your own team ID
-        # then comment out this line.
-        cat crates/zed/resources/zed.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/zed.entitlements"
+        sed '/com.apple.developer.associated-domains/,+1d' "${app_entitlements}" > "${app_path}/Contents/Resources/orion-studio.entitlements"
 
-        codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
+        /usr/bin/codesign --force --deep --entitlements "${app_path}/Contents/Resources/orion-studio.entitlements" --sign "${MACOS_SIGNING_KEY:--}" "${app_path}" -v
+        verify_bundle_info_plist
     fi
 
     bundle_name=$(basename "$app_path")
-
-    if [ "$local_install" = true ]; then
-        rm -rf "/Applications/$bundle_name"
-        mv "$app_path" "/Applications/$bundle_name"
-        echo "Installed application bundle: /Applications/$bundle_name"
-        if [ "$open_result" = true ]; then
-            echo "Opening /Applications/$bundle_name"
-            open "/Applications/$bundle_name"
-        fi
-    elif [ "$open_result" = true ]; then
-        open "$app_path"
+    if [[ "${bundle_name}" != "${expected_bundle_name}" ]]; then
+        echo "Refusing unexpected application bundle name: ${bundle_name}" >&2
+        return 1
     fi
 
     if [[ "$target_dir" = "debug" ]]; then
         echo "Debug build detected - skipping DMG creation and signing"
-        if [ "$local_install" = false ]; then
+        if [[ "$local_install" == true ]]; then
+            assert_application_path "${app_path}"
+            installed_bundle_path="/Applications/${expected_bundle_name}"
+            if [[ "${installed_bundle_path}" == "/Applications" || "${installed_bundle_path}" == "/" ]]; then
+                echo "Refusing unsafe application install destination: ${installed_bundle_path}" >&2
+                return 1
+            fi
+            rm -rf "${installed_bundle_path}"
+            mv "${app_path}" "${installed_bundle_path}"
+            echo "Installed application bundle: ${installed_bundle_path}"
+            if [[ "$open_result" == true ]]; then
+                open "${installed_bundle_path}"
+            fi
+        else
             echo "Created application bundle:"
             echo "$app_path"
+            if [[ "$open_result" == true ]]; then
+                open "$app_path"
+            fi
         fi
     else
-        dmg_target_directory="target/${target_triple}/${target_dir}"
+        dmg_target_directory="${repository_root}/target/${target_triple}/${target_dir}"
         dmg_source_directory="${dmg_target_directory}/dmg"
-        dmg_file_path="${dmg_target_directory}/Zed-${arch_suffix}.dmg"
+        dmg_file_path="${dmg_target_directory}/Orion-Studio-${arch_suffix}.dmg"
         xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
 
-        rm -rf ${dmg_source_directory}
-        mkdir -p ${dmg_source_directory}
+        assert_application_path "${app_path}"
+        if [[ ! -d "${dmg_target_directory}" || -L "${dmg_target_directory}" ]]; then
+            echo "The DMG target must be a regular directory: ${dmg_target_directory}" >&2
+            return 1
+        fi
+        dmg_target_directory=$(cd "${dmg_target_directory}" && pwd -P)
+        dmg_source_directory="${dmg_target_directory}/dmg"
+        dmg_file_path="${dmg_target_directory}/Orion-Studio-${arch_suffix}.dmg"
+        rm -rf "${dmg_source_directory}"
+        mkdir -p "${dmg_source_directory}"
         mv "${app_path}" "${dmg_source_directory}"
-        notarization_key_file=$(mktemp)
 
         echo "Adding symlink to /Applications to ${dmg_source_directory}"
-        ln -s /Applications ${dmg_source_directory}
+        ln -s /Applications "${dmg_source_directory}"
 
         echo "Creating final DMG at ${dmg_file_path} using ${dmg_source_directory}"
-        hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+        hdiutil create -volname "Orion Studio" -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
 
         # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
-        # This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
+        # Keeping that symlink in the project tree can trigger filesystem watchers, so remove it after creating the image.
         echo "Removing symlink to /Applications from ${dmg_source_directory}"
-        rm ${dmg_source_directory}/Applications
+        rm "${dmg_source_directory}/Applications"
 
-        echo "Adding license agreement to DMG"
-        npm install --global dmg-license minimist
-        dmg-license script/terms/terms.json "${dmg_file_path}"
+        if [[ -n "${ORION_STUDIO_DMG_TERMS_JSON:-}" ]]; then
+            if [[ ! -f "${dmg_license_tool}" || ! -f "${dmg_terms_file}" ]]; then
+                echo "The pinned DMG license tool or private terms copy is unavailable." >&2
+                return 1
+            fi
+            echo "Adding Orion-provided license agreement to DMG"
+            run_without_release_secrets node "${dmg_license_tool}" "${dmg_terms_file}" "${dmg_file_path}"
+        else
+            echo "ORION_STUDIO_DMG_TERMS_JSON is not set; creating the DMG without an embedded service agreement."
+        fi
 
         if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"
-            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-            echo "$APPLE_NOTARIZATION_KEY" > "$notarization_key_file"
+            /usr/bin/codesign --keychain "$signing_keychain" --deep --force --timestamp --options runtime --sign "$signing_identity" "${dmg_file_path}" -v
+            verify_signed_item "${dmg_file_path}" dmg
+            printf '%s' "${APPLE_NOTARIZATION_KEY}" > "${notarization_key_file}"
+            chmod 600 "${notarization_key_file}"
             "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
-            rm "$notarization_key_file"
+            rm -f "$notarization_key_file"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
+            "${xcode_bin_dir_path}/stapler" validate "${dmg_file_path}"
+            /usr/sbin/spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg_file_path}"
         fi
 
-        if [ "$open_result" = true ]; then
-            open $dmg_target_directory
+        if [[ "$local_install" == true ]]; then
+            installed_bundle_path="/Applications/${expected_bundle_name}"
+            if [[ "${installed_bundle_path}" == "/Applications" || "${installed_bundle_path}" == "/" || \
+                ! -d "${dmg_source_directory}/${expected_bundle_name}" || -L "${dmg_source_directory}/${expected_bundle_name}" ]]; then
+                echo "Refusing unsafe application install source or destination." >&2
+                return 1
+            fi
+            rm -rf "${installed_bundle_path}"
+            /usr/bin/ditto "${dmg_source_directory}/${expected_bundle_name}" "${installed_bundle_path}"
+            echo "Installed application bundle: ${installed_bundle_path}"
+            if [[ "$open_result" == true ]]; then
+                open "${installed_bundle_path}"
+            fi
+        elif [[ "$open_result" == true ]]; then
+            open "$dmg_target_directory"
         fi
     fi
 }
@@ -287,54 +1192,81 @@ function sign_binary() {
     local binary_path=$1
 
     if [[ $can_code_sign = true ]]; then
+        if [[ ! -f "${binary_path}" || -L "${binary_path}" ]]; then
+            echo "Remote server binary is missing or symlinked: ${binary_path}" >&2
+            return 1
+        fi
+        if ! /usr/bin/plutil -lint "${remote_server_entitlements}" >/dev/null; then
+            echo "Remote server entitlements are invalid: ${remote_server_entitlements}" >&2
+            return 1
+        fi
         echo "Code signing executable $binary_path"
-        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${binary_path}" -v
+        /usr/bin/codesign --keychain "$signing_keychain" --deep --force --timestamp --options runtime --entitlements "${remote_server_entitlements}" --sign "$signing_identity" "${binary_path}" -v
+        verify_signed_item "${binary_path}" remote-server
+        verify_signed_entitlements "${binary_path}" "${remote_server_entitlements}" remote-server
     fi
 }
 
 function upload_debug_symbols() {
-    if [ "$local_install" = true ]; then
-        echo "local install; skipping sentry upload."
-    elif [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
-        echo "Uploading zed debug symbols to sentry..."
-        exe_path="target/${target_triple}/release/Zed"
-        if ! dsymutil --flat "target/${target_triple}/${target_dir}/zed" 2> target/dsymutil.log; then
-            echo "dsymutil failed"
-            cat target/dsymutil.log
+    local missing_sentry_inputs=()
+    local upload_succeeded=false
+
+    if [[ "${local_install}" == true && "${require_sentry}" != "1" ]]; then
+        echo "Local install requested; skipping optional Sentry upload."
+        return
+    fi
+
+    command -v sentry-cli >/dev/null 2>&1 || missing_sentry_inputs+=("sentry-cli")
+    [[ -n "${SENTRY_AUTH_TOKEN:-}" ]] || missing_sentry_inputs+=("SENTRY_AUTH_TOKEN")
+    [[ -n "${sentry_organization}" ]] || missing_sentry_inputs+=("ORION_STUDIO_SENTRY_ORGANIZATION")
+    [[ -n "${sentry_project}" ]] || missing_sentry_inputs+=("ORION_STUDIO_SENTRY_PROJECT")
+
+    if [[ ${#missing_sentry_inputs[@]} -gt 0 ]]; then
+        if [[ "${require_sentry}" == "1" ]]; then
+            printf 'Required Sentry debug-symbol upload is not configured. Missing: %s\n' "${missing_sentry_inputs[*]}" >&2
             exit 1
         fi
-        if ! dsymutil --flat "target/${target_triple}/${target_dir}/remote_server" 2> target/dsymutil.log; then
-            echo "dsymutil failed"
-            cat target/dsymutil.log
-            exit 1
+        printf 'WARNING: skipping optional Sentry debug-symbol upload. Missing: %s\n' "${missing_sentry_inputs[*]}" >&2
+        return
+    fi
+
+    echo "Uploading Orion Studio debug symbols to Sentry..."
+    if ! dsymutil --flat "target/${target_triple}/${target_dir}/orion-studio" 2> target/dsymutil.log; then
+        echo "dsymutil failed" >&2
+        cat target/dsymutil.log >&2
+        exit 1
+    fi
+    if ! dsymutil --flat "target/${target_triple}/${target_dir}/remote_server" 2> target/dsymutil.log; then
+        echo "dsymutil failed" >&2
+        cat target/dsymutil.log >&2
+        exit 1
+    fi
+
+    for attempt in 1 2 3; do
+        echo "Sentry upload attempt ${attempt}/3..."
+        if sentry-cli debug-files upload --include-sources --wait -p "$sentry_project" -o "$sentry_organization" \
+            "target/${target_triple}/${target_dir}/orion-studio.dwarf" \
+            "target/${target_triple}/${target_dir}/remote_server.dwarf"; then
+            upload_succeeded=true
+            break
         fi
-        # note: this uploads the unstripped binary which is needed because it contains
-        # .eh_frame data for stack unwinding. see https://github.com/getsentry/symbolic/issues/783
-        # Try uploading up to 3 times
-        for attempt in 1 2 3; do
-            echo "Sentry upload attempt $attempt..."
-            if sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-                "target/${target_triple}/${target_dir}/zed.dwarf" \
-                "target/${target_triple}/${target_dir}/remote_server.dwarf"; then
-                break
-            else
-                echo "Sentry upload failed on attempt $attempt"
-                if [ $attempt -eq 3 ]; then
-                    echo "All sentry upload attempts failed"
-                    exit 1
-                fi
-            fi
-        done
-    else
-        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
+        echo "Sentry upload failed on attempt ${attempt}" >&2
+    done
+
+    if [[ "${upload_succeeded}" != true ]]; then
+        echo "All Sentry debug-symbol upload attempts failed." >&2
+        exit 1
     fi
 }
 
 upload_debug_symbols
 
-cp target/${target_triple}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
-cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
+orion_studio_binary="${repository_root}/target/${target_triple}/${target_dir}/orion-studio"
+cli_binary="${repository_root}/target/${target_triple}/${target_dir}/cli"
+remote_server_binary="${repository_root}/target/${target_triple}/${target_dir}/remote_server"
+cp "${orion_studio_binary}" "${app_path}/Contents/MacOS/orion-studio"
+cp "${cli_binary}" "${app_path}/Contents/MacOS/cli"
 sign_app_binaries
 
-sign_binary "target/$target_triple/release/remote_server"
-gzip -f --stdout --best target/$target_triple/release/remote_server > target/zed-remote-server-macos-$arch_suffix.gz
+sign_binary "${remote_server_binary}"
+gzip -f --stdout --best "${remote_server_binary}" > "${repository_root}/target/orion-studio-remote-server-macos-${arch_suffix}.gz"

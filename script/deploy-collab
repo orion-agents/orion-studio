@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 
-set -eu
-source script/lib/deploy-helpers.sh
+set -euo pipefail
 
 if [[ $# != 1 ]]; then
-  echo "Usage: $0 <production|staging>"
-  exit 1
-fi
-environment=$1
-tag="$(tag_for_environment $environment)"
-
-branch=$(git rev-parse --abbrev-ref HEAD)
-if [ "$branch" != "main" ]; then
-  echo "You must be on main to run this script"
+  echo "Usage: $0 <production|staging>" >&2
   exit 1
 fi
 
-git pull --ff-only origin main
-git tag -f $tag
-git push -f origin $tag
+case "$1" in
+  production|staging) ;;
+  *)
+    echo "Unknown collab deployment environment: $1" >&2
+    exit 1
+    ;;
+esac
+
+echo "Local collab deployment and force-moving release tags are disabled." >&2
+echo "Request the $1 deployment through the protected Orion Studio GitHub workflow and environment approval." >&2
+exit 1

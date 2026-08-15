@@ -6,12 +6,8 @@ on:
     inputs:
       channel:
         description: channel
+        required: true
         type: string
-        default: ''
-      checkout_ref:
-        description: checkout_ref
-        type: string
-        default: ''
     secrets:
       DOCS_AMPLITUDE_API_KEY:
         description: DOCS_AMPLITUDE_API_KEY
@@ -25,21 +21,11 @@ on:
       CLOUDFLARE_ACCOUNT_ID:
         description: CLOUDFLARE_ACCOUNT_ID
         required: true
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: 'Docs channel to deploy: nightly, preview, or stable'
-        type: string
-        default: ''
-      checkout_ref:
-        description: Git ref to checkout and deploy. Defaults to event SHA when omitted.
-        type: string
-        default: ''
 permissions:
   contents: read
 jobs:
   deploy_docs:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository == 'orion-agents/orion-studio'
     name: Build and Deploy Docs
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
@@ -48,6 +34,10 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - id: resolve-channel
       name: deploy_docs::resolve_channel_step
       run: |
@@ -63,15 +53,18 @@ jobs:
         case "$CHANNEL" in
             "nightly")
                 SITE_URL="/docs/nightly/"
-                PROJECT_NAME="docs-nightly"
+                PROJECT_NAME="$ORION_STUDIO_DOCS_NIGHTLY_PROJECT"
+                PAGES_ORIGIN="$ORION_STUDIO_DOCS_NIGHTLY_ORIGIN"
                 ;;
             "preview")
                 SITE_URL="/docs/preview/"
-                PROJECT_NAME="docs-preview"
+                PROJECT_NAME="$ORION_STUDIO_DOCS_PREVIEW_PROJECT"
+                PAGES_ORIGIN="$ORION_STUDIO_DOCS_PREVIEW_ORIGIN"
                 ;;
             "stable")
                 SITE_URL="/docs/"
-                PROJECT_NAME="docs"
+                PROJECT_NAME="$ORION_STUDIO_DOCS_STABLE_PROJECT"
+                PAGES_ORIGIN="$ORION_STUDIO_DOCS_STABLE_ORIGIN"
                 ;;
             *)
                 echo "::error::Invalid docs channel '$CHANNEL'. Expected one of: nightly, preview, stable."
@@ -79,18 +72,72 @@ jobs:
                 ;;
         esac
 
+        if [[ ! "$PROJECT_NAME" =~ ^orion-studio-[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "::error::The selected Cloudflare Pages project must be an Orion Studio resource name."
+            exit 1
+        fi
+
         {
             echo "channel=$CHANNEL"
             echo "site_url=$SITE_URL"
             echo "project_name=$PROJECT_NAME"
+            echo "pages_origin=$PAGES_ORIGIN"
         } >> "$GITHUB_OUTPUT"
       env:
         CHANNEL: ${{ inputs.channel }}
+        ORION_STUDIO_DOCS_NIGHTLY_PROJECT: ${{ vars.ORION_STUDIO_DOCS_NIGHTLY_PROJECT }}
+        ORION_STUDIO_DOCS_PREVIEW_PROJECT: ${{ vars.ORION_STUDIO_DOCS_PREVIEW_PROJECT }}
+        ORION_STUDIO_DOCS_STABLE_PROJECT: ${{ vars.ORION_STUDIO_DOCS_STABLE_PROJECT }}
+        ORION_STUDIO_DOCS_NIGHTLY_ORIGIN: ${{ vars.ORION_STUDIO_DOCS_NIGHTLY_ORIGIN }}
+        ORION_STUDIO_DOCS_PREVIEW_ORIGIN: ${{ vars.ORION_STUDIO_DOCS_PREVIEW_ORIGIN }}
+        ORION_STUDIO_DOCS_STABLE_ORIGIN: ${{ vars.ORION_STUDIO_DOCS_STABLE_ORIGIN }}
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-        ref: ${{ inputs.checkout_ref != '' && inputs.checkout_ref || github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+        ref: ${{ github.sha }}
+    - name: deploy_docs::verify_deploy_source
+      run: |
+        set -euo pipefail
+        actual_sha="$(git rev-parse HEAD)"
+        if [[ "$actual_sha" != "$GITHUB_SHA" ]]; then
+          echo "::error::Checked out SHA does not match the triggering event SHA."
+          exit 1
+        fi
+        if ! git merge-base --is-ancestor "$actual_sha" origin/main; then
+          echo "::error::Docs deployments are limited to commits reachable from main."
+          exit 1
+        fi
+
+        case "$CHANNEL" in
+          nightly)
+            if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "::error::Nightly docs may only deploy from a main branch push."
+              exit 1
+            fi
+            ;;
+          preview)
+            if [[ "$GITHUB_EVENT_NAME" != "release" || "$GITHUB_REF" != refs/tags/v*-pre || "$RELEASE_PRERELEASE" != "true" ]]; then
+              echo "::error::Preview docs require a published preview release tag."
+              exit 1
+            fi
+            ;;
+          stable)
+            if [[ "$GITHUB_EVENT_NAME" != "release" || "$GITHUB_REF" != refs/tags/v* || "$GITHUB_REF" = *-pre || "$RELEASE_PRERELEASE" != "false" ]]; then
+              echo "::error::Stable docs require a published stable release tag."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "::error::Unknown docs channel."
+            exit 1
+            ;;
+        esac
+      env:
+        CHANNEL: ${{ steps.resolve-channel.outputs.channel }}
+        RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -129,31 +176,98 @@ jobs:
         args: --no-progress --exclude '^http' 'target/deploy/docs'
         fail: true
         jobSummary: false
+    - name: deploy_docs::docs_deploy_steps::render_worker_configs
+      run: |
+        set -euo pipefail
+        config_directory="target/cloudflare-deploy"
+        rm -rf "$config_directory"
+        mkdir -p "$config_directory"
+        node .cloudflare/render-wrangler-config.mjs docs-proxy "$config_directory/docs-proxy.toml"
+        node .cloudflare/render-wrangler-config.mjs open-source-website-assets "$config_directory/open-source-website-assets.toml"
+      env:
+        ORION_STUDIO_CLOUDFLARE_ZONE_NAME: orion.dev
+        ORION_STUDIO_DOCS_ROUTE_PATTERN: ${{ vars.ORION_STUDIO_DOCS_ROUTE_PATTERN }}
+        ORION_STUDIO_DOCS_STABLE_ORIGIN: ${{ vars.ORION_STUDIO_DOCS_STABLE_ORIGIN }}
+        ORION_STUDIO_DOCS_PREVIEW_ORIGIN: ${{ vars.ORION_STUDIO_DOCS_PREVIEW_ORIGIN }}
+        ORION_STUDIO_DOCS_NIGHTLY_ORIGIN: ${{ vars.ORION_STUDIO_DOCS_NIGHTLY_ORIGIN }}
+        ORION_STUDIO_WEBSITE_ORIGIN: ${{ vars.ORION_STUDIO_WEBSITE_ORIGIN }}
+        ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_ROUTE_PATTERN: ${{ vars.ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_ROUTE_PATTERN }}
+        ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME: ${{ vars.ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME }}
+    - name: deploy_docs::docs_deploy_steps::dry_run_docs_worker
+      uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
+      with:
+        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        command: deploy --dry-run --outdir target/cloudflare-dry-run/docs-proxy --config target/cloudflare-deploy/docs-proxy.toml
+    - name: deploy_docs::docs_deploy_steps::dry_run_assets_worker
+      uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
+      with:
+        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        command: deploy --dry-run --outdir target/cloudflare-dry-run/open-source-website-assets --config target/cloudflare-deploy/open-source-website-assets.toml
+    - name: deploy_docs::docs_deploy_steps::upload_versioned_install_script
+      uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
+      with:
+        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        command: r2 object put --config target/cloudflare-deploy/open-source-website-assets.toml -f script/install.sh ${{ vars.ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME }}/releases/${{ github.sha }}/install.sh
     - name: deploy_docs::docs_deploy_steps::deploy_to_cf_pages
       uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         command: pages deploy target/deploy --project-name=${{ steps.resolve-channel.outputs.project_name }} --branch main
-    - name: deploy_docs::docs_deploy_steps::upload_install_script
+    - name: deploy_docs::docs_deploy_steps::smoke_pages_origin
+      run: |
+        set -euo pipefail
+        curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$PAGES_ORIGIN/docs/"
+      env:
+        PAGES_ORIGIN: ${{ steps.resolve-channel.outputs.pages_origin }}
+    - name: deploy_docs::docs_deploy_steps::deploy_assets_worker
       uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        command: r2 object put -f script/install.sh zed-open-source-website-assets/install.sh
+        command: deploy --config target/cloudflare-deploy/open-source-website-assets.toml
     - name: deploy_docs::docs_deploy_steps::deploy_docs_worker
       uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        command: deploy .cloudflare/docs-proxy/src/worker.js
+        command: deploy --config target/cloudflare-deploy/docs-proxy.toml
+    - name: deploy_docs::docs_deploy_steps::smoke_public_routes
+      run: |
+        set -euo pipefail
+        public_docs_url="${ORION_STUDIO_WEBSITE_ORIGIN%/}${SITE_URL}"
+        curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$public_docs_url"
+      env:
+        SITE_URL: ${{ steps.resolve-channel.outputs.site_url }}
+        ORION_STUDIO_WEBSITE_ORIGIN: ${{ vars.ORION_STUDIO_WEBSITE_ORIGIN }}
+    - name: deploy_docs::docs_deploy_steps::promote_install_script
+      if: steps.resolve-channel.outputs.channel == 'stable'
+      uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65
+      with:
+        apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        command: r2 object put --config target/cloudflare-deploy/open-source-website-assets.toml -f script/install.sh ${{ vars.ORION_STUDIO_OPEN_SOURCE_WEBSITE_ASSETS_BUCKET_NAME }}/install.sh
+    - name: deploy_docs::docs_deploy_steps::smoke_public_install_script
+      if: steps.resolve-channel.outputs.channel == 'stable'
+      run: |
+        set -euo pipefail
+        curl --fail --location --retry 5 --retry-all-errors --max-time 30 "${ORION_STUDIO_WEBSITE_ORIGIN%/}/install.sh" >/dev/null
+      env:
+        ORION_STUDIO_WEBSITE_ORIGIN: ${{ vars.ORION_STUDIO_WEBSITE_ORIGIN }}
     - name: deploy_docs::docs_deploy_steps::upload_wrangler_logs
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: wrangler_logs
         path: /home/runner/.config/.wrangler/logs/
+    concurrency:
+      group: orion-studio-docs-${{ inputs.channel }}
+      cancel-in-progress: false
     timeout-minutes: 60
+    environment: production
 defaults:
   run:
     shell: bash -euxo pipefail {0}

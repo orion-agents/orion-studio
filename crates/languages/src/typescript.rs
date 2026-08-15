@@ -62,6 +62,27 @@ const TYPESCRIPT_BUN_TEST_NAME_VARIABLE: VariableName =
 
 const TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_NODE_PACKAGE_PATH"));
+const TYPESCRIPT_LSP_HOST_INFO: &str = "orion-studio";
+
+fn typescript_lsp_initialization_options(tsdk_path: Option<&str>) -> Value {
+    json!({
+        "provideFormatter": true,
+        "hostInfo": TYPESCRIPT_LSP_HOST_INFO,
+        "tsserver": {
+            "path": tsdk_path,
+        },
+        "preferences": {
+            "includeInlayParameterNameHints": "all",
+            "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
+            "includeInlayFunctionParameterTypeHints": true,
+            "includeInlayVariableTypeHints": true,
+            "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
+            "includeInlayPropertyDeclarationTypeHints": true,
+            "includeInlayFunctionLikeReturnTypeHints": true,
+            "includeInlayEnumMemberValueHints": true,
+        }
+    })
+}
 
 #[derive(Clone, Debug, Default)]
 struct PackageJsonContents(Arc<RwLock<HashMap<PathBuf, PackageJson>>>);
@@ -828,23 +849,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let tsdk_path = self.tsdk_path(adapter).await;
-        Ok(Some(json!({
-            "provideFormatter": true,
-            "hostInfo": "zed",
-            "tsserver": {
-                "path": tsdk_path,
-            },
-            "preferences": {
-                "includeInlayParameterNameHints": "all",
-                "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-                "includeInlayFunctionParameterTypeHints": true,
-                "includeInlayVariableTypeHints": true,
-                "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
-                "includeInlayPropertyDeclarationTypeHints": true,
-                "includeInlayFunctionLikeReturnTypeHints": true,
-                "includeInlayEnumMemberValueHints": true,
-            }
-        })))
+        Ok(Some(typescript_lsp_initialization_options(tsdk_path)))
     }
 
     async fn workspace_configuration(
@@ -919,7 +924,15 @@ mod tests {
 
     use crate::typescript::{
         PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+        typescript_lsp_initialization_options,
     };
+
+    #[test]
+    fn typescript_lsp_host_info_uses_orion_studio_identity() {
+        let options = typescript_lsp_initialization_options(None);
+
+        assert_eq!(options["hostInfo"], "orion-studio");
+    }
 
     #[test]
     fn test_class_instantiation_highlighting() {
@@ -1750,19 +1763,19 @@ mod tests {
             [
                 (
                     "vitest file test".into(),
-                    Some("$ZED_CUSTOM_TYPESCRIPT_VITEST_PACKAGE_PATH".into()),
+                    Some("$ORION_STUDIO_CUSTOM_TYPESCRIPT_VITEST_PACKAGE_PATH".into()),
                 ),
                 (
-                    "vitest test $ZED_SYMBOL".into(),
-                    Some("$ZED_CUSTOM_TYPESCRIPT_VITEST_PACKAGE_PATH".into()),
+                    "vitest test $ORION_STUDIO_SYMBOL".into(),
+                    Some("$ORION_STUDIO_CUSTOM_TYPESCRIPT_VITEST_PACKAGE_PATH".into()),
                 ),
                 (
                     "mocha file test".into(),
-                    Some("$ZED_CUSTOM_TYPESCRIPT_MOCHA_PACKAGE_PATH".into()),
+                    Some("$ORION_STUDIO_CUSTOM_TYPESCRIPT_MOCHA_PACKAGE_PATH".into()),
                 ),
                 (
-                    "mocha test $ZED_SYMBOL".into(),
-                    Some("$ZED_CUSTOM_TYPESCRIPT_MOCHA_PACKAGE_PATH".into()),
+                    "mocha test $ORION_STUDIO_SYMBOL".into(),
+                    Some("$ORION_STUDIO_CUSTOM_TYPESCRIPT_MOCHA_PACKAGE_PATH".into()),
                 ),
                 (
                     "root/package.json > test".into(),

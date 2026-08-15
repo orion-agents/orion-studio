@@ -172,16 +172,22 @@ use crate::{
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
-static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
-    env::var("ZED_WINDOW_SIZE")
-        .ok()
+fn preferred_environment_value<T>(canonical: Option<T>, legacy: Option<T>) -> Option<T> {
+    canonical.or(legacy)
+}
+
+fn environment_value(canonical_name: &str, legacy_name: &str) -> Option<String> {
+    preferred_environment_value(env::var(canonical_name).ok(), env::var(legacy_name).ok())
+}
+
+static ORION_STUDIO_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
+    environment_value("ORION_STUDIO_WINDOW_SIZE", "ZED_WINDOW_SIZE")
         .as_deref()
         .and_then(parse_pixel_size_env_var)
 });
 
-static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
-    env::var("ZED_WINDOW_POSITION")
-        .ok()
+static ORION_STUDIO_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
+    environment_value("ORION_STUDIO_WINDOW_POSITION", "ZED_WINDOW_POSITION")
         .as_deref()
         .and_then(parse_pixel_position_env_var)
 });
@@ -8691,8 +8697,8 @@ fn leader_border_for_pane(
 }
 
 fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
-    ZED_WINDOW_POSITION
-        .zip(*ZED_WINDOW_SIZE)
+    ORION_STUDIO_WINDOW_POSITION
+        .zip(*ORION_STUDIO_WINDOW_SIZE)
         .map(|(position, size)| Bounds {
             origin: position,
             size,
@@ -9808,7 +9814,9 @@ actions!(
         ///
         /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
         /// can be copied via "Copy link to section" in the context menu of the channel notes
-        /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
+        /// buffer. Canonical URLs look like
+        /// `https://orion.dev/channel/channel-name-CHANNEL_ID/notes`; legacy Zed URLs are also
+        /// accepted during migration.
         OpenChannelNotes,
         /// Mutes your microphone.
         Mute,
@@ -10052,7 +10060,7 @@ pub fn join_channel(
                         let detail: SharedString = match err.error_code() {
                             ErrorCode::SignedOut => "Please sign in to continue.".into(),
                             ErrorCode::UpgradeRequired => concat!(
-                                "Your are running an unsupported version of Zed. ",
+                                "You are running an unsupported version of Orion Studio. ",
                                 "Please update to continue."
                             )
                             .into(),
@@ -11657,6 +11665,24 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
     use util::rel_path::rel_path;
+
+    #[test]
+    fn test_window_environment_value_precedence_and_empty_semantics() {
+        assert_eq!(
+            preferred_environment_value(Some("1200,800"), Some("640,480")),
+            Some("1200,800")
+        );
+        assert_eq!(
+            preferred_environment_value(None, Some("640,480")),
+            Some("640,480")
+        );
+        assert_eq!(
+            preferred_environment_value(Some(""), Some("640,480")),
+            Some("")
+        );
+        assert_eq!(parse_pixel_size_env_var(""), None);
+        assert_eq!(parse_pixel_position_env_var(""), None);
+    }
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {

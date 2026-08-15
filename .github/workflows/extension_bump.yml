@@ -5,7 +5,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
-  ZED_EXTENSION_CLI_SHA: 9ee3c503a4bbbc6b4a0f8a789acca4871d773223
+  ORION_STUDIO_EXTENSION_CLI_SHA: 9ee3c503a4bbbc6b4a0f8a789acca4871d773223
 on:
   workflow_call:
     inputs:
@@ -23,16 +23,16 @@ on:
         default: .
     secrets:
       app-id:
-        description: The app ID used to create the PR
+        description: The Orion Studio automation app ID
         required: true
       app-secret:
-        description: The app secret for the corresponding app ID
+        description: The private key for the Orion Studio automation app
         required: true
 permissions:
   contents: read
 jobs:
   check_version_changed:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository == 'orion-agents/orion-studio' || (vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION))
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -71,10 +71,23 @@ jobs:
     needs:
     - check_version_changed
     if: |-
-      (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
+      (github.repository == 'orion-agents/orion-studio' || (vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION)) && vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' &&
       (inputs.force-bump == true || needs.check_version_changed.outputs.version_changed == 'false')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: extension_bump::validate_extension_organization_config
+      run: |
+        if [[ "$EXTENSION_REGISTRY_ENABLED" != "true" ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED must be true"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_ORGANIZATION" =~ ^orion(-[a-z0-9]+)*$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization"
+            exit 1
+        fi
+      env:
+        EXTENSION_REGISTRY_ENABLED: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED }}
+        EXTENSION_ORGANIZATION: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
     - id: generate-token
       name: steps::generate_token
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
@@ -122,7 +135,7 @@ jobs:
             {
                 echo "title=Bump version to ${NEW_VERSION}";
                 echo "body=This PR bumps the version of this extension to v${NEW_VERSION}";
-                echo "branch_name=zed-zippy-autobump";
+                echo "branch_name=orion-studio-automation-autobump";
             } >> "$GITHUB_OUTPUT"
         else
             {
@@ -134,7 +147,7 @@ jobs:
                 echo "";
                 echo "- N/A";
                 echo "EOF";
-                echo "branch_name=zed-zippy-${EXTENSION_ID}-autobump";
+                echo "branch_name=orion-studio-automation-${EXTENSION_ID}-autobump";
             } >> "$GITHUB_OUTPUT"
         fi
 
@@ -150,8 +163,8 @@ jobs:
         body: ${{ steps.bump-version.outputs.body }}
         commit-message: ${{ steps.bump-version.outputs.title }}
         branch: ${{ steps.bump-version.outputs.branch_name }}
-        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
-        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        committer: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
+        author: orion-studio-automation[bot] <orion-studio-automation[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
@@ -165,9 +178,22 @@ jobs:
   create_version_label:
     needs:
     - check_version_changed
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_version_changed.outputs.version_changed == 'true'
+    if: (github.repository == 'orion-agents/orion-studio' || (vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION)) && vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_version_changed.outputs.version_changed == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: extension_bump::validate_extension_organization_config
+      run: |
+        if [[ "$EXTENSION_REGISTRY_ENABLED" != "true" ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED must be true"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_ORGANIZATION" =~ ^orion(-[a-z0-9]+)*$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization"
+            exit 1
+        fi
+      env:
+        EXTENSION_REGISTRY_ENABLED: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED }}
+        EXTENSION_ORGANIZATION: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
     - id: generate-token
       name: steps::generate_token
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
@@ -218,17 +244,35 @@ jobs:
     needs:
     - check_version_changed
     - create_version_label
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    if: (github.repository == 'orion-agents/orion-studio' || (vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && startsWith(vars.ORION_STUDIO_EXTENSION_ORGANIZATION, 'orion') && github.repository_owner == vars.ORION_STUDIO_EXTENSION_ORGANIZATION)) && vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED == 'true' && vars.ORION_STUDIO_EXTENSION_ORGANIZATION != '' && vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY != ''
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: extension_bump::validate_extension_registry_config
+      run: |
+        if [[ "$EXTENSION_REGISTRY_ENABLED" != "true" ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_ENABLED must be true"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_ORGANIZATION" =~ ^orion(-[a-z0-9]+)*$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_ORGANIZATION must name an Orion-owned GitHub organization"
+            exit 1
+        fi
+        if [[ ! "$EXTENSION_REGISTRY_REPOSITORY" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo "::error::ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY must be a repository name without an owner"
+            exit 1
+        fi
+      env:
+        EXTENSION_REGISTRY_ENABLED: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_ENABLED }}
+        EXTENSION_ORGANIZATION: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
+        EXTENSION_REGISTRY_REPOSITORY: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY }}
     - id: generate-token
       name: steps::generate_token
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.app-id }}
         private-key: ${{ secrets.app-secret }}
-        owner: zed-industries
-        repositories: extensions
+        owner: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
+        repositories: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY }}
         permission-contents: write
         permission-issues: write
         permission-members: read
@@ -242,13 +286,18 @@ jobs:
       run: |
         EXTENSION_ID="$(sed -n 's/id = \"\(.*\)\"/\1/p' < extension.toml)"
 
+        if [[ ! "$EXTENSION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::extension.toml does not contain a valid extension id"
+            exit 1
+        fi
+
         echo "extension_id=${EXTENSION_ID}" >> "$GITHUB_OUTPUT"
     - id: extension-update
       name: extension_bump::release_action
       uses: huacnlee/zed-extension-action@82920ff0876879f65ffbcfa3403589114a8919c6
       with:
         extension-name: ${{ steps.get-extension-id.outputs.extension_id }}
-        push-to: zed-industries/extensions
+        push-to: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}/${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY }}
         tag: ${{ needs.create_version_label.outputs.tag }}
       env:
         COMMITTER_TOKEN: ${{ steps.generate-token.outputs.token }}
@@ -263,10 +312,16 @@ jobs:
           }
 
           const author = process.env.GITHUB_ACTOR;
+          const organization = process.env.EXTENSION_ORGANIZATION;
+          const registryRepository = process.env.EXTENSION_REGISTRY_REPOSITORY;
+          if (!/^orion(?:-[a-z0-9]+)*$/.test(organization) ||
+              !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(registryRepository)) {
+              throw new Error('Invalid Orion Studio extension registry target');
+          }
           let isStaff = false;
           try {
               const response = await github.rest.teams.getMembershipForUserInOrg({
-                  org: 'zed-industries',
+                  org: organization,
                   team_slug: 'staff',
                   username: author
               });
@@ -283,20 +338,23 @@ jobs:
           }
 
           // Assign staff member responsible for the bump
-          const pullNumber = parseInt(prNumber);
+          const pullNumber = Number.parseInt(prNumber, 10);
+          if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) {
+              throw new Error(`Invalid pull request number: ${prNumber}`);
+          }
 
           await github.rest.issues.addAssignees({
-              owner: 'zed-industries',
-              repo: 'extensions',
+              owner: organization,
+              repo: registryRepository,
               issue_number: pullNumber,
               assignees: [author]
           });
-          console.log(`Assigned ${author} to PR #${prNumber} in zed-industries/extensions`);
+          console.log(`Assigned ${author} to PR #${prNumber} in ${organization}/${registryRepository}`);
 
           // Get the GraphQL node ID
           const { data: pr } = await github.rest.pulls.get({
-              owner: 'zed-industries',
-              repo: 'extensions',
+              owner: organization,
+              repo: registryRepository,
               pull_number: pullNumber
           });
 
@@ -312,10 +370,12 @@ jobs:
               }
           `, { pullRequestId: pr.node_id });
 
-          console.log(`Automerge enabled for PR #${prNumber} in zed-industries/extensions`);
+          console.log(`Automerge enabled for PR #${prNumber} in ${organization}/${registryRepository}`);
         github-token: ${{ steps.generate-token.outputs.token }}
       env:
         PR_NUMBER: ${{ steps.extension-update.outputs.pull-request-number }}
+        EXTENSION_ORGANIZATION: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
+        EXTENSION_REGISTRY_REPOSITORY: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY }}
     defaults:
       run:
         shell: bash -euxo pipefail {0}

@@ -9,7 +9,8 @@ use thiserror::Error;
 
 use crate::{
     Appearance, AppearanceContent, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons,
-    IconDefinition, IconTheme, IconThemeFamilyContent, Theme, ThemeFamily, default_icon_theme,
+    IconDefinition, IconTheme, IconThemeFamilyContent, LEGACY_DEFAULT_ICON_THEME_NAME, Theme,
+    ThemeFamily, default_icon_theme,
 };
 
 /// The metadata for a theme.
@@ -108,9 +109,7 @@ impl ThemeRegistry {
             assets,
         };
 
-        // We're loading the Zed default theme, as we need a theme to be loaded
-        // for tests.
-        registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
+        registry.insert_theme_families([crate::fallback_themes::orion_studio_default_themes()]);
 
         let default_icon_theme = crate::default_icon_theme();
         registry
@@ -227,6 +226,13 @@ impl ThemeRegistry {
 
     /// Returns the icon theme with the specified name.
     pub fn get_icon_theme(&self, name: &str) -> Result<Arc<IconTheme>, IconThemeNotFoundError> {
+        // Older settings persist the upstream display name. Resolve it without registering a
+        // duplicate theme that would be shown in the selector.
+        let name = if name == LEGACY_DEFAULT_ICON_THEME_NAME {
+            DEFAULT_ICON_THEME_NAME
+        } else {
+            name
+        };
         self.state
             .read()
             .icon_themes

@@ -4719,7 +4719,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
         cx.spawn(async move |cx| {
             let agent_choice = match request.agent_id.as_deref() {
                 None => None,
-                Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Some(Agent::NativeAgent),
+                Some(id) if agent::is_native_agent_id(id) => Some(Agent::NativeAgent),
                 Some(id) => {
                     // Reject unknown agent ids up front so the model gets a
                     // structured error pointing at `list_agents_and_models`,
@@ -4868,7 +4868,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
 
         let mut agents = Vec::new();
 
-        // Native Zed agent — always available, and we can enumerate models
+        // Native Orion Agent — always available, and we can enumerate models
         // directly from the language model registry.
         let native_models = {
             let registry = LanguageModelRegistry::read_global(cx);
@@ -4895,7 +4895,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             models
         };
         agents.push(agent::AvailableAgent {
-            id: agent::ZED_AGENT_ID.to_string(),
+            id: agent::ORION_AGENT_ID.to_string(),
             name: Agent::NativeAgent.label(),
             is_native: true,
             models: native_models,
@@ -5818,12 +5818,12 @@ impl AgentPanel {
                 Some(ContextMenu::build(window, cx, |menu, _window, cx| {
                     menu.context(focus_handle.clone())
                         .item(
-                            ContextMenuEntry::new("Zed Agent")
+                            ContextMenuEntry::new("Orion Agent")
                                 .when(
                                     !showing_terminal && is_agent_selected(Agent::NativeAgent),
                                     |this| this.action(Box::new(NewThread)),
                                 )
-                                .icon(IconName::ZedAgent)
+                                .icon(IconName::Sparkle)
                                 .icon_color(Color::Muted)
                                 .handler({
                                     let workspace = workspace.clone();
@@ -6161,7 +6161,7 @@ impl AgentPanel {
                     .read(cx)
                     .default_model()
                     .is_some_and(|model| {
-                        model.provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
+                        model.provider.id() != language_model::ORION_CLOUD_PROVIDER_ID
                     })
                 {
                     return false;
@@ -6215,7 +6215,7 @@ impl AgentPanel {
             .iter()
             .any(|provider| {
                 provider.is_authenticated(cx)
-                    && provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
+                    && provider.id() != language_model::ORION_CLOUD_PROVIDER_ID
             });
 
         match &self.base_view {
@@ -6927,7 +6927,7 @@ mod tests {
 
     impl AgentConnection for SessionTrackingConnection {
         fn agent_id(&self) -> AgentId {
-            agent::ZED_AGENT_ID.clone()
+            agent::ORION_AGENT_ID.clone()
         }
 
         fn telemetry_id(&self) -> SharedString {
@@ -8416,8 +8416,8 @@ mod tests {
             "resource text should be the raw conflict"
         );
         assert!(
-            uri.starts_with("zed:///agent/merge-conflict"),
-            "URI should use the zed merge-conflict scheme, got: {uri}"
+            uri.starts_with("orion:///agent/merge-conflict"),
+            "URI should use the canonical Orion merge-conflict scheme, got: {uri}"
         );
         assert!(uri.contains("utils.rs"), "URI should encode the file path");
     }
@@ -12728,7 +12728,7 @@ mod tests {
 
     impl AgentConnection for DisassociationTrackingConnection {
         fn agent_id(&self) -> AgentId {
-            agent::ZED_AGENT_ID.clone()
+            agent::ORION_AGENT_ID.clone()
         }
 
         fn telemetry_id(&self) -> SharedString {

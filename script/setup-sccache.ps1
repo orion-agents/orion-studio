@@ -101,7 +101,10 @@ function Configure-Sccache {
 
     Write-Host "Configuring sccache with Cloudflare R2..."
 
-    $bucket = if ($env:SCCACHE_BUCKET) { $env:SCCACHE_BUCKET } else { "sccache-zed" }
+    if (-not $env:SCCACHE_BUCKET) {
+        throw "SCCACHE_BUCKET must be configured when R2_ACCOUNT_ID is set"
+    }
+    $bucket = $env:SCCACHE_BUCKET
     $keyPrefix = if ($env:SCCACHE_KEY_PREFIX) { $env:SCCACHE_KEY_PREFIX } else { "sccache/" }
     $baseDir = if ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { (Get-Location).Path }
 
