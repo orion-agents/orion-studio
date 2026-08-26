@@ -16,6 +16,8 @@
 //!   treated as "no migration state".
 //! * The legacy directory is retained after migration (never deleted).
 //! * Symlinks and special files (sockets, fifos, devices) are never copied.
+//! * LMDB runtime lock files are never copied; LMDB recreates them when the
+//!   migrated environment is opened.
 //! * No error is silently discarded: every fallible operation either
 //!   propagates an error with source/target path and stage context, or is an
 //!   explicitly reported cleanup failure.
@@ -41,6 +43,9 @@ const MIGRATION_LOCK_NAME: &str = ".orion-studio-migration.lock";
 const MARKER_TEMP_PREFIX: &str = ".orion-migration-marker.tmp";
 const FILE_TEMP_PREFIX: &str = ".orion-migration-file.tmp";
 const DIRECTORY_TEMP_PREFIX: &str = ".orion-migrating";
+const LMDB_DIRECTORY_EXTENSION: &str = "mdb";
+const LMDB_DATA_FILE_NAME: &str = "data.mdb";
+const LMDB_LOCK_FILE_NAME: &str = "lock.mdb";
 const MAX_SOURCE_STABILITY_ATTEMPTS: usize = 3;
 
 #[cfg(unix)]
@@ -2610,6 +2615,9 @@ fn capture_directory_snapshot(
                 attempts: 1,
             });
         };
+        if is_transient_lmdb_lock_file(directory, &name, named.kind)? {
+            continue;
+        }
         match named.kind {
             EntryKind::Directory => {
                 let child =
@@ -3028,6 +3036,9 @@ fn copy_tree_to_staging(
                 attempts: 1,
             });
         };
+        if is_transient_lmdb_lock_file(source, &name, metadata.kind)? {
+            continue;
+        }
         match metadata.kind {
             EntryKind::Directory => {
                 let source_child =
@@ -3055,6 +3066,58 @@ fn copy_tree_to_staging(
         }
     }
     destination.sync("sync staging directory after copy")
+}
+
+fn is_transient_lmdb_lock_file(
+    directory: &SecureDirectory,
+    name: &OsStr,
+    kind: EntryKind,
+) -> Result<bool, MigrationError> {
+    if kind != EntryKind::RegularFile || name != OsStr::new(LMDB_LOCK_FILE_NAME) {
+        return Ok(false);
+    }
+    is_lmdb_environment(directory)
+}
+
+fn is_lmdb_environment(directory: &SecureDirectory) -> Result<bool, MigrationError> {
+    if directory.path.extension() != Some(OsStr::new(LMDB_DIRECTORY_EXTENSION)) {
+        return Ok(false);
+    }
+    Ok(matches!(
+        directory.named_metadata(
+            OsStr::new(LMDB_DATA_FILE_NAME),
+            "inspect LMDB data file"
+        )?,
+        Some(metadata) if metadata.kind == EntryKind::RegularFile
+    ))
+}
+
+fn validate_destination_lmdb_lock_entry(
+    source: &SecureDirectory,
+    destination: &SecureDirectory,
+) -> Result<(), MigrationError> {
+    if !is_lmdb_environment(source)? {
+        return Ok(());
+    }
+    let lock_name = OsStr::new(LMDB_LOCK_FILE_NAME);
+    match destination.named_metadata(lock_name, "inspect destination LMDB lock file")? {
+        None
+        | Some(NamedMetadata {
+            kind: EntryKind::RegularFile,
+            ..
+        }) => Ok(()),
+        Some(NamedMetadata {
+            kind: EntryKind::Symlink,
+            ..
+        }) => Err(MigrationError::UnsafeSymlink {
+            path: destination.path.join(lock_name),
+            context: "inspect destination LMDB lock file",
+        }),
+        Some(_) => Err(MigrationError::DestinationConflict {
+            source: source.path.join(lock_name),
+            destination: destination.path.join(lock_name),
+        }),
+    }
 }
 
 fn copy_file_to_directory(
@@ -3196,6 +3259,7 @@ fn merge_tree(
                         true,
                     ),
                 };
+                validate_destination_lmdb_lock_entry(&source_child, &destination_child)?;
                 merge_tree(&source_child, &destination_child, &child_relative, snapshot)?;
                 if created {
                     let permissions = snapshot_directory_permissions(snapshot, &child_relative)?;
@@ -4192,6 +4256,214 @@ mod tests {
         assert!(new.join("from_new.json").exists());
         // Pre-existing new file is not overwritten.
         assert_eq!(fs::read_to_string(new.join("from_new.json"))?, "new");
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn transient_lmdb_lock_is_not_copied() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        let legacy_environment = old.join("prompts").join("prompts-library-db.0.mdb");
+        fs::create_dir_all(&legacy_environment)?;
+        fs::write(legacy_environment.join("data.mdb"), b"prompt-database")?;
+        fs::write(legacy_environment.join("lock.mdb"), b"legacy-runtime-lock")?;
+        fs::write(old.join("lock.mdb"), b"ordinary-file")?;
+        let lookalike = old.join("archive.mdb");
+        fs::create_dir_all(&lookalike)?;
+        fs::write(lookalike.join("lock.mdb"), b"lookalike-file")?;
+        let non_regular_data = old.join("directory-data.mdb");
+        fs::create_dir_all(non_regular_data.join("data.mdb"))?;
+        fs::write(non_regular_data.join("lock.mdb"), b"persistent-file")?;
+
+        assert_eq!(migrate_root(&old, &new)?, MigrationState::Migrated);
+        let migrated_environment = new.join("prompts").join("prompts-library-db.0.mdb");
+        assert_eq!(
+            fs::read(migrated_environment.join("data.mdb"))?,
+            b"prompt-database"
+        );
+        assert!(!migrated_environment.join("lock.mdb").exists());
+        assert_eq!(fs::read(new.join("lock.mdb"))?, b"ordinary-file");
+        assert_eq!(
+            fs::read(new.join("archive.mdb").join("lock.mdb"))?,
+            b"lookalike-file"
+        );
+        assert_eq!(
+            fs::read(new.join("directory-data.mdb").join("lock.mdb"))?,
+            b"persistent-file"
+        );
+        assert_eq!(
+            fs::read(legacy_environment.join("lock.mdb"))?,
+            b"legacy-runtime-lock"
+        );
+        assert!(new.join(MIGRATION_MARKER_NAME).exists());
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn differing_lmdb_locks_do_not_block_existing_destination_merge() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        let legacy_environment = old.join("prompts").join("prompts-library-db.0.mdb");
+        let destination_environment = new.join("prompts").join("prompts-library-db.0.mdb");
+        fs::create_dir_all(&legacy_environment)?;
+        fs::create_dir_all(&destination_environment)?;
+        fs::write(legacy_environment.join("data.mdb"), b"prompt-database")?;
+        fs::write(legacy_environment.join("lock.mdb"), b"legacy-runtime-lock")?;
+        fs::write(destination_environment.join("data.mdb"), b"prompt-database")?;
+        fs::write(
+            destination_environment.join("lock.mdb"),
+            b"orion-runtime-lock",
+        )?;
+        fs::write(old.join("settings.json"), b"legacy-settings")?;
+
+        assert_eq!(migrate_root(&old, &new)?, MigrationState::Migrated);
+        assert_eq!(
+            fs::read(destination_environment.join("data.mdb"))?,
+            b"prompt-database"
+        );
+        assert_eq!(
+            fs::read(destination_environment.join("lock.mdb"))?,
+            b"orion-runtime-lock"
+        );
+        assert_eq!(fs::read(new.join("settings.json"))?, b"legacy-settings");
+        assert_eq!(
+            fs::read(legacy_environment.join("lock.mdb"))?,
+            b"legacy-runtime-lock"
+        );
+        assert!(new.join(MIGRATION_MARKER_NAME).exists());
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn differing_lmdb_data_still_blocks_migration() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        let legacy_environment = old.join("prompts").join("prompts-library-db.0.mdb");
+        let destination_environment = new.join("prompts").join("prompts-library-db.0.mdb");
+        fs::create_dir_all(&legacy_environment)?;
+        fs::create_dir_all(&destination_environment)?;
+        fs::write(legacy_environment.join("data.mdb"), b"legacy-database")?;
+        fs::write(legacy_environment.join("lock.mdb"), b"legacy-runtime-lock")?;
+        fs::write(destination_environment.join("data.mdb"), b"orion-database")?;
+        fs::write(
+            destination_environment.join("lock.mdb"),
+            b"orion-runtime-lock",
+        )?;
+
+        let destination_data = destination_environment.join("data.mdb");
+        assert!(matches!(
+            migrate_root(&old, &new),
+            Err(MigrationError::DestinationConflict {
+                ref destination,
+                ..
+            }) if destination == &destination_data
+        ));
+        assert_eq!(fs::read(&destination_data)?, b"orion-database");
+        assert_eq!(
+            fs::read(destination_environment.join("lock.mdb"))?,
+            b"orion-runtime-lock"
+        );
+        assert!(!new.join(MIGRATION_MARKER_NAME).exists());
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn changing_lmdb_lock_during_copy_does_not_invalidate_snapshot() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        let legacy_environment = old.join("prompts").join("prompts-library-db.0.mdb");
+        fs::create_dir_all(&legacy_environment)?;
+        fs::write(legacy_environment.join("data.mdb"), b"prompt-database")?;
+        let legacy_lock = legacy_environment.join("lock.mdb");
+        fs::write(&legacy_lock, b"initial-runtime-lock")?;
+
+        let lock_to_change = legacy_lock.clone();
+        let state = migrate_root_unlocked_with_after_copy(&old, &new, move |_| {
+            fs::write(&lock_to_change, b"changed-runtime-lock").map_err(|error| {
+                MigrationError::io(
+                    error,
+                    lock_to_change.clone(),
+                    "change LMDB lock file in test",
+                )
+            })
+        })?;
+
+        assert_eq!(state, MigrationState::Migrated);
+        let migrated_environment = new.join("prompts").join("prompts-library-db.0.mdb");
+        assert_eq!(
+            fs::read(migrated_environment.join("data.mdb"))?,
+            b"prompt-database"
+        );
+        assert!(!migrated_environment.join("lock.mdb").exists());
+        assert_eq!(fs::read(&legacy_lock)?, b"changed-runtime-lock");
+        assert!(new.join(MIGRATION_MARKER_NAME).exists());
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn destination_lmdb_lock_directory_fails_closed() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        let legacy_environment = old.join("prompts").join("prompts-library-db.0.mdb");
+        let destination_environment = new.join("prompts").join("prompts-library-db.0.mdb");
+        fs::create_dir_all(&legacy_environment)?;
+        fs::create_dir_all(destination_environment.join("lock.mdb"))?;
+        fs::write(legacy_environment.join("data.mdb"), b"prompt-database")?;
+        fs::write(destination_environment.join("data.mdb"), b"prompt-database")?;
+
+        let destination_lock = destination_environment.join("lock.mdb");
+        assert!(matches!(
+            migrate_root(&old, &new),
+            Err(MigrationError::DestinationConflict {
+                ref destination,
+                ..
+            }) if destination == &destination_lock
+        ));
+        assert!(destination_lock.is_dir());
+        assert!(!new.join(MIGRATION_MARKER_NAME).exists());
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_lmdb_lock_symlink_fails_closed() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        let legacy_environment = old.join("prompts").join("prompts-library-db.0.mdb");
+        let destination_environment = new.join("prompts").join("prompts-library-db.0.mdb");
+        fs::create_dir_all(&legacy_environment)?;
+        fs::create_dir_all(&destination_environment)?;
+        fs::write(legacy_environment.join("data.mdb"), b"prompt-database")?;
+        fs::write(destination_environment.join("data.mdb"), b"prompt-database")?;
+        let outside = root.join("outside-lock");
+        fs::write(&outside, b"outside")?;
+        let destination_lock = destination_environment.join("lock.mdb");
+        std::os::unix::fs::symlink(&outside, &destination_lock)?;
+
+        assert!(matches!(
+            migrate_root(&old, &new),
+            Err(MigrationError::UnsafeSymlink { ref path, .. }) if path == &destination_lock
+        ));
+        assert_eq!(fs::read(&outside)?, b"outside");
+        assert!(!new.join(MIGRATION_MARKER_NAME).exists());
 
         fs::remove_dir_all(&root)?;
         Ok(())
