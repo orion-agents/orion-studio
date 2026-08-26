@@ -198,7 +198,7 @@ impl WorkspaceError for PortalError {
     fn primary_action(&self) -> ErrorAction {
         ErrorAction::link(
             "See docs",
-            "https://orion.dev/docs/linux#i-cant-open-any-files",
+            "https://github.com/orion-agents/orion-studio/blob/main/docs/src/linux.md#i-cant-open-any-files",
         )
     }
 }

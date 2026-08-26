@@ -888,7 +888,7 @@ impl Render for BranchDiffToolbar {
                 this.child(Divider::vertical()).child(
                     Button::new("review-diff", "Review Diff")
                         .start_icon(
-                            Icon::new(IconName::ZedAssistant)
+                            Icon::new(IconName::OrionAssistant)
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
                         )

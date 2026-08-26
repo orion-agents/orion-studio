@@ -28,7 +28,9 @@ pub enum IconName {
     AiOpenRouter,
     AiVercel,
     AiXAi,
-    AiZed,
+    #[strum(serialize = "ai_orion", serialize = "ai_zed")]
+    #[serde(rename = "AiOrion", alias = "AiZed")]
+    AiOrion,
     Archive,
     ArrowCircle,
     ArrowDown,
@@ -291,16 +293,20 @@ pub enum IconName {
     WholeWord,
     XCircle,
     XCircleFilled,
-    ZedAgent,
-    ZedAgentTwo,
-    ZedAssistant,
+    #[strum(serialize = "orion_assistant", serialize = "zed_assistant")]
+    #[serde(rename = "OrionAssistant", alias = "ZedAssistant")]
+    OrionAssistant,
     OrionPredict,
     OrionPredictDisabled,
     OrionPredictDown,
     OrionPredictError,
     OrionPredictUp,
-    ZedSrcCustom,
-    ZedSrcExtension,
+    #[strum(serialize = "orion_src_custom", serialize = "zed_src_custom")]
+    #[serde(rename = "OrionSrcCustom", alias = "ZedSrcCustom")]
+    OrionSrcCustom,
+    #[strum(serialize = "orion_src_extension", serialize = "zed_src_extension")]
+    #[serde(rename = "OrionSrcExtension", alias = "ZedSrcExtension")]
+    OrionSrcExtension,
 }
 
 impl IconName {
@@ -315,6 +321,7 @@ impl IconName {
 mod tests {
     use std::path::PathBuf;
 
+    use serde::Deserialize as _;
     use strum::{IntoEnumIterator as _, ParseError};
 
     use crate::IconName;
@@ -350,5 +357,41 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_orion_icons_use_canonical_paths_and_accept_legacy_names() {
+        let renamed_icons = [
+            (IconName::AiOrion, "icons/ai_orion.svg", "ai_zed", "AiZed"),
+            (
+                IconName::OrionAssistant,
+                "icons/orion_assistant.svg",
+                "zed_assistant",
+                "ZedAssistant",
+            ),
+            (
+                IconName::OrionSrcCustom,
+                "icons/orion_src_custom.svg",
+                "zed_src_custom",
+                "ZedSrcCustom",
+            ),
+            (
+                IconName::OrionSrcExtension,
+                "icons/orion_src_extension.svg",
+                "zed_src_extension",
+                "ZedSrcExtension",
+            ),
+        ];
+
+        for (icon, expected_path, legacy_strum_name, legacy_serde_name) in renamed_icons {
+            assert_eq!(&*icon.path(), expected_path);
+            assert_eq!(legacy_strum_name.parse::<IconName>(), Ok(icon));
+
+            let legacy_deserializer =
+                serde::de::value::StrDeserializer::<serde::de::value::Error>::new(
+                    legacy_serde_name,
+                );
+            assert_eq!(IconName::deserialize(legacy_deserializer), Ok(icon));
+        }
     }
 }

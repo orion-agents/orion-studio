@@ -2536,7 +2536,7 @@ impl RemoteServerProjects {
                                             )
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
-                                                    "https://orion.dev/docs/remote-development",
+                                                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/remote-development.md",
                                                 );
                                             }),
                                     ),

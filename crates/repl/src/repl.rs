@@ -26,7 +26,7 @@ pub use crate::repl_settings::ReplSettings;
 pub use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 
-pub const KERNEL_DOCS_URL: &str = "https://orion.dev/docs/repl#changing-kernels";
+pub const KERNEL_DOCS_URL: &str = "https://github.com/orion-agents/orion-studio/blob/main/docs/src/repl.md#changing-which-kernel-is-used-per-language-changing-kernels";
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(orion_dispatcher(cx));

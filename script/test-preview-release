@@ -4,12 +4,19 @@ set -euo pipefail
 
 script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 validator="${script_directory}/validate-preview-release"
+release_workflow="${script_directory}/../.github/workflows/release_preview_macos.yml"
 temporary_base=${TMPDIR:-/tmp}
 temporary_base=${temporary_base%/}
 test_root=$(mktemp -d "${temporary_base}/orion-preview-release-tests.XXXXXX")
 fixture_repository="${test_root}/repository"
+signing_key="${test_root}/preview-release-signing-key"
+allowed_signers_file="${test_root}/allowed-signers"
+signing_principal="preview-release-test@example.invalid"
 captured_output=""
 pass_count=0
+
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
 
 cleanup() {
     local status=$?
@@ -93,17 +100,47 @@ run_validator_with_fake_signing_inputs() {
         APPLE_NOTARIZATION_ISSUER_ID='test-only' \
         ORION_STUDIO_MACOS_SIGNING_IDENTITY='Developer ID Application: Test Only (ABCDEFGHIJ)' \
         ORION_STUDIO_MACOS_TEAM_ID='ABCDEFGHIJ' \
+        "${validator}" signing-inputs
+    )
+}
+
+run_validator_with_conflicting_provisioning_profiles() {
+    local provisioning_profile=$1
+
+    (
+        cd "${fixture_repository}"
+        MACOS_CERTIFICATE='ZmFrZQ==' \
+        MACOS_CERTIFICATE_PASSWORD='test-only' \
+        APPLE_NOTARIZATION_KEY='test-only' \
+        APPLE_NOTARIZATION_KEY_ID='TESTONLY01' \
+        APPLE_NOTARIZATION_ISSUER_ID='test-only' \
+        ORION_STUDIO_MACOS_SIGNING_IDENTITY='Developer ID Application: Test Only (ABCDEFGHIJ)' \
+        ORION_STUDIO_MACOS_TEAM_ID='ABCDEFGHIJ' \
+        ORION_STUDIO_MACOS_PROVISIONING_PROFILE="${provisioning_profile}" \
         ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64='ZmFrZQ==' \
         "${validator}" signing-inputs
     )
 }
 
+create_signed_tag() {
+    local tag=$1
+    local commit=$2
+
+    git -C "${fixture_repository}" tag -s -m "Signed preview release ${tag}" "${tag}" "${commit}"
+}
+
 [[ -x "${validator}" ]] || fail "validator is not executable: ${validator}"
 command -v git >/dev/null 2>&1 || fail "git is required"
+command -v ssh-keygen >/dev/null 2>&1 || fail "ssh-keygen is required for isolated signed-tag tests"
 
 git init -q "${fixture_repository}"
 git -C "${fixture_repository}" config user.name "Preview Release Test"
 git -C "${fixture_repository}" config user.email "preview-release-test@example.invalid"
+ssh-keygen -q -t ed25519 -N '' -C "${signing_principal}" -f "${signing_key}"
+printf '%s %s\n' "${signing_principal}" "$(cat "${signing_key}.pub")" > "${allowed_signers_file}"
+git -C "${fixture_repository}" config gpg.format ssh
+git -C "${fixture_repository}" config user.signingkey "${signing_key}"
+git -C "${fixture_repository}" config gpg.ssh.allowedSignersFile "${allowed_signers_file}"
 mkdir -p "${fixture_repository}/crates/zed"
 printf '[package]\nname = "orion-studio"\nversion = "1.16.0"\n' > "${fixture_repository}/crates/zed/Cargo.toml"
 printf 'preview\n' > "${fixture_repository}/crates/zed/RELEASE_CHANNEL"
@@ -111,7 +148,7 @@ git -C "${fixture_repository}" add crates/zed/Cargo.toml crates/zed/RELEASE_CHAN
 git -C "${fixture_repository}" commit -q -m "Create preview source"
 git -C "${fixture_repository}" branch -M main
 preview_commit=$(git -C "${fixture_repository}" rev-parse HEAD)
-git -C "${fixture_repository}" tag v1.16.0-pre "${preview_commit}"
+create_signed_tag v1.16.0-pre "${preview_commit}"
 
 printf 'main descendant\n' > "${fixture_repository}/main-marker"
 git -C "${fixture_repository}" add main-marker
@@ -134,7 +171,14 @@ expect_failure_containing "numbered preview tag is rejected" "preview tag must m
 expect_failure_containing "stable tag is rejected" "preview tag must match" run_validator tag-format v1.16.0
 expect_failure_containing "missing tag is rejected" "is not available locally" run_validator source v1.16.9-pre
 
-git -C "${fixture_repository}" tag v1.17.0-pre "${preview_commit}"
+git -C "${fixture_repository}" tag v1.16.3-pre "${preview_commit}"
+expect_failure_containing "unsigned lightweight preview tag is rejected" "lightweight tags are not allowed" \
+    run_validator source v1.16.3-pre
+git -C "${fixture_repository}" tag -a -m "Unsigned preview release" v1.16.4-pre "${preview_commit}"
+expect_failure_containing "unsigned annotated preview tag is rejected" "signature verification failed" \
+    run_validator source v1.16.4-pre
+
+create_signed_tag v1.17.0-pre "${preview_commit}"
 expect_failure_containing "crate and tag versions must match" "does not match crates/zed package version" run_validator source v1.17.0-pre
 
 git -C "${fixture_repository}" switch -q -c channel-mismatch "${main_commit}"
@@ -142,7 +186,7 @@ printf 'dev\n' > "${fixture_repository}/crates/zed/RELEASE_CHANNEL"
 git -C "${fixture_repository}" add crates/zed/RELEASE_CHANNEL
 git -C "${fixture_repository}" commit -q -m "Use dev channel"
 channel_commit=$(git -C "${fixture_repository}" rev-parse HEAD)
-git -C "${fixture_repository}" tag v1.16.1-pre "${channel_commit}"
+create_signed_tag v1.16.1-pre "${channel_commit}"
 git -C "${fixture_repository}" update-ref refs/remotes/origin/main "${channel_commit}"
 expect_failure_containing "non-preview channel is rejected" "RELEASE_CHANNEL must be preview" run_validator source v1.16.1-pre
 
@@ -151,7 +195,7 @@ printf 'unrelated release\n' > "${fixture_repository}/release-marker"
 git -C "${fixture_repository}" add release-marker
 git -C "${fixture_repository}" commit -q -m "Create unrelated preview commit"
 unrelated_commit=$(git -C "${fixture_repository}" rev-parse HEAD)
-git -C "${fixture_repository}" tag v1.16.2-pre "${unrelated_commit}"
+create_signed_tag v1.16.2-pre "${unrelated_commit}"
 git -C "${fixture_repository}" update-ref refs/remotes/origin/main "${main_commit}"
 expect_failure_containing "tag commit must be on origin main" "is not an ancestor" run_validator source v1.16.2-pre
 
@@ -160,6 +204,17 @@ expect_failure_containing "artifact mode validates inputs without credentials" "
 expect_success "disk preflight can run without release credentials" run_validator disk-space 1 "${test_root}"
 expect_failure_containing "disk preflight fails closed" "insufficient disk space" run_validator disk-space 999999 "${test_root}"
 expect_failure_containing "missing signing inputs fail before build" "incomplete macOS release signing configuration" run_validator signing-inputs
-expect_success "fake signing input names satisfy the local presence gate" run_validator_with_fake_signing_inputs
+expect_success "required signing inputs pass without a provisioning profile" run_validator_with_fake_signing_inputs
+provisioning_profile="${test_root}/preview.provisionprofile"
+printf 'test-only\n' > "${provisioning_profile}"
+expect_failure_containing "conflicting provisioning profile inputs are rejected" "set only one of" \
+    run_validator_with_conflicting_provisioning_profiles "${provisioning_profile}"
+
+grep -Fq "MINIMUM_FREE_GIB: '100'" "${release_workflow}" || \
+    fail "release workflow must require 100 GiB before checkout"
+pass "release workflow requires 100 GiB before checkout"
+grep -Fq './script/validate-preview-release disk-space 90 .' "${release_workflow}" || \
+    fail "release workflow must require 90 GiB after checkout"
+pass "release workflow requires 90 GiB after checkout"
 
 printf '1..%d\n' "${pass_count}"

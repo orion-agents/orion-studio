@@ -623,7 +623,7 @@ impl WasmHost {
             http_client,
             node_runtime,
             proxy,
-            release_channel: ReleaseChannel::global(cx),
+            release_channel: ReleaseChannel::try_global(cx).unwrap_or_default(),
             granted_capabilities: extension_settings.granted_capabilities.clone(),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,

@@ -6542,7 +6542,7 @@ impl Workspace {
 
             let Some(task) = task else {
                 anyhow::bail!(
-                    "failed to construct view from leader (maybe from a different version of zed?)"
+                    "failed to construct view from leader (maybe from a different version of Orion Studio?)"
                 );
             };
 
@@ -9812,7 +9812,7 @@ actions!(
         /// Use `collab_panel::OpenSelectedChannelNotes` to open the channel notes for the selected
         /// channel in the collab panel.
         ///
-        /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
+        /// If you want to open a specific channel, use `orion_studio::OpenApplicationUrl` with a channel notes URL -
         /// can be copied via "Copy link to section" in the context menu of the channel notes
         /// buffer. Canonical URLs look like
         /// `https://orion.dev/channel/channel-name-CHANNEL_ID/notes`; legacy Zed URLs are also
@@ -9844,9 +9844,9 @@ pub struct OpenChannelNotesById {
 actions!(
     zed,
     [
-        /// Opens the Zed log file.
+        /// Opens the Orion Studio log file.
         OpenLog,
-        /// Reveals the Zed log file in the system file manager.
+        /// Reveals the Orion Studio log file in the system file manager.
         RevealLogInFileManager
     ]
 );
@@ -10117,7 +10117,7 @@ pub async fn get_any_active_multi_workspace(
         })
         .await?;
     }
-    activate_any_workspace_window(&mut cx).context("could not open zed")
+    activate_any_workspace_window(&mut cx).context("could not open Orion Studio")
 }
 
 pub fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<MultiWorkspace>> {

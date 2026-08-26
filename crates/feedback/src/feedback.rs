@@ -4,13 +4,14 @@ use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
 use workspace::Workspace;
-use zed_actions::feedback::{EmailZed, FileBugReport, RequestFeature};
+use zed_actions::feedback::{FileBugReport, OpenSupport, RequestFeature};
 
 actions!(
-    zed,
+    orion_studio,
     [
         /// Opens the Orion Studio repository on GitHub.
-        OpenZedRepo,
+        #[action(deprecated_aliases = ["zed::OpenZedRepo"])]
+        OpenOrionStudioRepo,
         /// Copies installed extensions to the clipboard for bug reports.
         CopyInstalledExtensionsIntoClipboard
     ]
@@ -20,6 +21,7 @@ const ORION_STUDIO_REPO_URL: &str = "https://github.com/orion-agents/orion-studi
 
 const REQUEST_FEATURE_URL: &str =
     "https://github.com/orion-agents/orion-studio/discussions/new/choose";
+const SUPPORT_URL: &str = "https://github.com/orion-agents/orion-studio/issues/new/choose";
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {
     format!(
@@ -32,18 +34,6 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
         ),
         urlencoding::encode(&specs.to_string())
     )
-}
-
-fn email_orion_studio_url(specs: &SystemSpecs) -> String {
-    format!(
-        concat!("mailto:hi@orion.dev", "?", "body={}"),
-        email_body(specs)
-    )
-}
-
-fn email_body(specs: &SystemSpecs) -> String {
-    let body = format!("\n\nSystem Information:\n\n{}", specs);
-    urlencoding::encode(&body).to_string()
 }
 
 pub fn init(cx: &mut App) {
@@ -97,19 +87,8 @@ pub fn init(cx: &mut App) {
                 })
                 .detach();
             })
-            .register_action(move |_, _: &EmailZed, window, cx| {
-                let specs =
-                    SystemSpecs::new(window, cx, telemetry::os_name(), telemetry::os_version());
-                cx.spawn_in(window, async move |_, cx| {
-                    let specs = specs.await;
-                    cx.update(|_, cx| {
-                        cx.open_url(&email_orion_studio_url(&specs));
-                    })
-                    .log_err();
-                })
-                .detach();
-            })
-            .register_action(move |_, _: &OpenZedRepo, _, cx| {
+            .register_action(move |_, _: &OpenSupport, _, cx| cx.open_url(SUPPORT_URL))
+            .register_action(move |_, _: &OpenOrionStudioRepo, _, cx| {
                 cx.open_url(ORION_STUDIO_REPO_URL);
             });
     })

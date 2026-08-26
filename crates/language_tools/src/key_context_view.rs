@@ -210,7 +210,7 @@ impl Render for KeyContextView {
                         Button::new("open_documentation", "Open Documentation")
                             .style(ButtonStyle::Filled)
                             .on_click(|_, _, cx| {
-                                cx.open_url("https://orion.dev/docs/key-bindings")
+                                cx.open_url("https://github.com/orion-agents/orion-studio/blob/main/docs/src/key-bindings.md")
                             }),
                     )
                     .child(

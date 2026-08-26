@@ -2,7 +2,9 @@
 
 Welcome to Orion Studio's documentation.
 
-This is built on push to `main` and published automatically to [https://orion.dev/docs](https://orion.dev/docs).
+The canonical Preview documentation is stored in this repository. Until a
+dedicated documentation host is available, use the rendered files under
+[`docs/src`](https://github.com/orion-agents/orion-studio/tree/main/docs/src).
 
 To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook@0.4.40`), generate the action metadata, and then serve:
 
@@ -40,14 +42,16 @@ If for some reason you need to bypass the docs preprocessor, you can comment out
 
 ## Images and videos
 
-To add images or videos to the docs, upload them to another location (e.g., orion.dev, GitHub's asset storage) and then link out to them from the docs.
+To add images or videos to the docs, upload them to GitHub's asset storage or
+another durable location and then link out to them from the docs.
 
 Putting binary assets such as images in the Git repository will bloat the repository size over time.
 
-## Internal notes:
+## Publishing status
 
-- We have a Cloudflare router called `docs-proxy` that intercepts requests to `orion.dev/docs` and forwards them to the "docs" Cloudflare Pages project.
-- The CI uploads a new version to the Cloudflare Pages project from `.github/workflows/deploy_docs.yml` on every push to `main`.
+The Preview release does not assume a deployed `orion.dev` documentation
+service. Any future publishing workflow must be enabled only after its domain,
+credentials, and deployment target have been verified.
 
 ### Table of Contents
 

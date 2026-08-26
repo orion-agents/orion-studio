@@ -1711,7 +1711,7 @@ impl ConversationView {
                         } else {
                             "New message"
                         },
-                        IconName::ZedAssistant,
+                        IconName::OrionAssistant,
                         window,
                         cx,
                     );

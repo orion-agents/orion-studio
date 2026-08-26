@@ -5727,6 +5727,7 @@ dependencies = [
  "paths",
  "project",
  "regex",
+ "release_channel",
  "settings",
  "telemetry",
  "text",
@@ -12380,6 +12381,7 @@ dependencies = [
  "notifications",
  "picker",
  "project",
+ "release_channel",
  "schemars 1.0.4",
  "serde",
  "settings",
@@ -12662,7 +12664,7 @@ dependencies = [
 
 [[package]]
 name = "orion-studio"
-version = "1.16.0"
+version = "1.16.1"
 dependencies = [
  "acp_thread",
  "acp_tools",

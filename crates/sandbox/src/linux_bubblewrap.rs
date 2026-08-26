@@ -711,7 +711,7 @@ pub fn run_launcher_if_invoked() {
     let invocation = match invocation {
         Ok(invocation) => invocation,
         Err(error) => {
-            eprintln!("zed: malformed sandbox launcher invocation: {error:#}");
+            eprintln!("orion-studio: malformed sandbox launcher invocation: {error:#}");
             std::process::exit(127);
         }
     };
@@ -814,7 +814,7 @@ fn run_launcher(invocation: LauncherInvocation) -> ! {
         if let Err(error) = validate_binds(socket, &invocation.validation_paths) {
             // Fail closed: a redirected (or unverifiable) writable bind means the
             // command must not run at all.
-            eprintln!("zed: sandbox bind validation failed: {error:#}");
+            eprintln!("orion-studio: sandbox bind validation failed: {error:#}");
             std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
         }
     }
@@ -981,11 +981,11 @@ fn exec_command(program: &OsStr, args: &[OsString]) -> ! {
     // Lock down socket/io_uring/ptrace syscalls right before handing control to
     // the untrusted command; the filter survives `exec`.
     if let Err(error) = install_command_seccomp_filter() {
-        eprintln!("zed: failed to install sandbox seccomp filter: {error:#}");
+        eprintln!("orion-studio: failed to install sandbox seccomp filter: {error:#}");
         std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
     }
     let error = Command::new(program).args(args).exec();
-    eprintln!("zed: failed to exec sandboxed command: {error}");
+    eprintln!("orion-studio: failed to exec sandboxed command: {error}");
     std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
 }
 
@@ -997,7 +997,7 @@ fn run_bridge(socket_path: PathBuf, port: u16, program: &OsStr, program_args: &[
     let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, port)) {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("zed: failed to bind sandbox proxy bridge: {error}");
+            eprintln!("orion-studio: failed to bind sandbox proxy bridge: {error}");
             std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
         }
     };
@@ -1007,7 +1007,7 @@ fn run_bridge(socket_path: PathBuf, port: u16, program: &OsStr, program_args: &[
         .stack_size(128 * 1024)
         .spawn(move || run_bridge_listener(listener, socket_path))
     {
-        eprintln!("zed: failed to spawn sandbox proxy bridge: {error}");
+        eprintln!("orion-studio: failed to spawn sandbox proxy bridge: {error}");
         std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
     }
 
@@ -1018,7 +1018,7 @@ fn run_bridge(socket_path: PathBuf, port: u16, program: &OsStr, program_args: &[
     let seccomp_program = match build_command_seccomp_program() {
         Ok(program) => program,
         Err(error) => {
-            eprintln!("zed: failed to build sandbox seccomp filter: {error:#}");
+            eprintln!("orion-studio: failed to build sandbox seccomp filter: {error:#}");
             std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
         }
     };
@@ -1039,7 +1039,7 @@ fn run_bridge(socket_path: PathBuf, port: u16, program: &OsStr, program_args: &[
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            eprintln!("zed: failed to spawn sandboxed command: {error}");
+            eprintln!("orion-studio: failed to spawn sandboxed command: {error}");
             std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
         }
     };
@@ -1053,7 +1053,7 @@ fn run_bridge(socket_path: PathBuf, port: u16, program: &OsStr, program_args: &[
             std::process::exit(128 + signal);
         }
         Err(error) => {
-            eprintln!("zed: failed to wait for sandboxed command: {error}");
+            eprintln!("orion-studio: failed to wait for sandboxed command: {error}");
             std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
         }
     }
@@ -1157,21 +1157,23 @@ pub fn run_wsl_helper_if_invoked() {
     let args: Vec<OsString> = std::env::args_os().collect();
     if args.get(1).and_then(|arg| arg.to_str()) == Some(WSL_RESOLVE_FLAG) {
         let Some(path) = args.get(2) else {
-            eprintln!("zed: malformed WSL canonical-path resolver invocation");
+            eprintln!("orion-studio: malformed WSL canonical-path resolver invocation");
             std::process::exit(127);
         };
         if args.len() != 3 {
-            eprintln!("zed: malformed WSL canonical-path resolver invocation");
+            eprintln!("orion-studio: malformed WSL canonical-path resolver invocation");
             std::process::exit(127);
         }
         match crate::util::CanonicalPathBuf::resolve(PathBuf::from(path.as_os_str())) {
             Ok(canonical) => {
                 let Some(canonical) = canonical.path().to_str() else {
-                    eprintln!("zed: canonical WSL sandbox grant is not valid UTF-8");
+                    eprintln!("orion-studio: canonical WSL sandbox grant is not valid UTF-8");
                     std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
                 };
                 let Ok(distro) = std::env::var("WSL_DISTRO_NAME") else {
-                    eprintln!("zed: WSL_DISTRO_NAME is unavailable while resolving sandbox grant");
+                    eprintln!(
+                        "orion-studio: WSL_DISTRO_NAME is unavailable while resolving sandbox grant"
+                    );
                     std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
                 };
                 // Classify the backing filesystem of the *canonical* target (the
@@ -1189,7 +1191,7 @@ pub fn run_wsl_helper_if_invoked() {
                 std::process::exit(0);
             }
             Err(error) => {
-                eprintln!("zed: could not resolve WSL sandbox grant: {error}");
+                eprintln!("orion-studio: could not resolve WSL sandbox grant: {error}");
                 std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
             }
         }
@@ -1201,7 +1203,7 @@ pub fn run_wsl_helper_if_invoked() {
     let invocation = match invocation {
         Ok(invocation) => invocation,
         Err(error) => {
-            eprintln!("zed: malformed WSL sandbox helper invocation: {error:#}");
+            eprintln!("orion-studio: malformed WSL sandbox helper invocation: {error:#}");
             std::process::exit(127);
         }
     };
@@ -1303,7 +1305,7 @@ fn run_wsl_helper(invocation: WslHelperInvocation) -> ! {
             Ok(fd) => fds.push(fd),
             Err(error) => {
                 eprintln!(
-                    "zed: WSL sandbox helper could not verify canonical writable bind {}: {error}",
+                    "orion-studio: WSL sandbox helper could not verify canonical writable bind {}: {error}",
                     path.display()
                 );
                 std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
@@ -1317,7 +1319,9 @@ fn run_wsl_helper(invocation: WslHelperInvocation) -> ! {
         match ValidationFdSender::spawn(fds) {
             Ok(sender) => Some(sender),
             Err(error) => {
-                eprintln!("zed: WSL sandbox helper could not start the bind validator: {error}");
+                eprintln!(
+                    "orion-studio: WSL sandbox helper could not start the bind validator: {error}"
+                );
                 std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
             }
         }
@@ -1326,7 +1330,7 @@ fn run_wsl_helper(invocation: WslHelperInvocation) -> ! {
     let current_exe = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
-            eprintln!("zed: WSL sandbox helper could not resolve its own path: {error}");
+            eprintln!("orion-studio: WSL sandbox helper could not resolve its own path: {error}");
             std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
         }
     };
@@ -1374,7 +1378,7 @@ fn run_wsl_helper(invocation: WslHelperInvocation) -> ! {
     let mut child = match Command::new(&invocation.bwrap_path).args(&args).spawn() {
         Ok(child) => child,
         Err(error) => {
-            eprintln!("zed: WSL sandbox helper could not spawn bwrap: {error}");
+            eprintln!("orion-studio: WSL sandbox helper could not spawn bwrap: {error}");
             std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
         }
     };
@@ -1392,7 +1396,7 @@ fn run_wsl_helper(invocation: WslHelperInvocation) -> ! {
             std::process::exit(128 + signal);
         }
         Err(error) => {
-            eprintln!("zed: WSL sandbox helper failed waiting for bwrap: {error}");
+            eprintln!("orion-studio: WSL sandbox helper failed waiting for bwrap: {error}");
             std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
         }
     }
@@ -1404,14 +1408,16 @@ fn run_bridge_listener(listener: TcpListener, socket_path: PathBuf) {
             Ok(stream) => {
                 let socket_path = socket_path.clone();
                 if let Err(error) = thread::Builder::new()
-                    .name("zed-sandbox-bridge-conn".to_string())
+                    .name("orion-sandbox-bridge-conn".to_string())
                     .stack_size(128 * 1024)
                     .spawn(move || forward_bridge_connection(stream, socket_path))
                 {
-                    eprintln!("zed: failed to spawn sandbox bridge connection thread: {error}");
+                    eprintln!(
+                        "orion-studio: failed to spawn sandbox bridge connection thread: {error}"
+                    );
                 }
             }
-            Err(error) => eprintln!("zed: sandbox bridge accept failed: {error}"),
+            Err(error) => eprintln!("orion-studio: sandbox bridge accept failed: {error}"),
         }
     }
 }
@@ -1421,7 +1427,7 @@ fn forward_bridge_connection(tcp_stream: TcpStream, socket_path: PathBuf) {
         Ok(stream) => stream,
         Err(error) => {
             eprintln!(
-                "zed: sandbox bridge failed to connect to proxy socket {}: {error}",
+                "orion-studio: sandbox bridge failed to connect to proxy socket {}: {error}",
                 socket_path.display()
             );
             return;
@@ -1434,14 +1440,14 @@ fn copy_bidirectional(tcp_stream: TcpStream, unix_stream: UnixStream) {
     let tcp_read = match tcp_stream.try_clone() {
         Ok(stream) => stream,
         Err(error) => {
-            eprintln!("zed: sandbox bridge failed to clone TCP stream: {error}");
+            eprintln!("orion-studio: sandbox bridge failed to clone TCP stream: {error}");
             return;
         }
     };
     let unix_read = match unix_stream.try_clone() {
         Ok(stream) => stream,
         Err(error) => {
-            eprintln!("zed: sandbox bridge failed to clone Unix stream: {error}");
+            eprintln!("orion-studio: sandbox bridge failed to clone Unix stream: {error}");
             return;
         }
     };
@@ -1455,13 +1461,13 @@ fn copy_bidirectional(tcp_stream: TcpStream, unix_stream: UnixStream) {
     {
         Ok(handle) => handle,
         Err(error) => {
-            eprintln!("zed: failed to spawn sandbox bridge pump thread: {error}");
+            eprintln!("orion-studio: failed to spawn sandbox bridge pump thread: {error}");
             return;
         }
     };
     copy_one_way(unix_read, tcp_write);
     if to_proxy.join().is_err() {
-        eprintln!("zed: sandbox bridge pump thread panicked");
+        eprintln!("orion-studio: sandbox bridge pump thread panicked");
     }
 }
 

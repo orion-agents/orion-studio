@@ -18,7 +18,10 @@ use language::{
     language_settings::LanguageSettings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
-use paths::{debug_task_file_name, task_file_name};
+use paths::{
+    debug_task_file_name, local_settings_folder_name, local_settings_folder_name_legacy,
+    local_vscode_folder_name, task_file_name,
+};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
     DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskTemplate,
@@ -75,6 +78,41 @@ impl InventoryContents for DebugScenario {
     const LABEL: &'static str = "debug scenarios";
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ProjectConfigDirectoryKind {
+    VsCode,
+    LegacyZed,
+    Orion,
+}
+
+fn project_config_directory(directory: &RelPath) -> Option<(ProjectConfigDirectoryKind, &RelPath)> {
+    let kind = match directory.file_name()? {
+        name if name == local_settings_folder_name() => ProjectConfigDirectoryKind::Orion,
+        name if name == local_settings_folder_name_legacy() => {
+            ProjectConfigDirectoryKind::LegacyZed
+        }
+        name if name == local_vscode_folder_name() => ProjectConfigDirectoryKind::VsCode,
+        _ => return None,
+    };
+
+    Some((kind, directory.parent().unwrap_or(RelPath::empty())))
+}
+
+fn project_config_source_is_shadowed<'a>(
+    directory: &RelPath,
+    mut directories: impl Iterator<Item = &'a RelPath>,
+) -> bool {
+    let Some((kind, scope)) = project_config_directory(directory) else {
+        return false;
+    };
+
+    directories.any(|candidate| {
+        project_config_directory(candidate).is_some_and(|(candidate_kind, candidate_scope)| {
+            candidate_scope == scope && candidate_kind > kind
+        })
+    })
+}
+
 #[derive(Debug)]
 struct InventoryFor<T> {
     global: HashMap<PathBuf, Vec<T>>,
@@ -87,18 +125,18 @@ impl<T: InventoryContents> InventoryFor<T> {
         worktree: WorktreeId,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
         let worktree_dirs = self.worktree.get(&worktree);
-        let has_zed_dir = worktree_dirs
-            .map(|dirs| {
-                dirs.keys()
-                    .any(|dir| dir.file_name().is_some_and(|name| name == ".zed"))
-            })
-            .unwrap_or(false);
 
         worktree_dirs
             .into_iter()
             .flatten()
             .filter(move |(directory, _)| {
-                !(has_zed_dir && directory.file_name().is_some_and(|name| name == ".vscode"))
+                !project_config_source_is_shadowed(
+                    directory,
+                    worktree_dirs
+                        .into_iter()
+                        .flatten()
+                        .map(|(directory, _)| directory.as_ref()),
+                )
             })
             .flat_map(|(directory, templates)| {
                 templates.iter().map(move |template| (directory, template))
@@ -147,7 +185,7 @@ impl<T> Default for InventoryFor<T> {
 pub enum TaskSourceKind {
     /// bash-like commands spawned by users, not associated with any path
     UserInput,
-    /// Tasks from the worktree's .zed/task.json
+    /// Tasks from an Orion project configuration file or a legacy fallback.
     Worktree {
         id: WorktreeId,
         directory_in_worktree: Arc<RelPath>,
@@ -494,16 +532,7 @@ impl Inventory {
         });
         let buffer = location.map(|location| location.buffer.clone());
 
-        let worktrees_with_zed_tasks: HashSet<WorktreeId> = self
-            .templates_from_settings
-            .worktree
-            .iter()
-            .filter(|(_, dirs)| {
-                dirs.keys()
-                    .any(|dir| dir.file_name().is_some_and(|name| name == ".zed"))
-            })
-            .map(|(id, _)| *id)
-            .collect();
+        let worktree_task_sources = &self.templates_from_settings.worktree;
 
         let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;
@@ -520,8 +549,12 @@ impl Inventory {
                     ..
                 } = task_kind
                 {
-                    !(worktrees_with_zed_tasks.contains(id)
-                        && dir.file_name().is_some_and(|name| name == ".vscode"))
+                    !worktree_task_sources.get(id).is_some_and(|directories| {
+                        project_config_source_is_shadowed(
+                            dir,
+                            directories.keys().map(|directory| directory.as_ref()),
+                        )
+                    })
                 } else {
                     true
                 }
@@ -764,14 +797,38 @@ impl Inventory {
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
     ) -> Result<(), InvalidSettingsError> {
-        let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
-            raw_tasks_json.unwrap_or("[]"),
-        ) {
+        let (source_file_present, raw_tasks_json) = match raw_tasks_json {
+            Some(raw_tasks_json) => (true, raw_tasks_json),
+            None => (false, "[]"),
+        };
+        let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(raw_tasks_json) {
             Ok(tasks) => tasks,
             Err(e) => {
+                if source_file_present
+                    && let TaskSettingsLocation::Worktree(settings_location) = &location
+                {
+                    self.templates_from_settings
+                        .worktree
+                        .entry(settings_location.worktree_id)
+                        .or_default()
+                        .insert(Arc::from(settings_location.path), Vec::new());
+                    self.last_scheduled_tasks.retain(|(kind, _)| {
+                        if let TaskSourceKind::Worktree {
+                            directory_in_worktree,
+                            id,
+                            ..
+                        } = kind
+                        {
+                            *id != settings_location.worktree_id
+                                || directory_in_worktree.as_ref() != settings_location.path
+                        } else {
+                            true
+                        }
+                    });
+                }
                 return Err(InvalidSettingsError::Tasks {
-                    path: match location {
-                        TaskSettingsLocation::Global(path) => path.to_owned(),
+                    path: match &location {
+                        TaskSettingsLocation::Global(path) => path.to_path_buf(),
                         TaskSettingsLocation::Worktree(settings_location) => {
                             settings_location.path.as_std_path().join(task_file_name())
                         }
@@ -824,18 +881,18 @@ impl Inventory {
             }
             TaskSettingsLocation::Worktree(location) => {
                 let new_templates = new_templates.collect::<Vec<_>>();
-                if new_templates.is_empty() {
-                    if let Some(worktree_tasks) =
-                        parsed_templates.worktree.get_mut(&location.worktree_id)
-                    {
-                        worktree_tasks.remove(location.path);
-                    }
-                } else {
+                if source_file_present {
                     parsed_templates
                         .worktree
                         .entry(location.worktree_id)
                         .or_default()
                         .insert(Arc::from(location.path), new_templates);
+                } else {
+                    if let Some(worktree_tasks) =
+                        parsed_templates.worktree.get_mut(&location.worktree_id)
+                    {
+                        worktree_tasks.remove(location.path);
+                    }
                 }
                 self.last_scheduled_tasks.retain(|(kind, _)| {
                     if let TaskSourceKind::Worktree {
@@ -877,14 +934,25 @@ impl Inventory {
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
     ) -> Result<(), InvalidSettingsError> {
-        let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
-            raw_tasks_json.unwrap_or("[]"),
-        ) {
+        let (source_file_present, raw_tasks_json) = match raw_tasks_json {
+            Some(raw_tasks_json) => (true, raw_tasks_json),
+            None => (false, "[]"),
+        };
+        let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(raw_tasks_json) {
             Ok(tasks) => tasks,
             Err(e) => {
+                if source_file_present
+                    && let TaskSettingsLocation::Worktree(settings_location) = &location
+                {
+                    self.scenarios_from_settings
+                        .worktree
+                        .entry(settings_location.worktree_id)
+                        .or_default()
+                        .insert(Arc::from(settings_location.path), Vec::new());
+                }
                 return Err(InvalidSettingsError::Debug {
-                    path: match location {
-                        TaskSettingsLocation::Global(path) => path.to_owned(),
+                    path: match &location {
+                        TaskSettingsLocation::Global(path) => path.to_path_buf(),
                         TaskSettingsLocation::Worktree(settings_location) => settings_location
                             .path
                             .as_std_path()
@@ -922,36 +990,54 @@ impl Inventory {
             }
             TaskSettingsLocation::Worktree(location) => {
                 previously_existing_scenarios = parsed_scenarios
-                    .worktree_scenarios(location.worktree_id)
-                    .map(|(_, scenario)| scenario.label)
+                    .worktree
+                    .get(&location.worktree_id)
+                    .and_then(|scenarios| scenarios.get(location.path))
+                    .into_iter()
+                    .flatten()
+                    .map(|scenario| scenario.label.clone())
                     .collect::<HashSet<_>>();
 
-                if new_templates.is_empty() {
-                    if let Some(worktree_tasks) =
-                        parsed_scenarios.worktree.get_mut(&location.worktree_id)
-                    {
-                        worktree_tasks.remove(location.path);
-                    }
-                } else {
+                if source_file_present {
                     parsed_scenarios
                         .worktree
                         .entry(location.worktree_id)
                         .or_default()
                         .insert(Arc::from(location.path), new_templates);
+                } else {
+                    if let Some(worktree_tasks) =
+                        parsed_scenarios.worktree.get_mut(&location.worktree_id)
+                    {
+                        worktree_tasks.remove(location.path);
+                    }
                 }
             }
         }
-        self.last_scheduled_scenarios.retain_mut(|(scenario, _)| {
-            if !previously_existing_scenarios.contains(&scenario.label) {
-                return true;
-            }
-            if let Some(new_definition) = new_definitions.remove(&scenario.label) {
-                *scenario = new_definition;
-                true
-            } else {
-                false
-            }
-        });
+        let source_is_shadowed = match &location {
+            TaskSettingsLocation::Global(_) => false,
+            TaskSettingsLocation::Worktree(location) => parsed_scenarios
+                .worktree
+                .get(&location.worktree_id)
+                .is_some_and(|scenarios| {
+                    project_config_source_is_shadowed(
+                        location.path,
+                        scenarios.keys().map(|directory| directory.as_ref()),
+                    )
+                }),
+        };
+        if !source_is_shadowed {
+            self.last_scheduled_scenarios.retain_mut(|(scenario, _)| {
+                if !previously_existing_scenarios.contains(&scenario.label) {
+                    return true;
+                }
+                if let Some(new_definition) = new_definitions.remove(&scenario.label) {
+                    *scenario = new_definition;
+                    true
+                } else {
+                    false
+                }
+            });
+        }
 
         Ok(())
     }
@@ -1151,6 +1237,30 @@ impl ContextProvider for ContextProviderWithTasks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use util::rel_path::rel_path;
+
+    #[test]
+    fn project_config_source_precedence_is_scope_local() {
+        let root_sources = [rel_path(".orion"), rel_path(".zed"), rel_path(".vscode")];
+        assert!(!project_config_source_is_shadowed(
+            rel_path(".orion"),
+            root_sources.into_iter(),
+        ));
+        assert!(project_config_source_is_shadowed(
+            rel_path(".zed"),
+            root_sources.into_iter(),
+        ));
+        assert!(project_config_source_is_shadowed(
+            rel_path(".vscode"),
+            root_sources.into_iter(),
+        ));
+
+        let mixed_scopes = [rel_path(".orion"), rel_path("nested/.zed")];
+        assert!(!project_config_source_is_shadowed(
+            rel_path("nested/.zed"),
+            mixed_scopes.into_iter(),
+        ));
+    }
 
     fn context_with_greeting(value: &str) -> TaskContext {
         TaskContext {

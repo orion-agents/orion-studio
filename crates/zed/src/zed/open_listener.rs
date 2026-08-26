@@ -33,6 +33,40 @@ use workspace::PathList;
 use workspace::item::ItemHandle;
 use workspace::{AppState, MultiWorkspace, OpenOptions, OpenResult, SerializedWorkspaceLocation};
 
+const ORION_CLI_URL_PREFIX: &str = "orion-cli://";
+const LEGACY_ZED_CLI_URL_PREFIX: &str = "zed-cli://";
+const ORION_DOCK_ACTION_URL_PREFIX: &str = "orion-dock-action://";
+const LEGACY_ZED_DOCK_ACTION_URL_PREFIX: &str = "zed-dock-action://";
+
+#[cfg(any(test, target_os = "windows"))]
+pub(super) fn canonical_cli_url(server_name: &str) -> String {
+    format!("{ORION_CLI_URL_PREFIX}{server_name}")
+}
+
+#[cfg(any(test, target_os = "windows"))]
+pub(super) fn canonical_dock_action_url(action_index: usize) -> String {
+    format!("{ORION_DOCK_ACTION_URL_PREFIX}{action_index}")
+}
+
+fn cli_server_name_from_url(url: &str) -> Option<&str> {
+    url.strip_prefix(ORION_CLI_URL_PREFIX)
+        .or_else(|| url.strip_prefix(LEGACY_ZED_CLI_URL_PREFIX))
+}
+
+fn dock_action_index_from_url(url: &str) -> Option<&str> {
+    url.strip_prefix(ORION_DOCK_ACTION_URL_PREFIX)
+        .or_else(|| url.strip_prefix(LEGACY_ZED_DOCK_ACTION_URL_PREFIX))
+}
+
+pub(super) fn is_internal_app_url(url: &str) -> bool {
+    app_url_path(url).is_some() || cli_server_name_from_url(url).is_some()
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "freebsd"))]
+fn canonical_cli_socket_path(data_dir: &Path, release_channel: &str) -> PathBuf {
+    data_dir.join(format!("orion-studio-{release_channel}.sock"))
+}
+
 #[derive(Default, Debug)]
 pub struct OpenRequest {
     pub kind: Option<OpenRequestKind>,
@@ -156,9 +190,9 @@ impl OpenRequest {
 
         for url in request.urls {
             let app_url_path = app_url_path(&url);
-            if let Some(server_name) = url.strip_prefix("zed-cli://") {
+            if let Some(server_name) = cli_server_name_from_url(&url) {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
-            } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
+            } else if let Some(action_index) = dock_action_index_from_url(&url) {
                 this.kind = Some(OpenRequestKind::DockMenuAction {
                     index: action_index.parse()?,
                 });
@@ -430,8 +464,8 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
 
-    let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
-    // remove the socket if the process listening on it has died
+    let sock_path = canonical_cli_socket_path(paths::data_dir(), RELEASE_CHANNEL_NAME.as_str());
+    // Remove the canonical socket if the process listening on it has died.
     if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path)
         && e.kind() == std::io::ErrorKind::ConnectionRefused
     {
@@ -457,7 +491,7 @@ fn connect_to_cli(
     Box<dyn CliResponseSink>,
 )> {
     let handshake_tx = ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
-        .context("error connecting to cli")?;
+        .context("error connecting to the Orion Studio CLI")?;
     let (request_tx, request_rx) = ipc::channel::<CliRequest>()?;
     let (response_tx, response_rx) = ipc::channel::<CliResponse>()?;
 
@@ -466,7 +500,7 @@ fn connect_to_cli(
             requests: request_tx,
             responses: response_rx,
         })
-        .context("error sending ipc handshake")?;
+        .context("error sending the Orion Studio CLI IPC handshake")?;
 
     let (async_request_tx, async_request_rx) = futures::channel::mpsc::unbounded::<CliRequest>();
     thread::spawn(move || {
@@ -1175,6 +1209,54 @@ mod tests {
                 .send(response)
                 .map_err(|error| anyhow::anyhow!("{error}"))
         }
+    }
+
+    #[test]
+    fn cli_url_contract_emits_orion_and_accepts_legacy() {
+        let canonical_url = canonical_cli_url("server-name");
+        assert_eq!(canonical_url, "orion-cli://server-name");
+        assert!(!canonical_url.contains("zed-cli"));
+
+        assert_eq!(
+            cli_server_name_from_url("orion-cli://server-name"),
+            Some("server-name")
+        );
+        assert_eq!(
+            cli_server_name_from_url("zed-cli://legacy-server"),
+            Some("legacy-server")
+        );
+        assert_eq!(cli_server_name_from_url("https://example.com"), None);
+    }
+
+    #[test]
+    fn dock_action_url_contract_emits_orion_and_accepts_legacy() {
+        let canonical_url = canonical_dock_action_url(7);
+        assert_eq!(canonical_url, "orion-dock-action://7");
+        assert!(!canonical_url.contains("zed-dock-action"));
+
+        assert_eq!(dock_action_index_from_url(&canonical_url), Some("7"));
+        assert_eq!(dock_action_index_from_url("zed-dock-action://8"), Some("8"));
+    }
+
+    #[test]
+    fn internal_url_contract_accepts_canonical_and_legacy_cli_schemes() {
+        for url in [
+            "orion://settings",
+            "zed://settings",
+            "orion-cli://server-name",
+            "zed-cli://legacy-server",
+        ] {
+            assert!(is_internal_app_url(url), "expected internal URL: {url}");
+        }
+        assert!(!is_internal_app_url("https://example.com"));
+    }
+
+    #[test]
+    fn canonical_cli_socket_path_uses_orion_name() {
+        let data_dir = Path::new("/tmp/orion-studio-test");
+        let socket_path = canonical_cli_socket_path(data_dir, "preview");
+        assert_eq!(socket_path, data_dir.join("orion-studio-preview.sock"));
+        assert!(!socket_path.to_string_lossy().contains("zed-preview.sock"));
     }
 
     fn assert_ssh_parse(

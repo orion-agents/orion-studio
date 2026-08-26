@@ -672,7 +672,10 @@ fn handle_api_response<T>(
                             ErrorSeverity::Critical
                         }
                         fn primary_action(&self) -> ErrorAction {
-                            ErrorAction::link("Update Orion Studio", "https://orion.dev/releases")
+                            ErrorAction::link(
+                                "Update Orion Studio",
+                                "https://github.com/orion-agents/orion-studio/releases",
+                            )
                         }
                     }
 

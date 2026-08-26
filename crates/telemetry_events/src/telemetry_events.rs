@@ -1,4 +1,5 @@
-//! See [Telemetry in Orion Studio](https://orion.dev/docs/telemetry) for additional information.
+//! See [Telemetry in Orion Studio](https://github.com/orion-agents/orion-studio/blob/main/docs/src/telemetry.md)
+//! for additional information.
 
 use semver::Version;
 use serde::{Deserialize, Serialize};

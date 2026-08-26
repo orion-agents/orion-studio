@@ -1002,6 +1002,215 @@ async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_project_settings_prefer_orion_and_fallback_to_legacy(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    TaskStore::init(None);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "canonical": {
+                ".orion": {
+                    "settings.json": r#"{ "tab_size": 2 }"#,
+                    "tasks.json": r#"[{ "label": "canonical task", "command": "echo canonical" }]"#,
+                },
+                "file.rs": "fn canonical() {}",
+            },
+            "legacy": {
+                ".zed": {
+                    "settings.json": r#"{ "tab_size": 3 }"#,
+                    "tasks.json": r#"[{ "label": "legacy task", "command": "echo legacy" }]"#,
+                },
+                "file.rs": "fn legacy() {}",
+            },
+            "both": {
+                ".orion": {
+                    "settings.json": r#"{ "tab_size": 4 }"#,
+                    "tasks.json": r#"[{ "label": "preferred task", "command": "echo preferred" }]"#,
+                },
+                ".zed": {
+                    "settings.json": r#"{ "tab_size": 8 }"#,
+                    "tasks.json": r#"[{ "label": "shadowed task", "command": "echo shadowed" }]"#,
+                },
+                "file.rs": "fn both() {}",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    cx.run_until_parked();
+
+    let canonical_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("canonical/file.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let legacy_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("legacy/file.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let both_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("both/file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.update(|cx| {
+        assert_eq!(
+            LanguageSettings::for_buffer(&canonical_buffer.read(cx), cx)
+                .tab_size
+                .get(),
+            2,
+            "canonical-only .orion settings should load"
+        );
+        assert_eq!(
+            LanguageSettings::for_buffer(&legacy_buffer.read(cx), cx)
+                .tab_size
+                .get(),
+            3,
+            "legacy-only .zed settings should remain readable"
+        );
+        assert_eq!(
+            LanguageSettings::for_buffer(&both_buffer.read(cx), cx)
+                .tab_size
+                .get(),
+            4,
+            ".orion settings should win when both sources exist"
+        );
+    });
+
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let mut task_contexts = TaskContexts::default();
+    task_contexts.active_worktree_context = Some((worktree_id, TaskContext::default()));
+    let mut task_labels = cx
+        .update(|cx| get_all_tasks(&project, Arc::new(task_contexts), cx))
+        .await
+        .into_iter()
+        .map(|(_, task)| task.resolved_label)
+        .collect::<Vec<_>>();
+    task_labels.sort();
+    assert_eq!(
+        task_labels,
+        vec!["canonical task", "legacy task", "preferred task"],
+        "watchers should load both project formats without exposing the shadowed legacy task"
+    );
+
+    fs.remove_file(
+        path!("/dir/both/.orion/settings.json").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert_eq!(
+            LanguageSettings::for_buffer(&both_buffer.read(cx), cx)
+                .tab_size
+                .get(),
+            8,
+            "removing .orion settings should reveal the read-only legacy fallback"
+        );
+    });
+
+    let canonical_settings_path = PathBuf::from(path!("/dir/both/.orion/settings.json"));
+    fs.atomic_write(
+        canonical_settings_path.clone(),
+        r#"{ "tab_size": 5 }"#.into(),
+    )
+    .await
+    .unwrap();
+    fs.atomic_write(
+        canonical_settings_path.clone(),
+        r#"{ "tab_size": 6 }"#.into(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            LanguageSettings::for_buffer(&both_buffer.read(cx), cx)
+                .tab_size
+                .get(),
+            6,
+            "the newest canonical write must win when watcher reads overlap"
+        );
+    });
+
+    fs.atomic_write(canonical_settings_path.clone(), "{".into())
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            LanguageSettings::for_buffer(&both_buffer.read(cx), cx)
+                .tab_size
+                .get(),
+            6,
+            "an invalid canonical file must retain the last canonical value instead of exposing legacy settings"
+        );
+    });
+
+    fs.remove_file(&canonical_settings_path, Default::default())
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            LanguageSettings::for_buffer(&both_buffer.read(cx), cx)
+                .tab_size
+                .get(),
+            8,
+            "removing an invalid canonical file should still restore the legacy fallback"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_project_config_write_targets_are_canonical(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "settings.json": "legacy sentinel",
+            },
+        }),
+    )
+    .await;
+
+    fs.create_dir(path!("/dir/.orion").as_ref()).await.unwrap();
+    let canonical_settings_path =
+        Path::new(path!("/dir")).join(paths::local_settings_file_relative_path().as_std_path());
+    fs.atomic_write(
+        canonical_settings_path.clone(),
+        r#"{ "tab_size": 2 }"#.into(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        fs.load(&canonical_settings_path).await.unwrap(),
+        r#"{ "tab_size": 2 }"#
+    );
+    assert_eq!(
+        fs.load(path!("/dir/.zed/settings.json").as_ref())
+            .await
+            .unwrap(),
+        "legacy sentinel",
+        "writing through the canonical path contract must not mutate legacy files"
+    );
+}
+
+#[gpui::test]
 async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     TaskStore::init(None);

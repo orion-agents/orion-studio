@@ -11,10 +11,10 @@ confinement: classic
 compression: lzo
 platforms:
   amd64:
-website: https://orion.dev/
+website: https://github.com/orion-agents/orion-studio
 source-code: https://github.com/orion-agents/orion-studio
 issues: https://github.com/orion-agents/orion-studio/issues
-contact: https://orion.dev/community-links#support-and-feedback
+contact: https://github.com/orion-agents/orion-studio/issues
 
 parts:
   orion-studio:

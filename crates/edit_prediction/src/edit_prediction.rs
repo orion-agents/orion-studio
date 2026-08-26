@@ -3536,7 +3536,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
         // This public action name is retained for legacy keymaps and extensions.
         workspace.register_action(
-            move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
+            move |workspace, _: &zed_actions::OpenOrionPredictOnboarding, window, cx| {
                 OrionPredictModal::toggle(
                     workspace,
                     workspace.user_store().clone(),

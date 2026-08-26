@@ -278,9 +278,7 @@ impl TaskStore {
             TaskStore::Functional(state) => &state.task_inventory,
             TaskStore::Noop => return Ok(()),
         };
-        let raw_tasks_json = raw_tasks_json
-            .map(|json| json.trim())
-            .filter(|json| !json.is_empty());
+        let raw_tasks_json = raw_tasks_json.map(str::trim);
 
         task_inventory.update(cx, |inventory, _| {
             inventory.update_file_based_tasks(location, raw_tasks_json)
@@ -297,9 +295,7 @@ impl TaskStore {
             TaskStore::Functional(state) => &state.task_inventory,
             TaskStore::Noop => return Ok(()),
         };
-        let raw_tasks_json = raw_tasks_json
-            .map(|json| json.trim())
-            .filter(|json| !json.is_empty());
+        let raw_tasks_json = raw_tasks_json.map(str::trim);
 
         task_inventory.update(cx, |inventory, _| {
             inventory.update_file_based_scenarios(location, raw_tasks_json)

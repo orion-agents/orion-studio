@@ -96,8 +96,7 @@ To get completions for `deno.json` or `package.json`, add the following to your 
 
 ## DAP support
 
-To debug Deno programs, add this to the retained project-format compatibility
-path `.zed/debug.json`:
+To debug Deno programs, add this to `.orion/debug.json`:
 
 ```json [debug]
 [
@@ -117,8 +116,8 @@ path `.zed/debug.json`:
 
 ## Runnable support
 
-To run Deno tasks such as tests from the UI, add this to the retained
-project-format compatibility path `.zed/tasks.json`:
+To run Deno tasks such as tests from the UI, add this to
+`.orion/tasks.json`:
 
 ```json [tasks]
 [

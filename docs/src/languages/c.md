@@ -74,7 +74,9 @@ After building your project, CMake will generate the `compile_commands.json` fil
 
 ## Debugging
 
-You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to the retained project-format compatibility path `.zed/debug.json`.
+You can use CodeLLDB or GDB to debug native binaries. Make sure that your build
+process passes `-g` to the C compiler so the resulting binary includes debug
+information. See below for examples you can add to `.orion/debug.json`.
 
 - [CodeLLDB configuration documentation](https://github.com/vadimcn/codelldb/blob/master/MANUAL.md#starting-a-new-debug-session)
 - [GDB configuration documentation](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Debugger-Adapter-Protocol.html)

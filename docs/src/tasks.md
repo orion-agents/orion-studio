@@ -75,9 +75,16 @@ Keep `"use_new_terminal": false` and set `"allow_concurrent_runs": true` to allo
 Tasks can be defined:
 
 - in the global `tasks.json` file; such tasks are available in all Orion Studio projects you work on. This file is usually located in `~/.config/orion-studio/tasks.json`. You can edit it with the {#action zed::OpenTasks} action.
-- in the worktree-specific (local) `.zed/tasks.json` compatibility path; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks with the {#action zed::OpenProjectTasks} action.
+- in the worktree-specific (local) `.orion/tasks.json` file; such tasks are
+  available only when working on a project with that worktree included. You can
+  create or edit this file with the {#action zed::OpenProjectTasks} action.
 - on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sessions.
 - by language extension.
+
+> **Note:** Existing `.zed/tasks.json` files are supported only as a legacy,
+> read-only fallback. If both files exist in the same project scope,
+> `.orion/tasks.json` takes precedence. New and updated project tasks belong in
+> `.orion/tasks.json`.
 
 ## Variables
 
@@ -360,7 +367,8 @@ To run a bash script:
 
 Bash scripts are tagged with `bash-script`, allowing you to filter or reference them in task configurations.
 
-If you need to pass arguments or customize the execution environment, add a task configuration in your `.zed/tasks.json`:
+If you need to pass arguments or customize the execution environment, add a
+task configuration in your `.orion/tasks.json`:
 
 ```json
 [

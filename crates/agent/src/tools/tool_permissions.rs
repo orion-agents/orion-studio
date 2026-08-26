@@ -285,42 +285,48 @@ pub async fn resolve_creatable_global_skill_descendant_path(
 }
 
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:
-/// either inside a `.zed/` local-settings directory, inside `.agents/skills/`, or inside
-/// the global config dir.
+/// either inside a canonical `.orion/` local-settings directory, a legacy
+/// `.zed/` compatibility directory, `.agents/skills/`, or the global config dir.
 ///
 /// `canonical_worktree_roots` should be the result of
 /// [`canonicalize_worktree_roots`]; it's used to re-check the local
-/// `.zed/` and `.agents/skills/` protections against the canonical form
+/// project-settings and `.agents/skills/` protections against the canonical form
 /// of `path`, which catches two classes of bypass that the raw-component
 /// scan misses:
 ///
 ///   1. `..` traversal, e.g. `.agents/foo/../skills/SKILL.md`. The raw
 ///      components are `[.agents, foo, .., skills, SKILL.md]`, so the
 ///      consecutive-pair match in [`is_agents_skills_path`] fails.
-///   2. Intra-project symlinks, e.g. a symlink `safe -> .zed` followed
+///   2. Intra-project symlinks, e.g. a symlink `safe -> .orion` followed
 ///      by `safe/settings.json`. `resolve_project_path` correctly classes
 ///      this as *not* a symlink escape (it stays inside the project), so
 ///      the raw-path check is our only line of defense and it doesn't see
-///      `.zed` either.
+///      the protected directory either.
 ///
 /// After canonicalizing we strip the matching worktree root before
 /// re-scanning components, so that a worktree literally rooted at a path
-/// like `~/projects/.zed/foo` doesn't classify every file inside it as
-/// `.zed/` local-settings — only files that have `.zed` (or
+/// like `~/projects/.orion/foo` doesn't classify every file inside it as
+/// local settings — only files that have `.orion`, legacy `.zed` (or
 /// `.agents/skills`) inside the worktree are flagged.
+fn targets_project_settings(path: &Path) -> bool {
+    let canonical_folder = paths::local_settings_folder_name();
+    let legacy_folder = paths::local_settings_folder_name_legacy();
+    path.components().any(|component| {
+        let component = component.as_os_str();
+        component_matches_ignore_ascii_case(component, canonical_folder)
+            || component_matches_ignore_ascii_case(component, legacy_folder)
+    })
+}
+
 pub async fn sensitive_settings_kind(
     path: &Path,
     canonical_worktree_roots: &[PathBuf],
     fs: &dyn Fs,
 ) -> Option<SensitiveSettingsKind> {
-    let local_settings_folder = paths::local_settings_folder_name();
-
     // Fast path: scan the raw path components before any I/O. Covers the
     // common case where the agent passes a path that literally contains
-    // `.zed/` or `.agents/skills/`.
-    if path.components().any(|component| {
-        component_matches_ignore_ascii_case(component.as_os_str(), local_settings_folder)
-    }) {
+    // `.orion/`, legacy `.zed/`, or `.agents/skills/`.
+    if targets_project_settings(path) {
         return Some(SensitiveSettingsKind::Local);
     }
 
@@ -337,9 +343,7 @@ pub async fn sensitive_settings_kind(
                 continue;
             };
 
-            if relative.components().any(|component| {
-                component_matches_ignore_ascii_case(component.as_os_str(), local_settings_folder)
-            }) {
+            if targets_project_settings(relative) {
                 return Some(SensitiveSettingsKind::Local);
             }
             if is_agents_skills_path(relative) {
@@ -651,10 +655,7 @@ pub fn authorize_file_edit(
     // worktree, but we can short-circuit straight to the appropriate
     // SensitiveSettingsKind on these fast paths and skip the async
     // `sensitive_settings_kind` canonicalization step below.
-    let local_settings_folder = paths::local_settings_folder_name();
-    let is_local_settings = path.components().any(|component| {
-        component_matches_ignore_ascii_case(component.as_os_str(), local_settings_folder)
-    });
+    let is_local_settings = targets_project_settings(path);
     let is_agents_skills = is_agents_skills_path(path);
 
     cx.spawn(async move |cx| {

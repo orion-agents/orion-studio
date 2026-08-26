@@ -68,6 +68,16 @@ struct TelemetryState {
     subscribers: Vec<mpsc::UnboundedSender<EventWrapper>>,
 }
 
+fn hosted_telemetry_available(release_channel: Option<ReleaseChannel>) -> bool {
+    match release_channel {
+        Some(ReleaseChannel::Dev | ReleaseChannel::Preview) => false,
+        Some(ReleaseChannel::Nightly | ReleaseChannel::Stable) => true,
+        // Isolated tests create Telemetry without initializing the app release
+        // channel. Production remains fail-closed if initialization is missing.
+        None => cfg!(any(test, feature = "test-support")),
+    }
+}
+
 #[cfg(debug_assertions)]
 const MAX_QUEUE_LEN: usize = 5;
 
@@ -411,11 +421,13 @@ impl Telemetry {
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {
-        self.state.lock().settings.metrics
+        let state = self.state.lock();
+        state.settings.metrics && hosted_telemetry_available(state.release_channel)
     }
 
     pub fn diagnostics_enabled(self: &Arc<Self>) -> bool {
-        self.state.lock().settings.diagnostics
+        let state = self.state.lock();
+        state.settings.diagnostics && hosted_telemetry_available(state.release_channel)
     }
 
     pub fn set_authenticated_user_info(
@@ -425,7 +437,7 @@ impl Telemetry {
     ) {
         let mut state = self.state.lock();
 
-        if !state.settings.metrics {
+        if !state.settings.metrics || !hosted_telemetry_available(state.release_channel) {
             return;
         }
 
@@ -610,7 +622,7 @@ impl Telemetry {
         // RUST_LOG=telemetry=trace to debug telemetry events
         log::trace!(target: "telemetry", "{:?}", event);
 
-        if !state.settings.metrics {
+        if !state.settings.metrics || !hosted_telemetry_available(state.release_channel) {
             return;
         }
 
@@ -703,7 +715,7 @@ impl Telemetry {
             state.first_event_date_time = None;
             let events = mem::take(&mut state.events_queue);
             state.flush_events_task.take();
-            if events.is_empty() {
+            if events.is_empty() || !hosted_telemetry_available(state.release_channel) {
                 return Ok(());
             }
 
@@ -788,6 +800,7 @@ mod tests {
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use telemetry_events::FlexibleEvent;
     use util::rel_path::RelPath;
     use worktree::{PathChange, ProjectEntryId, WorktreeId};
@@ -841,6 +854,110 @@ mod tests {
             event.event_properties.get("event_source"),
             Some(&serde_json::Value::String("orion-studio".to_owned()))
         );
+    }
+
+    #[test]
+    fn hosted_telemetry_channel_policy_is_fail_closed() {
+        assert!(!hosted_telemetry_available(Some(ReleaseChannel::Dev)));
+        assert!(!hosted_telemetry_available(Some(ReleaseChannel::Preview)));
+        assert!(hosted_telemetry_available(Some(ReleaseChannel::Nightly)));
+        assert!(hosted_telemetry_available(Some(ReleaseChannel::Stable)));
+        assert!(hosted_telemetry_available(None));
+    }
+
+    #[gpui::test]
+    async fn preview_hosted_telemetry_drops_events_and_never_sends(cx: &mut TestAppContext) {
+        init_test(cx);
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let http = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |_| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(Default::default())
+                        .expect("test response should be valid"))
+                }
+            }
+        });
+        let clock = Arc::new(FakeSystemClock::new());
+
+        let telemetry = cx.update(|cx| {
+            release_channel::init_test(
+                release_channel::AppVersion::load("1.16.1", None, None),
+                ReleaseChannel::Preview,
+                cx,
+            );
+            let telemetry = Telemetry::new(clock.clone(), http, cx);
+            let mut state = telemetry.state.lock();
+            state.settings.metrics = true;
+            state.settings.diagnostics = true;
+            drop(state);
+
+            assert!(!telemetry.metrics_enabled());
+            assert!(!telemetry.diagnostics_enabled());
+            telemetry.report_event(test_event());
+            assert!(is_empty_state(&telemetry));
+            telemetry
+        });
+
+        {
+            let mut state = telemetry.state.lock();
+            state.events_queue.push(EventWrapper {
+                signed_in: false,
+                milliseconds_since_first_event: 0,
+                event: test_event(),
+            });
+            state.first_event_date_time = Some(clock.utc_now());
+        }
+
+        telemetry.flush_events_inner().await.unwrap();
+        telemetry.shutdown_telemetry().await;
+
+        assert!(is_empty_state(&telemetry));
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[gpui::test]
+    async fn nightly_hosted_telemetry_preserves_sending(cx: &mut TestAppContext) {
+        init_test(cx);
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let http = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |_| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(Default::default())
+                        .expect("test response should be valid"))
+                }
+            }
+        });
+
+        let telemetry = cx.update(|cx| {
+            release_channel::init_test(
+                release_channel::AppVersion::load("1.16.1", None, None),
+                ReleaseChannel::Nightly,
+                cx,
+            );
+            let telemetry = Telemetry::new(Arc::new(FakeSystemClock::new()), http, cx);
+            let mut state = telemetry.state.lock();
+            state.settings.metrics = true;
+            state.settings.diagnostics = true;
+            drop(state);
+
+            assert!(telemetry.metrics_enabled());
+            assert!(telemetry.diagnostics_enabled());
+            telemetry.report_event(test_event());
+            telemetry
+        });
+
+        telemetry.flush_events_inner().await.unwrap();
+
+        assert!(is_empty_state(&telemetry));
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
     }
 
     #[gpui::test]
@@ -1169,6 +1286,13 @@ mod tests {
         telemetry.state.lock().events_queue.is_empty()
             && telemetry.state.lock().flush_events_task.is_none()
             && telemetry.state.lock().first_event_date_time.is_none()
+    }
+
+    fn test_event() -> Event {
+        Event::Flexible(FlexibleEvent {
+            event_type: "test".to_owned(),
+            event_properties: HashMap::new(),
+        })
     }
 
     fn test_project_discovery_helper(

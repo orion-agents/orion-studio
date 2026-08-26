@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+
+import plistlib
+import sys
+from pathlib import Path
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_ENTITLEMENTS_PATH = (
+    REPOSITORY_ROOT / "crates/zed/resources/orion-studio.entitlements"
+)
+
+# This exact set is intentionally narrow. Any new entitlement must be justified by a
+# concrete Orion Studio runtime path before it is added here.
+APPROVED_ENTITLEMENTS = {
+    "com.apple.security.automation.apple-events": (
+        "CLI installation and bundle discovery invoke osascript"
+    ),
+    "com.apple.security.cs.allow-unsigned-executable-memory": (
+        "Wasmtime 36 publishes generated code with mmap and mprotect rather than MAP_JIT"
+    ),
+    "com.apple.security.device.audio-input": (
+        "collaboration calls and audio-device testing capture microphone input"
+    ),
+}
+
+
+def fail(message: str) -> int:
+    print(f"macOS entitlement gate failed: {message}", file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    if len(sys.argv) > 2:
+        return fail(f"usage: {Path(sys.argv[0]).name} [entitlements.plist]")
+
+    entitlements_path = (
+        Path(sys.argv[1]) if len(sys.argv) == 2 else DEFAULT_ENTITLEMENTS_PATH
+    )
+
+    try:
+        with entitlements_path.open("rb") as entitlements_file:
+            entitlements = plistlib.load(entitlements_file)
+    except (OSError, plistlib.InvalidFileException) as error:
+        return fail(f"cannot read {entitlements_path}: {error}")
+
+    if not isinstance(entitlements, dict):
+        return fail(f"{entitlements_path} must contain a dictionary")
+
+    actual_keys = set(entitlements)
+    approved_keys = set(APPROVED_ENTITLEMENTS)
+    missing_keys = sorted(approved_keys - actual_keys)
+    unexpected_keys = sorted(actual_keys - approved_keys)
+    non_true_keys = sorted(
+        key for key, value in entitlements.items() if value is not True
+    )
+
+    failures = []
+    if missing_keys:
+        failures.append(f"missing approved entitlements: {', '.join(missing_keys)}")
+    if unexpected_keys:
+        failures.append(f"unapproved entitlements: {', '.join(unexpected_keys)}")
+    if non_true_keys:
+        failures.append(f"entitlements must be boolean true: {', '.join(non_true_keys)}")
+
+    if failures:
+        return fail("; ".join(failures))
+
+    print(
+        f"macOS entitlement gate passed: {len(approved_keys)} approved entitlements in "
+        f"{entitlements_path}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

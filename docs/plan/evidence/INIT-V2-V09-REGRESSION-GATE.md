@@ -1,5 +1,37 @@
 # INIT-V2-V09 — 全量回归与发布门禁
 
+## 2026-08-26 Release Readiness Continuation
+
+> **当前生效状态：** 本节覆盖下方与之冲突的 2026-08-15 结论。当前基线为
+> `main@bb9ec1fbd72ddf7765a6c7b61630304ae0e2788d`。源码准出为 **GO**，本地
+> arm64 Dev 交付为 **VERIFIED**；公开 Preview 仍为 **NO-GO / EXTERNAL-BLOCKED**，
+> 等待 Apple 凭据、专用 runner、GitHub 治理配置、签名 tag 和签名产物的干净机器
+> 验收。完整状态见
+> `docs/plan/orion-studio-release-readiness-2026-08-26.md`。
+
+- `./script/check-orion-brand --max-findings 1000`：**PASS**，枚举 4,282 个候选、
+  扫描 4,230 个文件，6,060/6,060 命中全部解释，0 unapproved、0 stale、0 error。
+- `./script/test-orion-brand`：**3/3 PASS**；`./script/test-uninstall`：**5/5 PASS**；
+  `./script/test-preview-release`：**20/20 PASS**，包含签出前 100 GiB、签出后
+  90 GiB 的 workflow 阈值回归。
+- 完整 `./script/clippy`：**PASS**（workspace、release、all targets、all features、
+  deny warnings）；format、diff、密钥、entitlements、workflow/XML/plist 门禁均 PASS。
+- OAuth 92 个、迁移 52 个、context server store 21 个、open listener 40 个及托管
+  服务/扩展/项目配置/任务/调试历史专项测试全部 PASS。
+- arm64 本地 bundle：**PASS**。主 App Release 58m52s、remote server 21m32s；
+  `Orion Studio Dev.app` 1.16.1 为单一 arm64、400 MiB，深层签名校验通过；DMG
+  145 MiB、`hdiutil verify` 通过。安装到 `/Applications` 后检测到 1 个窗口，稳定态
+  RSS 约 98 MiB，无新 crash report。
+- 构建缓存峰值 89 GiB；`cargo clean` 删除 253,029 个文件、回收 88.5 GiB，磁盘
+  可用空间从约 98 GiB 恢复至 186 GiB。已安装 App、源码和用户数据未删除。
+- Preview workflow 改用 `self-hosted` + `macOS` + `ARM64` +
+  `orion-studio-macos-release` 专用 runner，签出前至少 100 GiB、签出后至少 90 GiB
+  可用，限制 2 jobs，并在成功或失败后清理 workspace `target`。
+- 当前 entitlements 没有受限 capability；Developer ID 证书和 notarization 凭据
+  仍为必填，provisioning profile 改为可选。若提供，现有严格校验继续生效。
+- GitHub 远端目前没有匹配 runner 或 Apple secrets/variables；现有 Preview
+  Release 是无资产 Draft。本地包仅为 ad-hoc 签名且 `spctl` 预期拒绝，不得公开。
+
 ## 2026-08-15 macOS Preview Release Preparation Update
 
 > **当前生效状态：** 本节覆盖下方与之冲突的历史构建和发布结论。Init v1/v2 源码改造已收口；首个公开渠道限定为 macOS Apple Silicon Preview。源码可进入 PR，公开二进制仍必须通过 Apple Developer ID 签名、公证和干净机器安装启动验证。

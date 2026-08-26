@@ -50,6 +50,69 @@ const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 const APPLICATION_RELEASE_ASSET: &str = "orion-studio";
 const REMOTE_SERVER_RELEASE_ASSET: &str = "orion-studio-remote-server";
 
+fn hosted_remote_server_artifacts_available(
+    requested_channel: ReleaseChannel,
+    app_channel: Option<ReleaseChannel>,
+) -> bool {
+    requested_channel.hosted_services_available()
+        && app_channel.is_some_and(|channel| channel.hosted_services_available())
+}
+
+fn hosted_remote_server_artifact_unavailable(
+    requested_channel: ReleaseChannel,
+    app_channel: Option<ReleaseChannel>,
+) -> anyhow::Error {
+    let blocked_channel = if requested_channel.hosted_services_available() {
+        app_channel.unwrap_or(ReleaseChannel::Dev)
+    } else {
+        requested_channel
+    };
+    anyhow::anyhow!(
+        "Hosted SSH remote server artifacts are not available for {} yet. Reuse an existing remote server installation or build/provide the remote server binary locally.",
+        blocked_channel.display_name()
+    )
+}
+
+fn normalized_release_version(mut version: Version) -> String {
+    version.pre = semver::Prerelease::EMPTY;
+    version.build = semver::BuildMetadata::EMPTY;
+    version.to_string()
+}
+
+fn remote_server_release_cache_path(
+    root: &Path,
+    release_channel: ReleaseChannel,
+    version: &str,
+    os: &str,
+    arch: &str,
+) -> PathBuf {
+    root.join(release_channel.dev_name())
+        .join(format!("{os}-{arch}"))
+        .join(format!("{version}.gz"))
+}
+
+async fn find_cached_remote_server_release(
+    root: &Path,
+    release_channel: ReleaseChannel,
+    version: Option<&Version>,
+    os: &str,
+    arch: &str,
+) -> Result<Option<PathBuf>> {
+    let Some(version) = version else {
+        return Ok(None);
+    };
+    let version = normalized_release_version(version.clone());
+    let version_path = remote_server_release_cache_path(root, release_channel, &version, os, arch);
+
+    match smol::fs::metadata(&version_path).await {
+        Ok(_) => Ok(Some(version_path)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| {
+            format!("failed to inspect cached Orion remote server {version_path:?}")
+        }),
+    }
+}
+
 fn update_explanation() -> Option<String> {
     if let Some(canonical) = option_env!("ORION_STUDIO_UPDATE_EXPLANATION") {
         return Some(canonical.to_owned());
@@ -346,7 +409,21 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
         return;
     }
 
-    if !ReleaseChannel::try_global(cx)
+    let release_channel = ReleaseChannel::try_global(cx);
+    if release_channel == Some(ReleaseChannel::Preview) {
+        drop(window.prompt(
+            gpui::PromptLevel::Info,
+            "Preview updates are manual",
+            Some(
+                "Download each Orion Studio Preview from the official GitHub Release and verify its checksum and signature before installing it.",
+            ),
+            &["OK"],
+            cx,
+        ));
+        return;
+    }
+
+    if !release_channel
         .map(|channel| channel.poll_for_updates())
         .unwrap_or(false)
     {
@@ -618,6 +695,27 @@ impl AutoUpdater {
         set_status: impl Fn(&str, &mut AsyncApp) + Send + 'static,
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
+        let app_channel = cx.update(|cx| ReleaseChannel::try_global(cx));
+        if !hosted_remote_server_artifacts_available(release_channel, app_channel) {
+            if let Some(cached_release) = find_cached_remote_server_release(
+                paths::remote_servers_dir(),
+                release_channel,
+                version.as_ref(),
+                os,
+                arch,
+            )
+            .await?
+            {
+                set_status("Using cached remote server release", cx);
+                return Ok(cached_release);
+            }
+
+            return Err(hosted_remote_server_artifact_unavailable(
+                release_channel,
+                app_channel,
+            ));
+        }
+
         let this = cx.update(|cx| {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
@@ -637,10 +735,17 @@ impl AutoUpdater {
         )
         .await?;
 
-        let servers_dir = paths::remote_servers_dir();
-        let channel_dir = servers_dir.join(release_channel.dev_name());
-        let platform_dir = channel_dir.join(format!("{}-{}", os, arch));
-        let version_path = platform_dir.join(format!("{}.gz", release.version));
+        let version_path = remote_server_release_cache_path(
+            paths::remote_servers_dir(),
+            release_channel,
+            &release.version,
+            os,
+            arch,
+        );
+        let platform_dir = version_path
+            .parent()
+            .context("remote server release cache path has no parent directory")?
+            .to_path_buf();
         smol::fs::create_dir_all(&platform_dir)
             .await
             .with_context(|| {
@@ -664,7 +769,14 @@ impl AutoUpdater {
                 release.version
             );
             set_status("Downloading remote server", cx);
-            download_remote_server_binary(&version_path, release, client).await?;
+            download_remote_server_binary(
+                &version_path,
+                release,
+                release_channel,
+                app_channel,
+                client,
+            )
+            .await?;
         }
 
         if let Err(error) =
@@ -687,6 +799,13 @@ impl AutoUpdater {
         arch: &str,
         cx: &mut AsyncApp,
     ) -> Result<Option<String>> {
+        let app_channel = cx.update(|cx| ReleaseChannel::try_global(cx));
+        if !hosted_remote_server_artifacts_available(channel, app_channel) {
+            // Returning no URL lets SSH/Docker fall back to a local cached or
+            // locally built remote server without attempting a remote download.
+            return Ok(None);
+        }
+
         let this = cx.update(|cx| {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
@@ -717,6 +836,16 @@ impl AutoUpdater {
         arch: &str,
         cx: &mut AsyncApp,
     ) -> Result<ReleaseAsset> {
+        if asset == REMOTE_SERVER_RELEASE_ASSET {
+            let app_channel = cx.update(|cx| ReleaseChannel::try_global(cx));
+            if !hosted_remote_server_artifacts_available(release_channel, app_channel) {
+                return Err(hosted_remote_server_artifact_unavailable(
+                    release_channel,
+                    app_channel,
+                ));
+            }
+        }
+
         let client = this.read_with(cx, |this, _| this.client.clone());
 
         let (system_id, metrics_id, is_staff) = if client.telemetry().metrics_enabled() {
@@ -729,10 +858,8 @@ impl AutoUpdater {
             (None, None, None)
         };
 
-        let version = if let Some(mut version) = version {
-            version.pre = semver::Prerelease::EMPTY;
-            version.build = semver::BuildMetadata::EMPTY;
-            version.to_string()
+        let version = if let Some(version) = version {
+            normalized_release_version(version)
         } else {
             "latest".to_string()
         };
@@ -1030,8 +1157,17 @@ impl AutoUpdater {
 async fn download_remote_server_binary(
     target_path: &PathBuf,
     release: ReleaseAsset,
+    release_channel: ReleaseChannel,
+    app_channel: Option<ReleaseChannel>,
     client: Arc<HttpClientWithUrl>,
 ) -> Result<()> {
+    if !hosted_remote_server_artifacts_available(release_channel, app_channel) {
+        return Err(hosted_remote_server_artifact_unavailable(
+            release_channel,
+            app_channel,
+        ));
+    }
+
     let temp = tempfile::Builder::new().tempfile_in(remote_servers_dir())?;
     let mut temp_file = File::create(&temp).await?;
 
@@ -1458,6 +1594,21 @@ mod tests {
     pub(super) struct InstallOverride(pub Rc<dyn Fn(&Path, &AsyncApp) -> Result<Option<PathBuf>>>);
     impl Global for InstallOverride {}
 
+    fn init_remote_server_test_updater(
+        release_channel: ReleaseChannel,
+        http_client: Arc<HttpClientWithUrl>,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            settings::init(cx);
+            let app_version = Version::new(1, 2, 3);
+            release_channel::init_test(app_version.clone(), release_channel, cx);
+            let client = Client::new(Arc::new(FakeSystemClock::new()), http_client, cx);
+            let auto_updater = cx.new(|cx| AutoUpdater::new(app_version, client, cx));
+            cx.set_global(GlobalAutoUpdate(Some(auto_updater)));
+        });
+    }
+
     #[test]
     fn release_asset_names_match_orion_artifacts() {
         assert_eq!(APPLICATION_RELEASE_ASSET, "orion-studio");
@@ -1475,6 +1626,234 @@ mod tests {
             Ok("Orion-Studio.exe")
         ));
         assert!(installer_filename("unsupported").is_err());
+    }
+
+    #[test]
+    fn hosted_remote_server_artifact_policy_is_fail_closed() {
+        assert!(!hosted_remote_server_artifacts_available(
+            ReleaseChannel::Dev,
+            Some(ReleaseChannel::Dev)
+        ));
+        assert!(!hosted_remote_server_artifacts_available(
+            ReleaseChannel::Preview,
+            Some(ReleaseChannel::Preview)
+        ));
+        assert!(!hosted_remote_server_artifacts_available(
+            ReleaseChannel::Stable,
+            Some(ReleaseChannel::Preview)
+        ));
+        assert!(!hosted_remote_server_artifacts_available(
+            ReleaseChannel::Preview,
+            Some(ReleaseChannel::Stable)
+        ));
+        assert!(!hosted_remote_server_artifacts_available(
+            ReleaseChannel::Stable,
+            None
+        ));
+        assert!(hosted_remote_server_artifacts_available(
+            ReleaseChannel::Nightly,
+            Some(ReleaseChannel::Nightly)
+        ));
+        assert!(hosted_remote_server_artifacts_available(
+            ReleaseChannel::Stable,
+            Some(ReleaseChannel::Stable)
+        ));
+
+        let requested_channel_error = hosted_remote_server_artifact_unavailable(
+            ReleaseChannel::Preview,
+            Some(ReleaseChannel::Stable),
+        );
+        assert!(
+            requested_channel_error
+                .to_string()
+                .contains(ReleaseChannel::Preview.display_name())
+        );
+        let app_channel_error = hosted_remote_server_artifact_unavailable(
+            ReleaseChannel::Stable,
+            Some(ReleaseChannel::Preview),
+        );
+        assert!(
+            app_channel_error
+                .to_string()
+                .contains(ReleaseChannel::Preview.display_name())
+        );
+    }
+
+    #[gpui::test]
+    async fn preview_remote_server_artifact_requests_do_not_use_the_network(
+        cx: &mut TestAppContext,
+    ) {
+        assert_non_hosted_remote_server_requests_do_not_use_the_network(
+            ReleaseChannel::Preview,
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn dev_remote_server_artifact_requests_do_not_use_the_network(cx: &mut TestAppContext) {
+        assert_non_hosted_remote_server_requests_do_not_use_the_network(ReleaseChannel::Dev, cx)
+            .await;
+    }
+
+    async fn assert_non_hosted_remote_server_requests_do_not_use_the_network(
+        release_channel: ReleaseChannel,
+        cx: &mut TestAppContext,
+    ) {
+        let request_count = Arc::new(atomic::AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |_request| {
+                request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async { anyhow::bail!("unexpected remote server artifact request") }
+            }
+        });
+        init_remote_server_test_updater(release_channel, http_client.clone(), cx);
+
+        let release_url = cx.update(|cx| {
+            cx.spawn(async move |cx| {
+                AutoUpdater::get_remote_server_release_url(
+                    release_channel,
+                    Some(Version::new(1, 2, 3)),
+                    "linux",
+                    "x86_64",
+                    cx,
+                )
+                .await
+            })
+        });
+        assert_eq!(release_url.await.unwrap(), None);
+
+        let download = cx.update(|cx| {
+            cx.spawn(async move |cx| {
+                AutoUpdater::download_remote_server_release(
+                    release_channel,
+                    None,
+                    "linux",
+                    "x86_64",
+                    |_status, _cx| {},
+                    cx,
+                )
+                .await
+            })
+        });
+        let error = download
+            .await
+            .expect_err("hosted artifact must be unavailable");
+        assert!(
+            error
+                .to_string()
+                .contains("Hosted SSH remote server artifacts are not available"),
+            "unexpected error: {error:#}"
+        );
+        assert!(
+            error.to_string().contains(release_channel.display_name()),
+            "error should name the active release channel: {error:#}"
+        );
+
+        let download_dir = tempdir().unwrap();
+        let direct_download = download_remote_server_binary(
+            &download_dir.path().join("remote-server.gz"),
+            ReleaseAsset {
+                version: "1.2.3".to_string(),
+                url: "https://cloud.orion.dev/remote-server.gz".to_string(),
+            },
+            release_channel,
+            Some(release_channel),
+            http_client,
+        )
+        .await;
+        assert!(direct_download.is_err());
+        assert_eq!(request_count.load(atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn non_hosted_remote_server_can_reuse_a_cached_release() {
+        smol::block_on(async {
+            let root = tempdir().unwrap();
+            let version = Version::parse("1.16.1-preview.2+build.7").unwrap();
+            let expected_path = remote_server_release_cache_path(
+                root.path(),
+                ReleaseChannel::Preview,
+                "1.16.1",
+                "linux",
+                "aarch64",
+            );
+            std::fs::create_dir_all(expected_path.parent().unwrap()).unwrap();
+            std::fs::write(&expected_path, b"cached remote server").unwrap();
+
+            let cached_release = find_cached_remote_server_release(
+                root.path(),
+                ReleaseChannel::Preview,
+                Some(&version),
+                "linux",
+                "aarch64",
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(cached_release, Some(expected_path));
+        });
+    }
+
+    #[gpui::test]
+    async fn nightly_remote_server_lookup_keeps_using_the_hosted_api(cx: &mut TestAppContext) {
+        assert_hosted_remote_server_lookup_uses_the_api(ReleaseChannel::Nightly, cx).await;
+    }
+
+    #[gpui::test]
+    async fn stable_remote_server_lookup_keeps_using_the_hosted_api(cx: &mut TestAppContext) {
+        assert_hosted_remote_server_lookup_uses_the_api(ReleaseChannel::Stable, cx).await;
+    }
+
+    async fn assert_hosted_remote_server_lookup_uses_the_api(
+        release_channel: ReleaseChannel,
+        cx: &mut TestAppContext,
+    ) {
+        let request_count = Arc::new(atomic::AtomicUsize::new(0));
+        let expected_path = format!("/releases/{}/1.2.3/asset", release_channel.dev_name());
+        let http_client = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |request| {
+                let expected_path = expected_path.clone();
+                request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move {
+                    assert_eq!(request.uri().path(), expected_path);
+                    assert!(request.uri().query().is_some_and(|query| {
+                        query
+                            .split('&')
+                            .any(|parameter| parameter == "asset=orion-studio-remote-server")
+                    }));
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(
+                            r#"{"version":"1.2.3","url":"https://downloads.example/remote-server.gz"}"#
+                                .into(),
+                        )
+                        .unwrap())
+                }
+            }
+        });
+        init_remote_server_test_updater(release_channel, http_client, cx);
+
+        let release_url = cx.update(|cx| {
+            cx.spawn(async move |cx| {
+                AutoUpdater::get_remote_server_release_url(
+                    release_channel,
+                    Some(Version::new(1, 2, 3)),
+                    "linux",
+                    "x86_64",
+                    cx,
+                )
+                .await
+            })
+        });
+
+        assert_eq!(
+            release_url.await.unwrap().as_deref(),
+            Some("https://downloads.example/remote-server.gz")
+        );
+        assert_eq!(request_count.load(atomic::Ordering::SeqCst), 1);
     }
 
     #[gpui::test]

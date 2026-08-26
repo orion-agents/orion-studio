@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use cloud_api_types::ExtensionMetadata;
-use extension_host::ExtensionStore;
+use extension_host::{ExtensionStore, extension_registry_available};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, prelude::*};
@@ -170,6 +170,10 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if !extension_registry_available(cx) {
+            return;
+        }
+
         if self.matches.is_empty() {
             self.dismissed(window, cx);
             return;
@@ -178,7 +182,10 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let candidate_id = self.matches[self.selected_index].candidate_id;
         let extension_version = &self.extension_versions[candidate_id];
 
-        if !extension_host::is_version_compatible(ReleaseChannel::global(cx), extension_version) {
+        if !extension_host::is_version_compatible(
+            ReleaseChannel::try_global(cx).unwrap_or_default(),
+            extension_version,
+        ) {
             return;
         }
 
@@ -217,9 +224,12 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let version_match = &self.matches.get(ix)?;
         let extension_version = &self.extension_versions.get(version_match.candidate_id)?;
 
-        let is_version_compatible =
-            extension_host::is_version_compatible(ReleaseChannel::global(cx), extension_version);
-        let disabled = !is_version_compatible;
+        let registry_available = extension_registry_available(cx);
+        let is_version_compatible = extension_host::is_version_compatible(
+            ReleaseChannel::try_global(cx).unwrap_or_default(),
+            extension_version,
+        );
+        let disabled = !registry_available || !is_version_compatible;
 
         Some(
             ListItem::new(ix)
@@ -237,7 +247,12 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
                 .end_slot(
                     h_flex()
                         .gap_2()
-                        .when(!is_version_compatible, |this| {
+                        .when(!registry_available, |this| {
+                            this.child(
+                                Label::new("Extension registry unavailable").color(Color::Muted),
+                            )
+                        })
+                        .when(registry_available && !is_version_compatible, |this| {
                             this.child(Label::new("Incompatible").color(Color::Muted))
                         })
                         .child(

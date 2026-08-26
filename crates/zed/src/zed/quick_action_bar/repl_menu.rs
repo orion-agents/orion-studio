@@ -16,7 +16,8 @@ use util::ResultExt;
 
 use super::QuickActionBar;
 
-const ORION_REPL_DOCUMENTATION: &str = "https://orion.dev/docs/repl";
+const ORION_REPL_DOCUMENTATION: &str =
+    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/repl.md";
 
 struct ReplMenuState {
     tooltip: SharedString,

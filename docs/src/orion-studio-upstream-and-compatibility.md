@@ -26,8 +26,11 @@ current source still consumes them:
   `zed:extension` remain stable extension ABI identifiers.
 - Action identifiers such as `zed::OpenSettings` are internal command IDs used
   by the documentation preprocessor and keymap system.
-- Project-local configuration currently remains under `.zed/`, including
-  `.zed/settings.json`, `.zed/tasks.json`, and `.zed/debug.json`.
+- Project-local configuration uses `.orion/settings.json`,
+  `.orion/tasks.json`, and `.orion/debug.json`. Existing
+  `.zed/settings.json`, `.zed/tasks.json`, and `.zed/debug.json` files are
+  accepted only as legacy, read-only fallbacks. The `.orion` file takes
+  precedence in the same scope, and all new writes use `.orion`.
 - `ZED_*`, `zed://`, the `zed` CLI alias, and legacy Zed data directories are
   accepted only where the application implements migration or compatibility.
 - Historical route filenames such as `configuring-zed.md`, `ai/zed-agent.md`,

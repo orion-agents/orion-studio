@@ -41,7 +41,9 @@ Settings RustRover users typically configure first:
 | `inlay_hints`           | Show type hints, parameter names, and chaining hints inline.                    |
 | `relative_line_numbers` | Useful if you're coming from IdeaVim.                                           |
 
-Orion Studio also supports per-project settings. Create a `.zed/settings.json` file in your project root to override global settings for that project. The `.zed` directory name is retained for project-format compatibility.
+Orion Studio also supports per-project settings. Create
+`.orion/settings.json` in your project root to override global settings for
+that project.
 
 > **Tip:** If you're joining an existing project, check `format_on_save` before making your first commit. Otherwise you might accidentally reformat an entire file when you only meant to change one line.
 
@@ -149,25 +151,34 @@ Where you might notice differences:
 **How to adapt:**
 
 - Use `Alt+Enter` for available code actions—rust-analyzer provides many
-- Configure rust-analyzer settings in `.zed/settings.json` for project-specific needs
+- Configure rust-analyzer settings in `.orion/settings.json` for
+  project-specific needs
 - Run `cargo clippy` for linting (it integrates with rust-analyzer diagnostics)
 
 ### Project Configuration
 
-Both editors store per-project configuration in a hidden folder. RustRover uses `.idea` (with XML files), Orion Studio uses `.zed` (with JSON files).
+Both editors store per-project configuration in a hidden folder. RustRover uses
+`.idea` with XML files, while Orion Studio uses `.orion` with JSON files.
 
-**Run configurations don't transfer.** RustRover stores run/debug configurations in `.idea`. These have no automatic migration path. You'll recreate them as Orion Studio [tasks](../tasks.md) in `.zed/tasks.json` and debug configurations in `.zed/debug.json`.
+**Run configurations don't transfer.** RustRover stores run/debug
+configurations in `.idea`. These have no automatic migration path. Recreate
+them as Orion Studio [tasks](../tasks.md) in `.orion/tasks.json` and debug
+configurations in `.orion/debug.json`.
 
 **No Cargo tool window.** RustRover provides a visual tree of your workspace members, targets, features, and dependencies. Orion Studio doesn't have this. You work with `Cargo.toml` and the Cargo CLI directly.
 
 **Toolchain management is external.** RustRover lets you select and switch toolchains in its settings UI. In Orion Studio, you manage toolchains through `rustup`.
 
-**Configuration is opt-in.** RustRover auto-generates `.idea` when you open a project. Orion Studio doesn't generate anything. You create `.zed/settings.json`, `tasks.json`, and `debug.json` as needed.
+**Configuration is opt-in.** RustRover auto-generates `.idea` when you open a
+project. Orion Studio doesn't generate anything. Create
+`.orion/settings.json`, `.orion/tasks.json`, and `.orion/debug.json` as needed.
 
 **How to adapt:**
 
-- Create a `.zed/settings.json` in your project root for project-specific settings
-- Define common commands in `tasks.json` (open via Command Palette: {#action zed::OpenTasks}):
+- Create `.orion/settings.json` in your project root for project-specific
+  settings
+- Define common commands in `.orion/tasks.json` (open via Command Palette:
+  {#action zed::OpenTasks}):
 
 ```json
 [
@@ -246,7 +257,7 @@ To debug Rust code in Orion Studio:
 
 Orion Studio can automatically detect debuggable targets in your Cargo project. Press `F4` to see available options.
 
-For more control, create a `.zed/debug.json` file:
+For more control, create `.orion/debug.json`:
 
 ```json
 [

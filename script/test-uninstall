@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+uninstaller="${script_directory}/uninstall.sh"
+temporary_base=${TMPDIR:-/tmp}
+temporary_base=${temporary_base%/}
+temporary_base=$(cd "${temporary_base}" && pwd -P)
+test_root=$(mktemp -d "${temporary_base}/orion-uninstall-tests.XXXXXX")
+test_root=$(cd "${test_root}" && pwd -P)
+fake_bin="${test_root}/bin"
+pass_count=0
+
+cleanup() {
+    local status=$?
+
+    trap - EXIT
+    case "${test_root}" in
+        "${temporary_base}"/orion-uninstall-tests.*)
+            rm -rf -- "${test_root}"
+            ;;
+        *)
+            printf 'error: refusing to remove unexpected test directory %s\n' "${test_root}" >&2
+            status=1
+            ;;
+    esac
+    exit "${status}"
+}
+trap cleanup EXIT
+
+fail() {
+    printf 'not ok - %s\n' "$*" >&2
+    exit 1
+}
+
+pass() {
+    pass_count=$((pass_count + 1))
+    printf 'ok %d - %s\n' "${pass_count}" "$1"
+}
+
+assert_exists() {
+    if [[ ! -e "$1" && ! -L "$1" ]]; then
+        fail "expected path to be preserved: $1"
+    fi
+}
+
+assert_not_exists() {
+    if [[ -e "$1" || -L "$1" ]]; then
+        fail "expected path to be removed: $1"
+    fi
+}
+
+run_uninstall() {
+    local test_home=$1
+    local output_file=$2
+
+    printf 'n\n' | env \
+        HOME="${test_home}" \
+        PATH="${fake_bin}:${PATH}" \
+        ORION_STUDIO_CHANNEL=stable \
+        sh "${uninstaller}" >"${output_file}" 2>&1
+}
+
+create_orion_installation() {
+    local test_home=$1
+    local expected_cli="${test_home}/.local/orion-studio.app/bin/orion-studio"
+    local canonical_launcher="${test_home}/.local/bin/orion-studio"
+
+    mkdir -p \
+        "$(dirname "${expected_cli}")" \
+        "${test_home}/.local/bin" \
+        "${test_home}/.local/share/applications" \
+        "${test_home}/.local/share/orion-studio/db/0-stable" \
+        "${test_home}/.config/orion-studio" \
+        "${test_home}/.orion_studio_server"
+    printf '#!/usr/bin/env sh\nexit 0\n' >"${expected_cli}"
+    chmod +x "${expected_cli}"
+    ln -s "${expected_cli}" "${canonical_launcher}"
+    ln -s "${canonical_launcher}" "${test_home}/.local/bin/orion"
+    printf 'desktop sentinel\n' >"${test_home}/.local/share/applications/com.orion.OrionStudio.desktop"
+    printf 'database sentinel\n' >"${test_home}/.local/share/orion-studio/db/0-stable/database"
+    printf 'socket sentinel\n' >"${test_home}/.local/share/orion-studio/orion-studio-stable.sock"
+    printf 'preferences sentinel\n' >"${test_home}/.config/orion-studio/settings.json"
+    printf 'server sentinel\n' >"${test_home}/.orion_studio_server/state"
+}
+
+create_zed_sentinels() {
+    local test_home=$1
+
+    mkdir -p \
+        "${test_home}/.config/zed" \
+        "${test_home}/.local/share/zed/db/0-stable" \
+        "${test_home}/.local/share/zed/server_state"
+    printf 'zed preferences sentinel\n' >"${test_home}/.config/zed/settings.json"
+    printf 'zed database sentinel\n' >"${test_home}/.local/share/zed/db/0-stable/database"
+    printf 'zed state sentinel\n' >"${test_home}/.local/share/zed/server_state/state"
+    printf 'zed socket sentinel\n' >"${test_home}/.local/share/zed/zed-stable.sock"
+}
+
+mkdir -p "${fake_bin}"
+printf '#!/usr/bin/env sh\nprintf "Linux\\n"\n' >"${fake_bin}/uname"
+chmod +x "${fake_bin}/uname"
+
+if grep -Fq '$HOME/.config/zed' "${uninstaller}" || grep -Fq '$HOME/.local/share/zed' "${uninstaller}"; then
+    fail "uninstaller must not reference Zed preference or data directories"
+fi
+
+owned_home="${test_root}/owned/home"
+owned_output="${test_root}/owned/output"
+mkdir -p "${owned_home}"
+create_orion_installation "${owned_home}"
+create_zed_sentinels "${owned_home}"
+ln -s "${owned_home}/.local/bin/orion-studio" "${owned_home}/.local/bin/zed"
+
+run_uninstall "${owned_home}" "${owned_output}"
+
+assert_not_exists "${owned_home}/.local/orion-studio.app"
+assert_not_exists "${owned_home}/.local/bin/orion-studio"
+assert_not_exists "${owned_home}/.local/bin/orion"
+assert_not_exists "${owned_home}/.local/share/applications/com.orion.OrionStudio.desktop"
+assert_not_exists "${owned_home}/.local/share/orion-studio"
+assert_not_exists "${owned_home}/.config/orion-studio"
+assert_not_exists "${owned_home}/.orion_studio_server"
+pass "canonical Orion installation and data are removed"
+
+assert_exists "${owned_home}/.config/zed/settings.json"
+assert_exists "${owned_home}/.local/share/zed/db/0-stable/database"
+assert_exists "${owned_home}/.local/share/zed/server_state/state"
+assert_exists "${owned_home}/.local/share/zed/zed-stable.sock"
+pass "Zed preference, database, state, and socket sentinels are preserved"
+
+assert_not_exists "${owned_home}/.local/bin/zed"
+pass "owned Zed compatibility symlink is removed"
+
+run_uninstall "${owned_home}" "${owned_output}.second"
+assert_exists "${owned_home}/.config/zed/settings.json"
+assert_exists "${owned_home}/.local/share/zed/db/0-stable/database"
+assert_exists "${owned_home}/.local/share/zed/server_state/state"
+assert_exists "${owned_home}/.local/share/zed/zed-stable.sock"
+pass "repeated uninstall is idempotent"
+
+foreign_home="${test_root}/foreign/home"
+foreign_output="${test_root}/foreign/output"
+foreign_launcher="${test_root}/foreign/zed-cli"
+mkdir -p "${foreign_home}" "$(dirname "${foreign_launcher}")"
+create_orion_installation "${foreign_home}"
+create_zed_sentinels "${foreign_home}"
+printf '#!/usr/bin/env sh\nexit 0\n' >"${foreign_launcher}"
+chmod +x "${foreign_launcher}"
+ln -s "${foreign_launcher}" "${foreign_home}/.local/bin/zed"
+
+run_uninstall "${foreign_home}" "${foreign_output}"
+
+assert_exists "${foreign_home}/.local/bin/zed"
+[[ $(readlink "${foreign_home}/.local/bin/zed") == "${foreign_launcher}" ]] || fail "foreign Zed launcher target changed"
+grep -Fq "Preserving legacy compatibility launcher because Orion Studio ownership could not be verified" "${foreign_output}" || \
+    fail "uninstaller did not explain why the foreign Zed launcher was preserved"
+pass "non-Orion Zed launcher is preserved with a warning"
+
+printf '1..%d\n' "${pass_count}"

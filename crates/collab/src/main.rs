@@ -320,9 +320,10 @@ mod tests {
     use collab::{
         LEGACY_ZED_APP_VERSION_HEADER, LEGACY_ZED_CHECKSUM_HEADER,
         LEGACY_ZED_HEADER_RETIREMENT_CONTRACT, LEGACY_ZED_PROTOCOL_VERSION_HEADER,
-        LEGACY_ZED_RELEASE_CHANNEL_HEADER, LEGACY_ZED_SYSTEM_ID_HEADER, LegacyZedAppVersionHeader,
-        LegacyZedChecksumHeader, LegacyZedProtocolVersionHeader, LegacyZedReleaseChannelHeader,
-        LegacyZedSystemIdHeader, OrionStudioEnvironment,
+        LEGACY_ZED_RELEASE_CHANNEL_HEADER, LEGACY_ZED_SYSTEM_ID_HEADER,
+        LegacyEditorAppVersionHeader, LegacyEditorChecksumHeader,
+        LegacyEditorProtocolVersionHeader, LegacyEditorReleaseChannelHeader,
+        LegacyEditorSystemIdHeader, OrionStudioEnvironment,
     };
 
     fn config_for(
@@ -664,23 +665,23 @@ mod tests {
     #[test]
     fn legacy_zed_headers_remain_an_explicit_upgrade_contract() {
         assert_eq!(
-            <LegacyZedChecksumHeader as axum::headers::Header>::name().as_str(),
+            <LegacyEditorChecksumHeader as axum::headers::Header>::name().as_str(),
             LEGACY_ZED_CHECKSUM_HEADER
         );
         assert_eq!(
-            <LegacyZedSystemIdHeader as axum::headers::Header>::name().as_str(),
+            <LegacyEditorSystemIdHeader as axum::headers::Header>::name().as_str(),
             LEGACY_ZED_SYSTEM_ID_HEADER
         );
         assert_eq!(
-            <LegacyZedProtocolVersionHeader as axum::headers::Header>::name().as_str(),
+            <LegacyEditorProtocolVersionHeader as axum::headers::Header>::name().as_str(),
             LEGACY_ZED_PROTOCOL_VERSION_HEADER
         );
         assert_eq!(
-            <LegacyZedAppVersionHeader as axum::headers::Header>::name().as_str(),
+            <LegacyEditorAppVersionHeader as axum::headers::Header>::name().as_str(),
             LEGACY_ZED_APP_VERSION_HEADER
         );
         assert_eq!(
-            <LegacyZedReleaseChannelHeader as axum::headers::Header>::name().as_str(),
+            <LegacyEditorReleaseChannelHeader as axum::headers::Header>::name().as_str(),
             LEGACY_ZED_RELEASE_CHANNEL_HEADER
         );
         assert!(LEGACY_ZED_HEADER_RETIREMENT_CONTRACT.contains("every supported Orion client"));

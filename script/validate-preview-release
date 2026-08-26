@@ -79,6 +79,8 @@ validate_source() {
     local tag=$1
     local main_ref=${2:-refs/remotes/origin/main}
     local tag_ref=""
+    local tag_object=""
+    local tag_object_type=""
     local tag_commit=""
     local main_commit=""
     local release_channel=""
@@ -90,7 +92,19 @@ validate_source() {
 
     tag_ref="refs/tags/${tag}"
     git show-ref --verify --quiet "${tag_ref}" || fail "tag ${tag} is not available locally; fetch the exact origin tag first"
-    if ! tag_commit=$(git rev-parse --verify "${tag_ref}^{commit}"); then
+    if ! tag_object=$(git rev-parse --verify "${tag_ref}"); then
+        fail "could not resolve exact tag object ${tag_ref}"
+    fi
+    if ! tag_object_type=$(git cat-file -t "${tag_object}" 2>/dev/null); then
+        fail "could not inspect tag object ${tag_ref}"
+    fi
+    if [[ "${tag_object_type}" != "tag" ]]; then
+        fail "tag ${tag} must be an annotated, cryptographically signed tag; lightweight tags are not allowed"
+    fi
+    if ! git verify-tag "${tag_object}" >/dev/null 2>&1; then
+        fail "tag ${tag} signature verification failed; it must be cryptographically signed by a trusted release signer"
+    fi
+    if ! tag_commit=$(git rev-parse --verify "${tag_object}^{commit}"); then
         fail "tag ${tag} does not resolve to a commit"
     fi
     if ! main_commit=$(git rev-parse --verify "${main_ref}^{commit}"); then
@@ -193,9 +207,6 @@ validate_signing_inputs() {
     if [[ -n "${provisioning_profile}" && -n "${provisioning_profile_base64}" ]]; then
         fail "set only one of ORION_STUDIO_MACOS_PROVISIONING_PROFILE and ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64"
     fi
-    if [[ -z "${provisioning_profile}" && -z "${provisioning_profile_base64}" ]]; then
-        missing_variables+=("ORION_STUDIO_MACOS_PROVISIONING_PROFILE or ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64")
-    fi
     if [[ ${#missing_variables[@]} -gt 0 ]]; then
         printf 'error: incomplete macOS release signing configuration; missing:' >&2
         printf ' %s' "${missing_variables[@]}" >&2
@@ -208,7 +219,7 @@ validate_signing_inputs() {
         [[ -f "${provisioning_profile}" && ! -L "${provisioning_profile}" ]] || fail "ORION_STUDIO_MACOS_PROVISIONING_PROFILE must name a regular non-symlink file"
     fi
 
-    printf 'Validated presence of all required macOS signing and notarization inputs\n'
+    printf 'Validated required macOS signing and notarization inputs; provisioning profile is optional\n'
 }
 
 require_executable() {

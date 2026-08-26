@@ -5,11 +5,12 @@ actions!(
     cli,
     [
         /// Registers the orion:// and zed:// URL scheme handlers.
-        RegisterZedScheme
+        #[action(deprecated_aliases = ["cli::RegisterZedScheme"])]
+        RegisterApplicationSchemes
     ]
 );
 
-pub async fn register_zed_scheme(cx: &AsyncApp) -> anyhow::Result<()> {
+pub async fn register_application_schemes(cx: &AsyncApp) -> anyhow::Result<()> {
     // Register the canonical `orion://` scheme, then the legacy `zed://`
     // scheme so existing links and bookmarks keep working during the
     // migration window (S02 compatibility contract).

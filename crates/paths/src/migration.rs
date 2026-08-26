@@ -3,9 +3,9 @@
 //! Implements the safe, idempotent, atomic migration described in
 //! `docs/plan/subplans/04-data-migration-and-compatibility.md`.
 //!
-//! [`migrate_legacy_user_data`] is the startup entry point. Because it can copy
-//! entire directory trees, the application calls it on a background executor
-//! only after the first workspace frame has rendered (see
+//! [`migrate_legacy_user_data`] is the startup entry point. The application
+//! calls it before creating or opening Orion Studio persistence so legacy
+//! databases cannot be shadowed by newly initialized destination files (see
 //! `crates/zed/src/main.rs`). The lower-level [`migrate_root`] operates on a
 //! single root directory and is kept public for tests and future callers.
 //!
@@ -33,7 +33,9 @@ use std::fs::OpenOptions;
 pub const MIGRATION_MARKER_NAME: &str = ".orion_migration_marker";
 
 /// Schema version of the migration marker format. Bump on incompatible changes.
-pub const MIGRATION_SCHEMA_VERSION: u32 = 2;
+pub const MIGRATION_SCHEMA_VERSION: u32 = 3;
+
+const LEGACY_UNTRUSTED_MIGRATION_SCHEMA_VERSION: u32 = 2;
 
 const MIGRATION_LOCK_NAME: &str = ".orion-studio-migration.lock";
 const MARKER_TEMP_PREFIX: &str = ".orion-migration-marker.tmp";
@@ -610,6 +612,13 @@ pub enum MigrationError {
         found: u32,
         expected: u32,
     },
+    /// A marker cannot be trusted as complete, but its recorded legacy source
+    /// is unavailable, so the destination cannot be verified or upgraded.
+    MarkerVerificationSourceMissing {
+        marker_path: PathBuf,
+        source: PathBuf,
+        schema: u32,
+    },
     /// Source and destination resolve to the same directory or one contains
     /// the other, which would recurse or merge a tree into itself.
     OverlappingRoots {
@@ -630,6 +639,12 @@ pub enum MigrationError {
     /// The legacy tree changed while it was being snapshotted or copied.
     /// No success marker is written; a later startup can retry safely.
     SourceChanged { path: PathBuf, attempts: usize },
+    /// A destination entry already exists but is not identical to the legacy
+    /// entry. Neither entry is replaced, and no success marker is written.
+    DestinationConflict {
+        source: PathBuf,
+        destination: PathBuf,
+    },
     /// The migration's data steps succeeded, but a temporary path could not be
     /// removed afterwards. The migrated data is valid; this error reports the
     /// leftover path so it is not silently discarded.
@@ -695,6 +710,16 @@ impl std::fmt::Display for MigrationError {
                 "migration marker at {} uses schema {found}, but this build requires schema {expected}",
                 marker_path.display()
             ),
+            MigrationError::MarkerVerificationSourceMissing {
+                marker_path,
+                source,
+                schema,
+            } => write!(
+                f,
+                "migration marker at {} uses schema {schema} and requires verification, but legacy source {} is unavailable",
+                marker_path.display(),
+                source.display()
+            ),
             MigrationError::OverlappingRoots {
                 source,
                 destination,
@@ -718,6 +743,15 @@ impl std::fmt::Display for MigrationError {
                 f,
                 "migration source changed during {attempts} stability attempts at {}",
                 path.display()
+            ),
+            MigrationError::DestinationConflict {
+                source,
+                destination,
+            } => write!(
+                f,
+                "migration cannot copy {} because a different entry already exists at {}",
+                source.display(),
+                destination.display()
             ),
             MigrationError::TempCleanupFailed { source, path } => write!(
                 f,
@@ -1897,7 +1931,9 @@ fn verify_windows_directory_chain(
 ///   directory and installed without replacing a concurrent destination. The
 ///   durable success marker is written only after the final tree is synced.
 /// * If `old` exists and `new` already exists (partial install), the trees are
-///   merged without overwriting files already present in `new`.
+///   merged without overwriting files already present in `new`. An identical
+///   file is accepted as an idempotent retry; a different file or entry type is
+///   reported as a conflict and prevents the success marker from being written.
 ///
 /// Any failure returns `Err` with the legacy data intact. Symlinks and special
 /// files (sockets, fifos, devices) are never followed or copied. Temporary
@@ -1922,12 +1958,16 @@ fn migrate_root_unlocked_with_after_copy<F>(
 where
     F: FnMut(usize) -> Result<(), MigrationError>,
 {
-    if let Some(marker) = read_marker(new)? {
-        validate_marker(&marker, old, new)?;
-        if marker.result == "success" {
-            return Ok(MigrationState::Completed);
+    let marker_requiring_verification = match read_marker(new)? {
+        Some(marker) => {
+            validate_marker(&marker, old, new)?;
+            if marker.version == MarkerVersion::CurrentV3 && marker.result == "success" {
+                return Ok(MigrationState::Completed);
+            }
+            Some(marker)
         }
-    }
+        None => None,
+    };
 
     let parent_path = new
         .parent()
@@ -1937,6 +1977,13 @@ where
         SecureDirectory::open_or_create(parent_path, "open migration destination parent")?;
     let source = SecureDirectory::open_optional(old, "open legacy source root")?;
     if source.is_none() {
+        if let Some(marker) = marker_requiring_verification {
+            return Err(MigrationError::MarkerVerificationSourceMissing {
+                marker_path: new.join(MIGRATION_MARKER_NAME),
+                source: old.to_path_buf(),
+                schema: marker.schema,
+            });
+        }
         let (destination, _) = destination_parent
             .open_or_create_child_directory(destination_name, "initialize new directory")?;
         if SecureDirectory::open_optional(old, "recheck absent legacy source")?.is_some() {
@@ -2111,14 +2158,14 @@ fn cleanup_staging_after_failure(
 /// Migrate the config and data roots from their legacy Zed locations into the
 /// Orion Studio locations.
 ///
-/// Intended to be called exactly once at startup from a background executor;
-/// this function performs blocking filesystem I/O and may copy entire directory
-/// trees. The destination can already exist: legacy entries are merged without
-/// overwriting files created by Orion Studio. A root is only touched when its
-/// legacy directory exists, so a fresh install (no legacy data) performs no
-/// work and startup behavior is unchanged. Repeated calls are idempotent: the
-/// success marker written by [`migrate_root`] makes later calls return
-/// `Completed` without recopying.
+/// Intended to be called exactly once during startup before Orion Studio opens
+/// or initializes persistence. This function performs blocking filesystem I/O
+/// and may copy entire directory trees. The destination can already exist:
+/// legacy entries are merged without overwriting files created by Orion Studio.
+/// A root is only touched when its legacy directory exists, so a fresh install
+/// (no legacy data) performs no work and startup behavior is unchanged. Repeated
+/// calls are idempotent: the success marker written by [`migrate_root`] makes
+/// later calls return `Completed` without recopying.
 ///
 /// The config root is migrated first; if it succeeds but the data root fails,
 /// the error is returned and the config root remains migrated (its marker
@@ -2851,12 +2898,20 @@ impl Sha256State {
 }
 
 fn hash_file(file: &mut SecureFile) -> Result<[u8; 32], MigrationError> {
+    hash_file_with_context(file, "hash source file for snapshot")
+}
+
+fn hash_file_with_context(
+    file: &mut SecureFile,
+    context: &'static str,
+) -> Result<[u8; 32], MigrationError> {
     let mut digest = Sha256State::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = file.file.read(&mut buffer).map_err(|error| {
-            MigrationError::io(error, file.path.clone(), "hash source file for snapshot")
-        })?;
+        let read = file
+            .file
+            .read(&mut buffer)
+            .map_err(|error| MigrationError::io(error, file.path.clone(), context))?;
         if read == 0 {
             break;
         }
@@ -3129,7 +3184,12 @@ fn merge_tree(
                         )?,
                         false,
                     ),
-                    Some(_) => continue,
+                    Some(_) => {
+                        return Err(MigrationError::DestinationConflict {
+                            source: source.path.join(&name),
+                            destination: destination.path.join(&name),
+                        });
+                    }
                     None => (
                         destination
                             .create_child_directory(&name, "create merge destination directory")?,
@@ -3182,14 +3242,19 @@ fn merge_file_without_overwrite(
             });
         }
         Some(metadata) if metadata.kind == EntryKind::RegularFile => {
-            destination.open_child_file(
+            return ensure_existing_file_matches(
+                source,
+                source_name,
+                destination,
                 destination_name,
-                false,
-                "validate existing merge destination file",
-            )?;
-            return Ok(());
+            );
         }
-        Some(_) => return Ok(()),
+        Some(_) => {
+            return Err(MigrationError::DestinationConflict {
+                source: source.path.join(source_name),
+                destination: destination.path.join(destination_name),
+            });
+        }
         None => {}
     }
     let temp_name = OsString::from(format!(
@@ -3233,7 +3298,31 @@ fn merge_file_without_overwrite(
                         original,
                     ));
                 }
-                Some(_) => {}
+                Some(metadata) if metadata.kind == EntryKind::RegularFile => {
+                    if let Err(original) = ensure_existing_file_matches(
+                        source,
+                        source_name,
+                        destination,
+                        destination_name,
+                    ) {
+                        return Err(cleanup_file_in_directory_after_failure(
+                            destination,
+                            &temp_name,
+                            original,
+                        ));
+                    }
+                }
+                Some(_) => {
+                    let original = MigrationError::DestinationConflict {
+                        source: source.path.join(source_name),
+                        destination: destination.path.join(destination_name),
+                    };
+                    return Err(cleanup_file_in_directory_after_failure(
+                        destination,
+                        &temp_name,
+                        original,
+                    ));
+                }
                 None => {
                     return Err(cleanup_file_in_directory_after_failure(
                         destination,
@@ -3252,6 +3341,69 @@ fn merge_file_without_overwrite(
         }
     }
     destination.remove_child_file(&temp_name, "remove merged file staging link")
+}
+
+fn ensure_existing_file_matches(
+    source: &SecureDirectory,
+    source_name: &OsStr,
+    destination: &SecureDirectory,
+    destination_name: &OsStr,
+) -> Result<(), MigrationError> {
+    let source_content = capture_file_content(
+        source,
+        source_name,
+        "inspect staged file for destination conflict",
+    )?;
+    let destination_content = capture_file_content(
+        destination,
+        destination_name,
+        "inspect existing destination file for conflict",
+    )?;
+    if source_content.kind == destination_content.kind
+        && source_content.length == destination_content.length
+        && source_content.permissions == destination_content.permissions
+        && source_content.digest == destination_content.digest
+    {
+        Ok(())
+    } else {
+        Err(MigrationError::DestinationConflict {
+            source: source.path.join(source_name),
+            destination: destination.path.join(destination_name),
+        })
+    }
+}
+
+fn capture_file_content(
+    parent: &SecureDirectory,
+    name: &OsStr,
+    context: &'static str,
+) -> Result<ContentEntry, MigrationError> {
+    let mut file = parent.open_child_file(name, false, context)?;
+    let metadata_before = file.metadata(context)?;
+    let digest = hash_file_with_context(&mut file, context)?;
+    let metadata_after = file.metadata(context)?;
+    let before = stability_entry(
+        Path::new(name),
+        EntryKind::RegularFile,
+        Some(file.identity),
+        &metadata_before,
+        Some(digest),
+    );
+    let after = stability_entry(
+        Path::new(name),
+        EntryKind::RegularFile,
+        Some(file.identity),
+        &metadata_after,
+        Some(digest),
+    );
+    if before != after {
+        return Err(MigrationError::ObjectIdentityChanged {
+            path: file.path,
+            context,
+        });
+    }
+    parent.verify_child_identity(name, file.identity, context)?;
+    Ok(content_entry(&before))
 }
 
 fn snapshot_directory_permissions(
@@ -3464,7 +3616,23 @@ fn sync_directory(path: &Path, context: &'static str) -> Result<(), MigrationErr
     SecureDirectory::open(path, context)?.sync(context)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarkerVersion {
+    LegacyUntrustedV2,
+    CurrentV3,
+}
+
+impl MarkerVersion {
+    fn schema(self) -> u32 {
+        match self {
+            MarkerVersion::LegacyUntrustedV2 => LEGACY_UNTRUSTED_MIGRATION_SCHEMA_VERSION,
+            MarkerVersion::CurrentV3 => MIGRATION_SCHEMA_VERSION,
+        }
+    }
+}
+
 struct Marker {
+    version: MarkerVersion,
     schema: u32,
     result: String,
     source: PathBuf,
@@ -3473,11 +3641,13 @@ struct Marker {
 
 fn validate_marker(marker: &Marker, old: &Path, new: &Path) -> Result<(), MigrationError> {
     let marker_path = new.join(MIGRATION_MARKER_NAME);
-    if marker.schema != MIGRATION_SCHEMA_VERSION {
-        return Err(MigrationError::IncompatibleVersion {
-            marker_path,
-            found: marker.schema,
-            expected: MIGRATION_SCHEMA_VERSION,
+    if marker.schema != marker.version.schema() {
+        return Err(MigrationError::MarkerCorrupted {
+            path: marker_path,
+            reason: format!(
+                "marker version {:?} does not match schema {}",
+                marker.version, marker.schema
+            ),
         });
     }
     if marker.source != old {
@@ -3598,7 +3768,7 @@ fn serialize_marker(source: &Path, target: &Path, result: &str) -> Result<String
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
     Ok(format!(
-        "orion-migration-marker v2\nschema={MIGRATION_SCHEMA_VERSION}\npath_encoding={}\nsource={}\ntarget={}\ntime={time}\nresult={result}\n",
+        "orion-migration-marker v3\nschema={MIGRATION_SCHEMA_VERSION}\npath_encoding={}\nsource={}\ntarget={}\ntime={time}\nresult={result}\n",
         marker_path_encoding(),
         encode_marker_path(source)?,
         encode_marker_path(target)?,
@@ -3661,20 +3831,23 @@ fn parse_marker(content: &[u8], marker_path: &Path) -> Result<Marker, MigrationE
     let header = lines
         .next()
         .ok_or_else(|| corrupted("empty marker file".into()))?;
-    if header == "orion-migration-marker v1" {
-        let found = lines
-            .find_map(|line| line.strip_prefix("schema="))
-            .and_then(|value| value.parse::<u32>().ok())
-            .map_or(1, |schema| schema);
-        return Err(MigrationError::IncompatibleVersion {
-            marker_path: marker_path.to_path_buf(),
-            found,
-            expected: MIGRATION_SCHEMA_VERSION,
-        });
-    }
-    if header != "orion-migration-marker v2" {
-        return Err(corrupted(format!("unrecognized marker header: {header:?}")));
-    }
+    let version = match header {
+        "orion-migration-marker v2" => MarkerVersion::LegacyUntrustedV2,
+        "orion-migration-marker v3" => MarkerVersion::CurrentV3,
+        _ => {
+            if let Some(found) = header
+                .strip_prefix("orion-migration-marker v")
+                .and_then(|value| value.parse::<u32>().ok())
+            {
+                return Err(MigrationError::IncompatibleVersion {
+                    marker_path: marker_path.to_path_buf(),
+                    found,
+                    expected: MIGRATION_SCHEMA_VERSION,
+                });
+            }
+            return Err(corrupted(format!("unrecognized marker header: {header:?}")));
+        }
+    };
     let mut schema = None;
     let mut path_encoding = None;
     let mut source = None;
@@ -3738,11 +3911,11 @@ fn parse_marker(content: &[u8], marker_path: &Path) -> Result<Marker, MigrationE
         }
     }
     let schema = schema.ok_or_else(|| corrupted("missing schema field".into()))?;
-    if schema != MIGRATION_SCHEMA_VERSION {
+    if schema != version.schema() {
         return Err(MigrationError::IncompatibleVersion {
             marker_path: marker_path.to_path_buf(),
             found: schema,
-            expected: MIGRATION_SCHEMA_VERSION,
+            expected: version.schema(),
         });
     }
     let encoding = path_encoding.ok_or_else(|| corrupted("missing path_encoding field".into()))?;
@@ -3755,6 +3928,7 @@ fn parse_marker(content: &[u8], marker_path: &Path) -> Result<Marker, MigrationE
     let target = target.ok_or_else(|| corrupted("missing target field".into()))?;
     time.ok_or_else(|| corrupted("missing time field".into()))?;
     Ok(Marker {
+        version,
         schema,
         result: result.ok_or_else(|| corrupted("missing result field".into()))?,
         source: decode_marker_path(source)
@@ -3917,8 +4091,28 @@ mod tests {
         schema: u32,
         result: &str,
     ) -> TestResult<String> {
+        marker_content_for_version(source, target, MIGRATION_SCHEMA_VERSION, schema, result)
+    }
+
+    fn legacy_v2_marker_content(source: &Path, target: &Path, result: &str) -> TestResult<String> {
+        marker_content_for_version(
+            source,
+            target,
+            LEGACY_UNTRUSTED_MIGRATION_SCHEMA_VERSION,
+            LEGACY_UNTRUSTED_MIGRATION_SCHEMA_VERSION,
+            result,
+        )
+    }
+
+    fn marker_content_for_version(
+        source: &Path,
+        target: &Path,
+        header_version: u32,
+        schema: u32,
+        result: &str,
+    ) -> TestResult<String> {
         Ok(format!(
-            "orion-migration-marker v2\nschema={schema}\npath_encoding={}\nsource={}\ntarget={}\ntime=0\nresult={result}\n",
+            "orion-migration-marker v{header_version}\nschema={schema}\npath_encoding={}\nsource={}\ntarget={}\ntime=0\nresult={result}\n",
             marker_path_encoding(),
             encode_marker_path(source)?,
             encode_marker_path(target)?,
@@ -3951,22 +4145,32 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_only_legacy_is_migrated_and_old_retained() -> TestResult {
+    fn legacy_database_migrates_before_destination_creation() -> TestResult {
         let root = temp_root()?;
         let old = root.join("zed");
         let new = root.join("orion-studio");
-        fs::create_dir_all(old.join("db"))?;
-        fs::write(old.join("db").join("settings.db"), b"data")?;
+        let legacy_database = old.join("db").join("0-stable").join("db.sqlite");
+        fs::create_dir_all(
+            legacy_database
+                .parent()
+                .ok_or_else(|| io::Error::other("legacy database path has no parent"))?,
+        )?;
+        fs::write(&legacy_database, b"legacy-database")?;
         fs::write(old.join("settings.json"), b"{}")?;
+        assert!(!new.exists());
 
         let state = migrate_root(&old, &new)?;
         assert_eq!(state, MigrationState::Migrated);
         assert!(new.join("settings.json").exists());
-        assert!(new.join("db").join("settings.db").exists());
+        assert_eq!(
+            fs::read(new.join("db").join("0-stable").join("db.sqlite"))?,
+            b"legacy-database"
+        );
+        assert!(new.join(MIGRATION_MARKER_NAME).exists());
 
         // Old directory is retained as backup; never deleted in the first round.
         assert!(old.join("settings.json").exists());
-        assert!(old.join("db").join("settings.db").exists());
+        assert_eq!(fs::read(legacy_database)?, b"legacy-database");
 
         fs::remove_dir_all(&root)?;
         Ok(())
@@ -3994,34 +4198,170 @@ mod tests {
     }
 
     #[test]
-    fn migration_after_destination_initialization_preserves_both_sides() -> TestResult {
+    fn destination_database_conflict_is_unmarked_and_retryable() -> TestResult {
         let root = temp_root()?;
         let old = root.join("zed");
         let new = root.join("orion-studio");
-        fs::create_dir_all(old.join("db"))?;
-        fs::write(old.join("db").join("state.db"), b"legacy-state")?;
-        fs::write(old.join("db").join("legacy-only.db"), b"legacy-only")?;
-        fs::create_dir_all(new.join("db"))?;
-        fs::write(new.join("db").join("state.db"), b"orion-state")?;
-        let active_destination = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(new.join("db").join("state.db"))?;
+        let legacy_database = old.join("db").join("0-stable").join("db.sqlite");
+        let destination_database = new.join("db").join("0-stable").join("db.sqlite");
+        fs::create_dir_all(
+            legacy_database
+                .parent()
+                .ok_or_else(|| io::Error::other("legacy database path has no parent"))?,
+        )?;
+        fs::write(&legacy_database, b"legacy-state")?;
+        fs::write(
+            old.join("db").join("0-stable").join("a-legacy-only.db"),
+            b"legacy-only",
+        )?;
+        fs::create_dir_all(
+            destination_database
+                .parent()
+                .ok_or_else(|| io::Error::other("destination database path has no parent"))?,
+        )?;
+        fs::write(&destination_database, b"orion-state")?;
 
+        let result = migrate_root(&old, &new);
+        assert!(matches!(
+            result,
+            Err(MigrationError::DestinationConflict {
+                ref destination,
+                ..
+            }) if destination == &destination_database
+        ));
+        assert_eq!(fs::read(&destination_database)?, b"orion-state");
+        assert!(!new.join(MIGRATION_MARKER_NAME).exists());
+        assert_eq!(fs::read(&legacy_database)?, b"legacy-state");
+
+        // The first attempt may have installed non-conflicting files. Their
+        // identical content must be accepted on retry instead of becoming a
+        // new conflict.
+        assert_eq!(
+            fs::read(new.join("db").join("0-stable").join("a-legacy-only.db"),)?,
+            b"legacy-only"
+        );
+
+        fs::remove_file(&destination_database)?;
         let state = migrate_root(&old, &new)?;
         assert_eq!(state, MigrationState::Migrated);
-        assert_eq!(fs::read(new.join("db").join("state.db"))?, b"orion-state");
+        assert_eq!(fs::read(&destination_database)?, b"legacy-state");
+        assert!(new.join(MIGRATION_MARKER_NAME).exists());
         assert_eq!(
-            fs::read(new.join("db").join("legacy-only.db"))?,
-            b"legacy-only"
-        );
-        assert_eq!(fs::read(old.join("db").join("state.db"))?, b"legacy-state");
-        assert_eq!(
-            fs::read(old.join("db").join("legacy-only.db"))?,
+            fs::read(old.join("db").join("0-stable").join("a-legacy-only.db"),)?,
             b"legacy-only"
         );
 
-        drop(active_destination);
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_v2_success_marker_does_not_hide_database_conflict() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        let legacy_database = old.join("db").join("0-stable").join("db.sqlite");
+        let destination_database = new.join("db").join("0-stable").join("db.sqlite");
+        fs::create_dir_all(
+            legacy_database
+                .parent()
+                .ok_or_else(|| io::Error::other("legacy database path has no parent"))?,
+        )?;
+        fs::create_dir_all(
+            destination_database
+                .parent()
+                .ok_or_else(|| io::Error::other("destination database path has no parent"))?,
+        )?;
+        fs::write(&legacy_database, b"legacy-database")?;
+        fs::write(&destination_database, b"post-init-orion-database")?;
+        write_marker_file(&new, &legacy_v2_marker_content(&old, &new, "success")?)?;
+        let original_marker = fs::read(new.join(MIGRATION_MARKER_NAME))?;
+
+        let result = migrate_root(&old, &new);
+        assert!(matches!(
+            result,
+            Err(MigrationError::DestinationConflict {
+                ref destination,
+                ..
+            }) if destination == &destination_database
+        ));
+        assert_eq!(fs::read(&legacy_database)?, b"legacy-database");
+        assert_eq!(
+            fs::read(&destination_database)?,
+            b"post-init-orion-database"
+        );
+        let marker_after_conflict = fs::read(new.join(MIGRATION_MARKER_NAME))?;
+        assert_eq!(marker_after_conflict, original_marker);
+        assert!(marker_after_conflict.starts_with(b"orion-migration-marker v2\n"));
+        assert!(!marker_after_conflict.starts_with(b"orion-migration-marker v3\n"));
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn completable_legacy_v2_tree_upgrades_to_v3_idempotently() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        fs::create_dir_all(old.join("db").join("0-stable"))?;
+        fs::create_dir_all(&new)?;
+        let legacy_settings = old.join("settings.json");
+        let destination_settings = new.join("settings.json");
+        fs::write(&legacy_settings, b"identical-settings")?;
+        fs::copy(&legacy_settings, &destination_settings)?;
+        fs::write(
+            old.join("db").join("0-stable").join("db.sqlite"),
+            b"legacy-database",
+        )?;
+        write_marker_file(&new, &legacy_v2_marker_content(&old, &new, "success")?)?;
+
+        assert_eq!(migrate_root(&old, &new)?, MigrationState::Migrated);
+        assert_eq!(fs::read(&destination_settings)?, b"identical-settings");
+        assert_eq!(
+            fs::read(new.join("db").join("0-stable").join("db.sqlite"))?,
+            b"legacy-database"
+        );
+        let upgraded_marker = fs::read(new.join(MIGRATION_MARKER_NAME))?;
+        assert!(upgraded_marker.starts_with(b"orion-migration-marker v3\n"));
+        let marker = read_marker(&new)?
+            .ok_or_else(|| io::Error::other("upgraded migration marker should exist"))?;
+        assert_eq!(marker.version, MarkerVersion::CurrentV3);
+        assert_eq!(marker.schema, MIGRATION_SCHEMA_VERSION);
+        assert_eq!(marker.result, "success");
+
+        assert_eq!(migrate_root(&old, &new)?, MigrationState::Completed);
+        assert_eq!(fs::read(new.join(MIGRATION_MARKER_NAME))?, upgraded_marker);
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_v2_marker_without_source_is_preserved_until_retry() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        fs::create_dir_all(&new)?;
+        write_marker_file(&new, &legacy_v2_marker_content(&old, &new, "success")?)?;
+        let original_marker = fs::read(new.join(MIGRATION_MARKER_NAME))?;
+
+        assert!(matches!(
+            migrate_root(&old, &new),
+            Err(MigrationError::MarkerVerificationSourceMissing {
+                schema: LEGACY_UNTRUSTED_MIGRATION_SCHEMA_VERSION,
+                ..
+            })
+        ));
+        assert_eq!(fs::read(new.join(MIGRATION_MARKER_NAME))?, original_marker);
+
+        fs::create_dir_all(&old)?;
+        fs::write(old.join("settings.json"), b"legacy-settings")?;
+        assert_eq!(migrate_root(&old, &new)?, MigrationState::Migrated);
+        assert!(
+            fs::read(new.join(MIGRATION_MARKER_NAME))?.starts_with(b"orion-migration-marker v3\n")
+        );
+
         fs::remove_dir_all(&root)?;
         Ok(())
     }
@@ -4272,6 +4612,33 @@ mod tests {
     }
 
     #[test]
+    fn future_marker_version_fails_closed() -> TestResult {
+        let root = temp_root()?;
+        let old = root.join("zed");
+        let new = root.join("orion-studio");
+        fs::create_dir_all(&old)?;
+        fs::write(old.join("settings.json"), b"{}")?;
+        fs::create_dir_all(&new)?;
+        write_marker_file(
+            &new,
+            &marker_content_for_version(&old, &new, 4, 4, "success")?,
+        )?;
+
+        assert!(matches!(
+            migrate_root(&old, &new),
+            Err(MigrationError::IncompatibleVersion {
+                found: 4,
+                expected: MIGRATION_SCHEMA_VERSION,
+                ..
+            })
+        ));
+        assert!(!new.join("settings.json").exists());
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
     fn duplicate_marker_field_fails_closed() -> TestResult {
         let root = temp_root()?;
         let old = root.join("zed");
@@ -4283,7 +4650,7 @@ mod tests {
         write_marker_file(
             &new,
             &format!(
-                "orion-migration-marker v2\nschema={MIGRATION_SCHEMA_VERSION}\nschema={MIGRATION_SCHEMA_VERSION}\npath_encoding={}\nsource={source}\ntarget={target}\ntime=0\nresult=success\n",
+                "orion-migration-marker v3\nschema={MIGRATION_SCHEMA_VERSION}\nschema={MIGRATION_SCHEMA_VERSION}\npath_encoding={}\nsource={source}\ntarget={target}\ntime=0\nresult=success\n",
                 marker_path_encoding(),
             ),
         )?;
@@ -4309,7 +4676,7 @@ mod tests {
         write_marker_file(
             &new,
             &format!(
-                "orion-migration-marker v2\nschema={MIGRATION_SCHEMA_VERSION}\npath_encoding={}\n",
+                "orion-migration-marker v3\nschema={MIGRATION_SCHEMA_VERSION}\npath_encoding={}\n",
                 marker_path_encoding()
             ),
         )?;
@@ -4738,7 +5105,7 @@ mod tests {
 
         let interrupted_temp = new.join(format!("{MARKER_TEMP_PREFIX}-interrupted"));
         let mut interrupted_file = open_new_file(&interrupted_temp, 0o600)?;
-        interrupted_file.write_all(b"orion-migration-marker v2\nschema=")?;
+        interrupted_file.write_all(b"orion-migration-marker v3\nschema=")?;
         interrupted_file.sync_all()?;
         drop(interrupted_file);
 
@@ -5016,7 +5383,7 @@ mod tests {
         assert_eq!(marker.source, old);
         assert_eq!(marker.target, new);
         let marker_bytes = fs::read(new.join(MIGRATION_MARKER_NAME))?;
-        assert!(marker_bytes.starts_with(b"orion-migration-marker v2\n"));
+        assert!(marker_bytes.starts_with(b"orion-migration-marker v3\n"));
         assert!(!marker_bytes.windows(7).any(|bytes| bytes == b"source\n"));
 
         fs::remove_dir_all(&root)?;
@@ -5053,7 +5420,7 @@ mod tests {
     }
 
     #[test]
-    fn marker_v2_and_directory_sync_helpers_are_strict() -> TestResult {
+    fn marker_v3_and_directory_sync_helpers_are_strict() -> TestResult {
         let root = temp_root()?;
         let old = root.join("zed");
         let new = root.join("orion-studio");
@@ -5066,7 +5433,7 @@ mod tests {
             read_marker(&new)?.ok_or_else(|| io::Error::other("migration marker should exist"))?;
         validate_marker(&marker, &old, &new)?;
         let marker_text = fs::read_to_string(new.join(MIGRATION_MARKER_NAME))?;
-        assert!(marker_text.starts_with("orion-migration-marker v2\n"));
+        assert!(marker_text.starts_with("orion-migration-marker v3\n"));
         assert!(marker_text.contains(&format!("path_encoding={}\n", marker_path_encoding())));
 
         let invalid = marker_text.replacen("source=", "source=G", 1);

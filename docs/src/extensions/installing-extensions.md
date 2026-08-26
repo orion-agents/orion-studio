@@ -12,6 +12,18 @@ deployed.
 
 Open the Extension Gallery with {#kb zed::Extensions}, or select "Orion Studio > Extensions" from the menu bar.
 
+## Preview and Dev builds
+
+Preview and Dev builds run the Extension Gallery in local-only mode. They list
+installed and development extensions without contacting an inherited registry.
+Remote search, install, upgrade, version history, recommendations, and automatic
+extension updates are unavailable and fail closed. You can still configure,
+rebuild, or uninstall a local extension and use **Install Dev Extension**.
+
+An extension can make its own network requests when its declared capabilities
+allow that. The local-only Gallery boundary does not turn third-party extensions
+into offline or Orion-operated software.
+
 For an unpublished extension, use **Install Dev Extension** and select its local
 checkout. See [Developing Extensions](./developing-extensions.md).
 

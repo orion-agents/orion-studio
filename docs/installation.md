@@ -32,15 +32,17 @@ separate backup location:
 - `~/Library/Application Support/Orion Studio` if an earlier Orion Studio build
   was used
 
-After the first workspace frame appears, Orion Studio attempts to copy legacy
-Zed configuration and application data into Orion Studio's own directories on a
-background executor. The legacy Zed directories are retained, but a separate
-backup is still required. A large legacy data directory can produce sustained
-disk activity while the editor remains open. Do not run Zed concurrently with
-this migration, and do not delete the legacy data until Orion Studio reports a
-successful import, has been restarted, and the migrated settings and projects
-have been checked. Existing Orion Studio files take precedence over legacy Zed
-files at the same relative path, so review both copies if their contents differ.
+Before Orion Studio opens its database or first workspace, it checks for legacy
+Zed configuration and application data. When legacy data exists, Orion Studio
+copies it into its own directories and does not overwrite a different existing
+Orion Studio file. The legacy Zed directories are retained, but a separate
+backup is still required. A large legacy data directory can delay the first
+window and produce sustained disk activity. Do not run Zed or another Orion
+Studio process concurrently with this migration, and do not delete the legacy
+data until Orion Studio has started successfully, has been restarted, and the
+migrated settings and projects have been checked. If both products contain a
+different file at the same relative path, Orion Studio stops before opening its
+database and reports the conflict instead of choosing either copy.
 
 ## Download and Verify SHA-256
 
@@ -77,17 +79,18 @@ the [support process](../SUPPORT.md).
 
 ## First Launch and Migration
 
-Open **Orion Studio Preview** from Applications. The first workspace should
-appear before any legacy copy begins. If legacy Zed data is present, migration
-then runs in the background. Keep the Mac awake and avoid launching additional
-Orion Studio or Zed processes while it runs.
+Open **Orion Studio Preview** from Applications. If legacy Zed data is present,
+migration completes before Orion Studio initializes persistence or displays the
+first workspace. Keep the Mac awake and avoid launching additional Orion Studio
+or Zed processes while it runs.
 
-Orion Studio shows a notification when the import finishes or fails. Restart
-Orion Studio after a successful import so all migrated state is loaded. A
-failure leaves the original Zed data unchanged and does not close Orion Studio.
+A successful import leaves the original Zed data unchanged. A migration error
+stops startup before Orion Studio opens its database, preserves both data trees,
+and leaves the operation retryable after the conflict or filesystem problem is
+resolved. Restart once after the first successful launch and verify the migrated
+settings and projects before removing any backup.
 
-If the first window does not appear, or the migration notification reports a
-failure:
+If the first window does not appear or a migration error is shown:
 
 1. Do not repeatedly launch more copies of the app.
 2. Check `~/Library/Logs/Orion Studio/Orion Studio.log` for startup or migration

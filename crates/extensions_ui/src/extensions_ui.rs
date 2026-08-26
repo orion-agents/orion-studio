@@ -11,7 +11,10 @@ use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension_host::{ExtensionManifest, ExtensionStore};
+use extension_host::{
+    EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE, ExtensionManifest, ExtensionStore,
+    extension_registry_available,
+};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use git::{GitHostingProviderRegistry, parse_git_remote_url};
 use gpui::{
@@ -300,12 +303,30 @@ enum ExtensionFilter {
 }
 
 impl ExtensionFilter {
-    pub fn include_dev_extensions(&self) -> bool {
+    pub fn include_local_extensions(&self) -> bool {
         match self {
             Self::All | Self::Installed => true,
             Self::NotInstalled => false,
         }
     }
+}
+
+fn local_extension_matches_search(
+    extension_id: &str,
+    extension_name: &str,
+    search: Option<&str>,
+) -> bool {
+    let Some(search) = search else {
+        return true;
+    };
+    let search = search.trim();
+    let search = search.strip_prefix("id:").unwrap_or(search).trim();
+    if search.is_empty() {
+        return true;
+    }
+
+    let search = search.to_lowercase();
+    extension_id.to_lowercase().contains(&search) || extension_name.to_lowercase().contains(&search)
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -385,8 +406,10 @@ pub struct ExtensionsPage {
     fetch_failed: bool,
     filter: ExtensionFilter,
     remote_extension_entries: Vec<ExtensionMetadata>,
+    installed_extension_entries: Vec<Arc<ExtensionManifest>>,
     dev_extension_entries: Vec<Arc<ExtensionManifest>>,
     filtered_remote_extension_indices: Vec<usize>,
+    filtered_installed_extension_indices: Vec<usize>,
     filtered_dev_extension_indices: Vec<usize>,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
@@ -430,7 +453,12 @@ impl ExtensionsPage {
 
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search extensions...", window, cx);
+                let placeholder = if extension_registry_available(cx) {
+                    "Search extensions..."
+                } else {
+                    "Search installed and dev extensions..."
+                };
+                input.set_placeholder_text(placeholder, window, cx);
                 if let Some(id) = focus_extension_id {
                     input.set_text(format!("id:{id}"), window, cx);
                 }
@@ -449,7 +477,9 @@ impl ExtensionsPage {
                 fetch_failed: false,
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
+                installed_extension_entries: Vec::new(),
                 filtered_remote_extension_indices: Vec::new(),
+                filtered_installed_extension_indices: Vec::new(),
                 filtered_dev_extension_indices: Vec::new(),
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
@@ -558,6 +588,18 @@ impl ExtensionsPage {
                 .map(|(ix, _)| ix),
         );
 
+        self.filtered_installed_extension_indices.clear();
+        self.filtered_installed_extension_indices.extend(
+            self.installed_extension_entries
+                .iter()
+                .enumerate()
+                .filter(|(_, manifest)| match self.provides_filter {
+                    Some(provides) => manifest.provides().contains(&provides),
+                    None => true,
+                })
+                .map(|(ix, _)| ix),
+        );
+
         cx.notify();
     }
 
@@ -578,12 +620,50 @@ impl ExtensionsPage {
         cx.notify();
 
         let extension_store = ExtensionStore::global(cx);
+        let registry_available = extension_registry_available(cx);
+        let (dev_extensions, installed_extensions) = {
+            let extension_store = extension_store.read(cx);
+            let dev_extensions = extension_store
+                .dev_extensions()
+                .cloned()
+                .collect::<Vec<_>>();
+            let installed_extensions = extension_store
+                .installed_extensions()
+                .values()
+                .filter(|extension| !extension.dev)
+                .map(|extension| extension.manifest.clone())
+                .collect::<Vec<_>>();
+            (dev_extensions, installed_extensions)
+        };
 
-        let dev_extensions = extension_store
-            .read(cx)
-            .dev_extensions()
-            .cloned()
-            .collect::<Vec<_>>();
+        if !registry_available {
+            if self.filter == ExtensionFilter::NotInstalled {
+                self.filter = ExtensionFilter::All;
+            }
+            let search = search.as_deref();
+            self.dev_extension_entries = dev_extensions
+                .into_iter()
+                .filter(|extension| {
+                    local_extension_matches_search(&extension.id, &extension.name, search)
+                })
+                .collect();
+            self.installed_extension_entries = installed_extensions
+                .into_iter()
+                .filter(|extension| {
+                    local_extension_matches_search(&extension.id, &extension.name, search)
+                })
+                .collect();
+            self.remote_extension_entries.clear();
+            self.is_fetching_extensions = false;
+            self.fetch_failed = false;
+            self.filter_extension_entries(cx);
+            if let Some(callback) = on_complete {
+                callback(self, cx);
+            }
+            return;
+        }
+
+        self.installed_extension_entries.clear();
 
         let remote_extensions =
             if let Some(id) = search.as_ref().and_then(|s| s.strip_prefix("id:")) {
@@ -665,8 +745,13 @@ impl ExtensionsPage {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<ExtensionCard> {
-        let dev_extension_entries_len = if self.filter.include_dev_extensions() {
+        let dev_extension_entries_len = if self.filter.include_local_extensions() {
             self.filtered_dev_extension_indices.len()
+        } else {
+            0
+        };
+        let installed_extension_entries_len = if self.filter.include_local_extensions() {
+            self.filtered_installed_extension_indices.len()
         } else {
             0
         };
@@ -685,9 +770,23 @@ impl ExtensionsPage {
                     } else {
                         card
                     }
+                } else if ix < dev_extension_entries_len + installed_extension_entries_len {
+                    let installed_ix =
+                        self.filtered_installed_extension_indices[ix - dev_extension_entries_len];
+                    let extension = &self.installed_extension_entries[installed_ix];
+                    let repository_icon = extension
+                        .repository
+                        .as_deref()
+                        .map(|url| self.get_repository_icon(url));
+                    let card = ExtensionCard::for_installed(extension.clone(), cx);
+                    if let Some(icon) = repository_icon {
+                        card.repository_icon(icon)
+                    } else {
+                        card
+                    }
                 } else {
-                    let extension_ix =
-                        self.filtered_remote_extension_indices[ix - dev_extension_entries_len];
+                    let extension_ix = self.filtered_remote_extension_indices
+                        [ix - dev_extension_entries_len - installed_extension_entries_len];
                     let extension = &self.remote_extension_entries[extension_ix];
                     self.render_remote_extension(extension, cx)
                 }
@@ -739,6 +838,10 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !extension_registry_available(cx) {
+            return;
+        }
+
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -884,7 +987,7 @@ impl ExtensionsPage {
             // If the search was just cleared then we can just reload the list
             // of extensions without a debounce, which allows us to avoid seeing
             // an intermittent flash of a "no extensions" state.
-            if search.is_some() {
+            if cx.update(|cx| extension_registry_available(cx)) && search.is_some() {
                 cx.background_executor()
                     .timer(Duration::from_millis(250))
                     .await;
@@ -913,11 +1016,18 @@ impl ExtensionsPage {
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
+        let registry_available = extension_registry_available(cx);
 
         let message = if self.is_fetching_extensions {
             "Loading extensions…"
         } else if self.fetch_failed {
             "Failed to load extensions. Please check your connection and try again."
+        } else if !registry_available {
+            if has_search {
+                "No installed or dev extensions match your search."
+            } else {
+                "No installed or dev extensions."
+            }
         } else {
             match self.filter {
                 ExtensionFilter::All => {
@@ -1101,112 +1211,112 @@ impl ExtensionsPage {
             let banner = match feature {
                 Feature::AgentClaude => self.render_feature_upsell_banner(
                     "Claude Agent support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/ai/external-agents#claude-agent".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/ai/external-agents.md#claude-agent-claude-agent".into(),
                     false,
                     cx,
                 ),
                 Feature::AgentCodex => self.render_feature_upsell_banner(
                     "Codex CLI support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/ai/external-agents#codex-cli".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/ai/external-agents.md#codex-codex-cli".into(),
                     false,
                     cx,
                 ),
                 Feature::AgentGemini => self.render_feature_upsell_banner(
                     "Gemini CLI support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/ai/external-agents#gemini-cli".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/ai/external-agents.md#gemini-cli-gemini-cli".into(),
                     false,
                     cx,
                 ),
                 Feature::ExtensionBasedpyright => self.render_feature_upsell_banner(
                     "Basedpyright (Python language server) support is built into Orion Studio!"
                         .into(),
-                    "https://orion.dev/docs/languages/python#basedpyright".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/python.md#basedpyright".into(),
                     false,
                     cx,
                 ),
                 Feature::ExtensionRuff => self.render_feature_upsell_banner(
                     "Ruff (linter for Python) support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/python#code-formatting--linting".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/python.md#code-formatting--linting".into(),
                     false,
                     cx,
                 ),
                 Feature::ExtensionTailwind => self.render_feature_upsell_banner(
                     "Tailwind CSS support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/tailwindcss".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/tailwindcss.md".into(),
                     false,
                     cx,
                 ),
                 Feature::ExtensionTy => self.render_feature_upsell_banner(
                     "Ty (Python language server) support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/python".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/python.md".into(),
                     false,
                     cx,
                 ),
                 Feature::Git => self.render_feature_upsell_banner(
                     "Orion Studio comes with basic Git support—more features are coming in the future."
                         .into(),
-                    "https://orion.dev/docs/git".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/git.md".into(),
                     false,
                     cx,
                 ),
                 Feature::LanguageBash => self.render_feature_upsell_banner(
                     "Shell support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/bash".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/bash.md".into(),
                     false,
                     cx,
                 ),
                 Feature::LanguageC => self.render_feature_upsell_banner(
                     "C support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/c".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/c.md".into(),
                     false,
                     cx,
                 ),
                 Feature::LanguageCpp => self.render_feature_upsell_banner(
                     "C++ support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/cpp".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/cpp.md".into(),
                     false,
                     cx,
                 ),
                 Feature::LanguageGo => self.render_feature_upsell_banner(
                     "Go support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/go".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/go.md".into(),
                     false,
                     cx,
                 ),
                 Feature::LanguagePython => self.render_feature_upsell_banner(
                     "Python support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/python".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/python.md".into(),
                     false,
                     cx,
                 ),
                 Feature::LanguageReact => self.render_feature_upsell_banner(
                     "React support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/typescript".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/typescript.md".into(),
                     false,
                     cx,
                 ),
                 Feature::LanguageRust => self.render_feature_upsell_banner(
                     "Rust support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/rust".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/rust.md".into(),
                     false,
                     cx,
                 ),
                 Feature::LanguageTypescript => self.render_feature_upsell_banner(
                     "TypeScript support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/languages/typescript".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/languages/typescript.md".into(),
                     false,
                     cx,
                 ),
                 Feature::OpenIn => self.render_feature_upsell_banner(
                     "Orion Studio supports linking to a source line on GitHub and other hosts."
                         .into(),
-                    "https://orion.dev/docs/git#git-integrations".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/git.md#git-integrations".into(),
                     false,
                     cx,
                 ),
                 Feature::Vim => self.render_feature_upsell_banner(
                     "Vim support is built into Orion Studio!".into(),
-                    "https://orion.dev/docs/vim".into(),
+                    "https://github.com/orion-agents/orion-studio/blob/main/docs/src/vim.md".into(),
                     true,
                     cx,
                 ),
@@ -1385,6 +1495,61 @@ impl PickerDelegate for DevExtensionRebuildPickerDelegate {
 
 impl Render for ExtensionsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let registry_available = extension_registry_available(cx);
+        let selected_filter_index = match self.filter {
+            ExtensionFilter::All => 0,
+            ExtensionFilter::Installed => 1,
+            ExtensionFilter::NotInstalled if registry_available => 2,
+            ExtensionFilter::NotInstalled => 0,
+        };
+        let all_filter = ToggleButtonSimple::new(
+            "All",
+            cx.listener(|this, _event, _, cx| {
+                this.filter = ExtensionFilter::All;
+                this.filter_extension_entries(cx);
+                this.scroll_to_top(cx);
+            }),
+        );
+        let installed_filter = ToggleButtonSimple::new(
+            "Installed",
+            cx.listener(|this, _event, _, cx| {
+                this.filter = ExtensionFilter::Installed;
+                this.filter_extension_entries(cx);
+                this.scroll_to_top(cx);
+            }),
+        );
+        let filter_buttons = if registry_available {
+            ToggleButtonGroup::single_row(
+                "filter-buttons",
+                [
+                    all_filter,
+                    installed_filter,
+                    ToggleButtonSimple::new(
+                        "Not Installed",
+                        cx.listener(|this, _event, _, cx| {
+                            this.filter = ExtensionFilter::NotInstalled;
+                            this.filter_extension_entries(cx);
+                            this.scroll_to_top(cx);
+                        }),
+                    ),
+                ],
+            )
+            .style(ToggleButtonGroupStyle::Outlined)
+            .size(ToggleButtonGroupSize::Custom(rems_from_px(30_f32)))
+            .label_size(LabelSize::Default)
+            .auto_width()
+            .selected_index(selected_filter_index)
+            .into_any_element()
+        } else {
+            ToggleButtonGroup::single_row("filter-buttons", [all_filter, installed_filter])
+                .style(ToggleButtonGroupStyle::Outlined)
+                .size(ToggleButtonGroupSize::Custom(rems_from_px(30_f32)))
+                .label_size(LabelSize::Default)
+                .auto_width()
+                .selected_index(selected_filter_index)
+                .into_any_element()
+        };
+
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1415,51 +1580,18 @@ impl Render for ExtensionsPage {
                             .flex_wrap()
                             .gap_2()
                             .child(self.render_search(cx))
-                            .child(
-                                div().child(
-                                    ToggleButtonGroup::single_row(
-                                        "filter-buttons",
-                                        [
-                                            ToggleButtonSimple::new(
-                                                "All",
-                                                cx.listener(|this, _event, _, cx| {
-                                                    this.filter = ExtensionFilter::All;
-                                                    this.filter_extension_entries(cx);
-                                                    this.scroll_to_top(cx);
-                                                }),
-                                            ),
-                                            ToggleButtonSimple::new(
-                                                "Installed",
-                                                cx.listener(|this, _event, _, cx| {
-                                                    this.filter = ExtensionFilter::Installed;
-                                                    this.filter_extension_entries(cx);
-                                                    this.scroll_to_top(cx);
-                                                }),
-                                            ),
-                                            ToggleButtonSimple::new(
-                                                "Not Installed",
-                                                cx.listener(|this, _event, _, cx| {
-                                                    this.filter = ExtensionFilter::NotInstalled;
-                                                    this.filter_extension_entries(cx);
-                                                    this.scroll_to_top(cx);
-                                                }),
-                                            ),
-                                        ],
-                                    )
-                                    .style(ToggleButtonGroupStyle::Outlined)
-                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30_f32))) // Perfectly matches the input
-                                    .label_size(LabelSize::Default)
-                                    .auto_width()
-                                    .selected_index(match self.filter {
-                                        ExtensionFilter::All => 0,
-                                        ExtensionFilter::Installed => 1,
-                                        ExtensionFilter::NotInstalled => 2,
-                                    })
-                                    .into_any_element(),
-                                ),
-                            ),
+                            .child(div().child(filter_buttons)),
                     ),
             )
+            .when(!registry_available, |this| {
+                this.child(
+                    div().pt_4().px_4().child(
+                        Banner::new()
+                            .severity(Severity::Info)
+                            .child(Label::new(EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE).mt_0p5()),
+                    ),
+                )
+            })
             .child(
                 h_flex()
                     .id("filter-row")
@@ -1514,8 +1646,9 @@ impl Render for ExtensionsPage {
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let mut count = self.filtered_remote_extension_indices.len();
-                if self.filter.include_dev_extensions() {
+                if self.filter.include_local_extensions() {
                     count += self.filtered_dev_extension_indices.len();
+                    count += self.filtered_installed_extension_indices.len();
                 }
 
                 if count == 0 {
@@ -1560,5 +1693,41 @@ impl Item for ExtensionsPage {
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_extension_search_matches_names_ids_and_deep_links() {
+        assert!(local_extension_matches_search(
+            "rust-tools",
+            "Rust Tools",
+            None
+        ));
+        assert!(local_extension_matches_search(
+            "rust-tools",
+            "Rust Tools",
+            Some("RUST")
+        ));
+        assert!(local_extension_matches_search(
+            "rust-tools",
+            "Rust Tools",
+            Some("id:rust-tools")
+        ));
+        assert!(!local_extension_matches_search(
+            "rust-tools",
+            "Rust Tools",
+            Some("python")
+        ));
+    }
+
+    #[test]
+    fn registry_limitation_explains_local_only_mode() {
+        assert!(EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE.contains("Preview"));
+        assert!(EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE.contains("extension registry"));
+        assert!(EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE.contains("Local extensions"));
     }
 }

@@ -683,27 +683,29 @@ fn render_ai_section(user_store: &Entity<UserStore>, cx: &mut App) -> impl IntoE
         .get::<AllAgentServersSettings>(None)
         .clone();
 
-    let column_count = 1 + FEATURED_AGENT_IDS.len() as u16;
+    let hosted_services_available =
+        release_channel::ReleaseChannel::global(cx).hosted_services_available();
+    let column_count = u16::from(hosted_services_available) + FEATURED_AGENT_IDS.len() as u16;
 
-    let grid = FEATURED_AGENT_IDS.iter().fold(
-        div()
-            .w_full()
-            .mt_1p5()
-            .grid()
-            .grid_cols(column_count)
-            .gap_2()
-            .child(render_orion_agent_button(user_store, cx)),
-        |grid, agent_id| {
-            let Some(agent) = registry_agents
-                .iter()
-                .find(|a| a.id().as_ref() == *agent_id)
-            else {
-                return grid;
-            };
-            let is_installed = installed_agents.contains_key(*agent_id);
-            grid.child(render_registry_agent_button(agent, is_installed, cx))
-        },
-    );
+    let grid = div()
+        .w_full()
+        .mt_1p5()
+        .grid()
+        .grid_cols(column_count)
+        .gap_2()
+        .when(hosted_services_available, |grid| {
+            grid.child(render_orion_agent_button(user_store, cx))
+        });
+    let grid = FEATURED_AGENT_IDS.iter().fold(grid, |grid, agent_id| {
+        let Some(agent) = registry_agents
+            .iter()
+            .find(|a| a.id().as_ref() == *agent_id)
+        else {
+            return grid;
+        };
+        let is_installed = installed_agents.contains_key(*agent_id);
+        grid.child(render_registry_agent_button(agent, is_installed, cx))
+    });
 
     v_flex()
         .gap_0p5()

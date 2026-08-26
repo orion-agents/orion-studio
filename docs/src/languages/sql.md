@@ -43,7 +43,8 @@ sql-formatter --version
 
 Substitute your preferred [SQL Dialect] for `mysql` above (`duckdb`, `hive`, `mariadb`, `postgresql`, `redshift`, `snowflake`, `sqlite`, `spark`, etc).
 
-You can add this to Orion Studio project settings (the retained compatibility path `.zed/settings.json`) or to your Orion Studio user settings (`~/.config/orion-studio/settings.json`).
+Add this to project settings at `.orion/settings.json` or to your Orion Studio
+user settings at `~/.config/orion-studio/settings.json`.
 
 ### Advanced Formatting
 

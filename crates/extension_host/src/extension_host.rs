@@ -71,6 +71,9 @@ pub use extension_settings::ExtensionSettings;
 pub const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
+/// User-facing explanation for release channels without Orion-hosted extensions.
+pub const EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE: &str = "Orion Studio Preview and Dev builds do not provide the extension registry. Local extensions, including local dev extensions, remain available.";
+
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
@@ -101,6 +104,17 @@ static SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
     SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
+}
+
+/// Returns whether the current release channel can access the extension registry.
+///
+/// An uninitialized application context defaults to Dev and therefore fails closed.
+pub fn extension_registry_available(cx: &App) -> bool {
+    release_channel::extension_registry_available(cx)
+}
+
+fn extension_registry_unavailable_error() -> anyhow::Error {
+    anyhow!(EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE)
 }
 
 /// Returns whether the given extension version is compatible with this version of Zed.
@@ -393,8 +407,9 @@ impl ExtensionStore {
                 future.await;
             }
             this.update(cx, |this, cx| this.auto_install_extensions(cx))
-                .ok();
-            this.update(cx, |this, cx| this.check_for_updates(cx)).ok();
+                .log_err();
+            this.update(cx, |this, cx| this.check_for_updates(cx))
+                .log_err();
         })
         .detach();
 
@@ -601,8 +616,13 @@ impl ExtensionStore {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
+        if !extension_registry_available(cx) {
+            return Task::ready(Err(extension_registry_unavailable_error()));
+        }
+
         let schema_versions = schema_version_range();
-        let wasm_api_versions = wasm_api_version_range(ReleaseChannel::global(cx));
+        let release_channel = ReleaseChannel::try_global(cx).unwrap_or_default();
+        let wasm_api_versions = wasm_api_version_range(release_channel);
         let extension_settings = ExtensionSettings::get_global(cx);
         let extension_ids = self
             .extension_index
@@ -657,7 +677,7 @@ impl ExtensionStore {
     /// This can be used to make certain functionality provided by extensions
     /// available out-of-the-box.
     pub fn auto_install_extensions(&mut self, cx: &mut Context<Self>) {
-        if cfg!(test) {
+        if cfg!(test) || !extension_registry_available(cx) {
             return;
         }
 
@@ -682,13 +702,17 @@ impl ExtensionStore {
                 this.update(cx, |this, cx| {
                     this.install_latest_extension(extension_id.clone(), cx);
                 })
-                .ok();
+                .log_err();
             }
         })
         .detach();
     }
 
     pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if !extension_registry_available(cx) {
+            return;
+        }
+
         let task = self.fetch_extensions_with_update_available(cx);
         cx.spawn(async move |this, cx| Self::upgrade_extensions(this, task.await?, cx).await)
             .detach();
@@ -729,6 +753,10 @@ impl ExtensionStore {
         query: &[(&str, &str)],
         cx: &mut Context<ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
+        if !extension_registry_available(cx) {
+            return Task::ready(Err(extension_registry_unavailable_error()));
+        }
+
         let url = self.http_client.build_zed_api_url(path, query);
         let http_client = self.http_client.clone();
         cx.spawn(async move |_, _| {
@@ -767,6 +795,11 @@ impl ExtensionStore {
         version: Arc<str>,
         cx: &mut Context<Self>,
     ) {
+        if !extension_registry_available(cx) {
+            log::warn!("{EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE}");
+            return;
+        }
+
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Install, cx)
             .detach_and_log_err(cx);
     }
@@ -778,6 +811,10 @@ impl ExtensionStore {
         operation: ExtensionOperation,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if !extension_registry_available(cx) {
+            return Task::ready(Err(extension_registry_unavailable_error()));
+        }
+
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let staging_dir = self.staging_dir.clone();
         let http_client = self.http_client.clone();
@@ -886,10 +923,16 @@ impl ExtensionStore {
     }
 
     pub fn install_latest_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+        if !extension_registry_available(cx) {
+            log::warn!("{EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE}");
+            return;
+        }
+
         log::info!("installing extension {extension_id} latest version");
 
         let schema_versions = schema_version_range();
-        let wasm_api_versions = wasm_api_version_range(ReleaseChannel::global(cx));
+        let release_channel = ReleaseChannel::try_global(cx).unwrap_or_default();
+        let wasm_api_versions = wasm_api_version_range(release_channel);
 
         let Some(url) = self
             .http_client
@@ -925,6 +968,10 @@ impl ExtensionStore {
         version: Arc<str>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if !extension_registry_available(cx) {
+            return Task::ready(Err(extension_registry_unavailable_error()));
+        }
+
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Upgrade, cx)
     }
 
@@ -935,6 +982,10 @@ impl ExtensionStore {
         operation: ExtensionOperation,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if !extension_registry_available(cx) {
+            return Task::ready(Err(extension_registry_unavailable_error()));
+        }
+
         log::info!("installing extension {extension_id} {version}");
         let Some(url) = self
             .http_client

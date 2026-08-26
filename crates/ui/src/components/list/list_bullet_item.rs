@@ -100,7 +100,10 @@ impl Component for ListBulletItem {
                 "With Link",
                 ListBulletItem::new("")
                     .child(Label::new("Create an Orion Studio account by"))
-                    .child(ButtonLink::new("visiting the website", "https://orion.dev"))
+                    .child(ButtonLink::new(
+                        "visiting the repository",
+                        "https://github.com/orion-agents/orion-studio",
+                    ))
                     .into_any_element(),
             ),
         ];

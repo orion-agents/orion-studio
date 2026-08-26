@@ -5,6 +5,15 @@ use terminal_view::terminal_panel;
 use zed_actions::{Quit, assistant, debug_panel, dev, git_panel, project_panel};
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
+    let extensions_menu_label = if ReleaseChannel::try_global(cx)
+        .unwrap_or_default()
+        .extension_registry_available()
+    {
+        "Extensions"
+    } else {
+        "Local Extensions"
+    };
+
     let mut view_items = vec![
         MenuItem::action(
             "Zoom In",
@@ -90,7 +99,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 #[cfg(target_os = "macos")]
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
-                MenuItem::action("Extensions", zed_actions::Extensions::default()),
+                MenuItem::action(extensions_menu_label, zed_actions::Extensions::default()),
                 #[cfg(not(target_os = "windows"))]
                 MenuItem::action("Install CLI", install_cli::InstallCliBinary),
                 MenuItem::separator(),
@@ -298,21 +307,15 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("File Bug Report...", zed_actions::feedback::FileBugReport),
                 MenuItem::action("Request Feature...", zed_actions::feedback::RequestFeature),
-                MenuItem::action("Email Us...", zed_actions::feedback::EmailZed),
+                MenuItem::action("Support...", zed_actions::feedback::OpenSupport),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
                     super::OpenBrowser {
-                        url: "https://orion.dev/docs".into(),
+                        url: super::DOCS_URL.into(),
                     },
                 ),
-                MenuItem::action("Orion Studio Repository", feedback::OpenZedRepo),
-                MenuItem::action(
-                    "Join the Team",
-                    super::OpenBrowser {
-                        url: "https://orion.dev/jobs".into(),
-                    },
-                ),
+                MenuItem::action("Orion Studio Repository", feedback::OpenOrionStudioRepo),
             ],
         },
     ]

@@ -26,7 +26,7 @@ use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use zed_actions::{OpenZedUrl, command_palette::Toggle};
+use zed_actions::{OpenApplicationUrl, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
     command_palette_hooks::init(cx);
@@ -502,7 +502,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 let intercept_result = if is_zed_link {
                     CommandInterceptResult {
                         results: vec![CommandInterceptItem {
-                            action: OpenZedUrl {
+                            action: OpenApplicationUrl {
                                 url: query_for_link.clone().into(),
                             }
                             .boxed_clone(),
@@ -710,6 +710,13 @@ impl PickerDelegate for CommandPaletteDelegate {
 }
 
 pub fn humanize_action_name(name: &str) -> String {
+    // Keep serialized action names stable for existing keymaps while presenting the
+    // current product name in user-facing command palette entries.
+    let name = name
+        .strip_prefix("zed::")
+        .map(|suffix| format!("orion_studio::{suffix}"))
+        .unwrap_or_else(|| name.to_owned())
+        .replace("Zed", "OrionStudio");
     let chars = name.chars().collect::<Vec<_>>();
     let capacity = name.len() + chars.iter().filter(|c| c.is_uppercase()).count();
     let mut result = String::with_capacity(capacity);
@@ -818,6 +825,22 @@ mod tests {
         assert_eq!(
             humanize_action_name("agent::OpenProjectAGENTS.mdRules"),
             "agent: open project AGENTS.md rules"
+        );
+        assert_eq!(
+            humanize_action_name("zed::OpenSettings"),
+            "orion studio: open settings"
+        );
+        assert_eq!(
+            humanize_action_name("feedback::EmailZed"),
+            "feedback: email orion studio"
+        );
+        assert_eq!(
+            humanize_action_name("feedback::EmailOrionStudio"),
+            "feedback: email orion studio"
+        );
+        assert_eq!(
+            humanize_action_name("feedback::OpenSupport"),
+            "feedback: open support"
         );
         assert_eq!(humanize_action_name("editor::OpenURL"), "editor: open URL");
         assert_eq!(

@@ -42,15 +42,14 @@ To see all available settings with their default values, run {#action zed::OpenD
 
 ### Project Settings
 
-Override user settings for a specific project by creating a `.zed/settings.json`
-file in your project root. This path retains the upstream name because the
-current project-settings loader still consumes it. Run
-{#action zed::OpenProjectSettings} to create the file.
+Override user settings for a specific project by creating an
+`.orion/settings.json` file in your project root. Run
+{#action zed::OpenProjectSettings} to create or open this canonical file.
 
 Project settings take precedence over user settings for that project only.
 
 ```json [settings]
-// .zed/settings.json
+// .orion/settings.json
 {
   "tab_size": 2,
   "formatter": "prettier",
@@ -59,6 +58,12 @@ Project settings take precedence over user settings for that project only.
 ```
 
 You can also add settings files in subdirectories for more granular control.
+
+> **Note:** Existing `.zed/settings.json` files are supported only as a legacy,
+> read-only fallback. If both files exist in the same project scope,
+> `.orion/settings.json` takes precedence. Move legacy settings into `.orion`
+> before changing them; Orion Studio writes new project settings only to the
+> canonical path.
 
 **Limitation:** Not all settings can be set at the project level. Settings that affect the editor globally (like `theme` or `vim_mode`) only work in user settings. Project settings are limited to editor behavior and language tooling options like `tab_size`, `formatter`, and `format_on_save`.
 

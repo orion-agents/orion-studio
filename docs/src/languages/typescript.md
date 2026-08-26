@@ -250,7 +250,8 @@ Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list o
 
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Orion Studio.
 
-If your use-case isn't covered by any of these, you can take full control by adding debug configurations to the retained project-format compatibility path `.zed/debug.json`. See below for example configurations.
+If your use case isn't covered by any of these, add debug configurations to
+`.orion/debug.json`. See below for examples.
 
 ### Configuring JavaScript debug tasks
 

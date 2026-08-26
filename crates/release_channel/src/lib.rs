@@ -7,7 +7,9 @@ use std::{env, str::FromStr, sync::LazyLock};
 use gpui::{App, Global};
 use semver::Version;
 
-const ORION_DOCS_URL: &str = "https://orion.dev/docs";
+const ORION_DOCS_SOURCE_URL: &str =
+    "https://github.com/orion-agents/orion-studio/blob/main/docs/src";
+const ORION_DOCS_TREE_URL: &str = "https://github.com/orion-agents/orion-studio/tree/main/docs/src";
 
 /// Resolves the release channel name from the environment: canonical
 /// `ORION_STUDIO_RELEASE_CHANNEL` first, legacy `ZED_RELEASE_CHANNEL` as a
@@ -201,6 +203,27 @@ pub fn docs_url(slug: &str, cx: &App) -> String {
         .docs_url(slug)
 }
 
+/// Returns whether Orion-hosted services are available in the current release
+/// channel. Before release-channel initialization, this falls back to the
+/// compile-time channel.
+pub fn hosted_services_available(cx: &App) -> bool {
+    ReleaseChannel::try_global(cx)
+        .unwrap_or(*RELEASE_CHANNEL)
+        .hosted_services_available()
+}
+
+/// Returns whether the extension registry is available in the current release
+/// channel.
+///
+/// Before release-channel initialization, this defaults to Dev and fails
+/// closed so callers cannot accidentally issue registry requests while their
+/// release channel is unknown.
+pub fn extension_registry_available(cx: &App) -> bool {
+    ReleaseChannel::try_global(cx)
+        .unwrap_or_default()
+        .extension_registry_available()
+}
+
 impl ReleaseChannel {
     /// All release channels.
     pub const ALL: [ReleaseChannel; 4] = [
@@ -223,7 +246,19 @@ impl ReleaseChannel {
 
     /// Returns whether we want to poll for updates for this [`ReleaseChannel`]
     pub fn poll_for_updates(&self) -> bool {
-        !matches!(self, ReleaseChannel::Dev)
+        matches!(self, ReleaseChannel::Nightly | ReleaseChannel::Stable)
+    }
+
+    /// Returns whether Orion-hosted account, collaboration, and model services
+    /// are available for this release channel.
+    pub fn hosted_services_available(&self) -> bool {
+        matches!(self, ReleaseChannel::Nightly | ReleaseChannel::Stable)
+    }
+
+    /// Returns whether the extension registry is available for this release
+    /// channel.
+    pub fn extension_registry_available(&self) -> bool {
+        matches!(self, ReleaseChannel::Nightly | ReleaseChannel::Stable)
     }
 
     /// Returns the display name for this [`ReleaseChannel`].
@@ -268,21 +303,25 @@ impl ReleaseChannel {
         }
     }
 
-    /// Returns the Orion Studio docs URL for this [`ReleaseChannel`] for the given
-    /// `slug`.
+    /// Returns a working Orion Studio source-document URL for the given `slug`.
+    ///
+    /// Preview documentation is served from GitHub until an Orion-operated
+    /// documentation host is available. Anchors in `slug` are preserved.
     pub fn docs_url(&self, slug: &str) -> String {
-        let channel_path_segment = match self {
-            Self::Dev | Self::Nightly => Some("nightly"),
-            Self::Preview => Some("preview"),
-            Self::Stable => None,
-        };
-
-        match channel_path_segment {
-            Some(channel) if slug.is_empty() => format!("{ORION_DOCS_URL}/{channel}"),
-            Some(channel) => format!("{ORION_DOCS_URL}/{channel}/{slug}"),
-            None if slug.is_empty() => ORION_DOCS_URL.to_string(),
-            None => format!("{ORION_DOCS_URL}/{slug}"),
+        if slug.is_empty() {
+            return ORION_DOCS_TREE_URL.to_string();
         }
+
+        let (document, anchor) = slug
+            .split_once('#')
+            .map_or((slug, None), |(document, anchor)| (document, Some(anchor)));
+        let document = match document {
+            "settings" => "reference/all-settings",
+            document => document,
+        };
+        let anchor = anchor.map_or(String::new(), |anchor| format!("#{anchor}"));
+
+        format!("{ORION_DOCS_SOURCE_URL}/{document}.md{anchor}")
     }
 }
 
@@ -343,19 +382,23 @@ mod tests {
     fn test_docs_url_for_release_channel() {
         assert_eq!(
             ReleaseChannel::Dev.docs_url("settings"),
-            "https://orion.dev/docs/nightly/settings"
+            "https://github.com/orion-agents/orion-studio/blob/main/docs/src/reference/all-settings.md"
         );
         assert_eq!(
             ReleaseChannel::Nightly.docs_url("settings"),
-            "https://orion.dev/docs/nightly/settings"
+            "https://github.com/orion-agents/orion-studio/blob/main/docs/src/reference/all-settings.md"
         );
         assert_eq!(
             ReleaseChannel::Preview.docs_url("settings"),
-            "https://orion.dev/docs/preview/settings"
+            "https://github.com/orion-agents/orion-studio/blob/main/docs/src/reference/all-settings.md"
         );
         assert_eq!(
             ReleaseChannel::Stable.docs_url("settings"),
-            "https://orion.dev/docs/settings"
+            "https://github.com/orion-agents/orion-studio/blob/main/docs/src/reference/all-settings.md"
+        );
+        assert_eq!(
+            ReleaseChannel::Preview.docs_url("tasks#custom-git-commands"),
+            "https://github.com/orion-agents/orion-studio/blob/main/docs/src/tasks.md#custom-git-commands"
         );
     }
 
@@ -371,5 +414,29 @@ mod tests {
             "Orion Studio Preview"
         );
         assert_eq!(ReleaseChannel::Stable.display_name(), "Orion Studio");
+    }
+
+    #[test]
+    fn preview_does_not_poll_for_updates() {
+        assert!(!ReleaseChannel::Dev.poll_for_updates());
+        assert!(!ReleaseChannel::Preview.poll_for_updates());
+        assert!(ReleaseChannel::Nightly.poll_for_updates());
+        assert!(ReleaseChannel::Stable.poll_for_updates());
+    }
+
+    #[test]
+    fn preview_does_not_expose_unavailable_hosted_services() {
+        assert!(!ReleaseChannel::Dev.hosted_services_available());
+        assert!(!ReleaseChannel::Preview.hosted_services_available());
+        assert!(ReleaseChannel::Nightly.hosted_services_available());
+        assert!(ReleaseChannel::Stable.hosted_services_available());
+    }
+
+    #[test]
+    fn preview_does_not_expose_the_extension_registry() {
+        assert!(!ReleaseChannel::Dev.extension_registry_available());
+        assert!(!ReleaseChannel::Preview.extension_registry_available());
+        assert!(ReleaseChannel::Nightly.extension_registry_available());
+        assert!(ReleaseChannel::Stable.extension_registry_available());
     }
 }

@@ -42,13 +42,14 @@ step.
 
 On first launch, Orion Studio may copy configuration from `~/.config/zed` and
 application data from `~/Library/Application Support/Zed` into Orion Studio's
-own directories. Migration starts in the background only after the first
-workspace frame appears and retains the legacy directories.
+own directories. Migration runs before Orion Studio initializes persistence or
+opens the first workspace and retains the legacy directories.
 
-Quit Zed first and keep an independent backup. Orion Studio reports success or
-failure in the running editor; restart after a successful import so all state is
-loaded. Do not delete the backup or the Zed directories until the migrated
-editor state has been reviewed.
+Quit Zed first and keep an independent backup. A successful migration continues
+startup. A conflict or filesystem failure stops startup before Orion Studio
+opens its database, leaves both trees intact, and can be retried after the cause
+is resolved. Restart once after the first successful launch, and do not delete
+the backup or legacy directories until the migrated editor state is reviewed.
 
 ## Known Limitations
 
@@ -57,22 +58,39 @@ editor state has been reviewed.
   artifact has a Mach-O minimum deployment target of macOS 11.0.
 - This is pre-release software and may contain incomplete rebranding,
   compatibility defects, crashes, or data-migration defects.
-- A large legacy Zed data set can create substantial background disk I/O. The
-  Preview does not yet provide migration progress or cancellation controls.
-- Migration fills only missing Orion Studio files. If an Orion Studio file or
-  directory entry already exists at the same relative path, that Orion Studio
-  entry is kept and the legacy Zed entry is not used to replace it.
+- A large legacy Zed data set can delay the first window and create substantial
+  disk I/O. The Preview does not yet provide migration progress or cancellation
+  controls.
+- Migration fills missing Orion Studio files and accepts byte-for-byte and
+  permission-identical files as an idempotent retry. A different existing file
+  or entry type is reported as a conflict; neither copy is overwritten.
 - If Zed keeps changing the source data, migration retries its stability check
   up to three times and then reports failure without modifying the legacy data.
 - No Orion-operated account, subscription, collaboration backend, AI proxy, or
-  other hosted online service is offered as part of this Preview.
-- An Orion extension marketplace is not supported. Inherited extension UI or
-  endpoints must not be treated as an available Orion service.
+  other hosted online service is offered as part of this Preview. Account and
+  collaboration connection attempts fail closed instead of contacting an
+  inherited hosted endpoint.
+- Hosted telemetry is forced off in Preview and Dev builds. Enabling the local
+  telemetry settings does not send metrics, diagnostics, or crash reports to an
+  Orion-operated endpoint.
+- An Orion extension marketplace is not supported. The Extension Gallery shows
+  locally installed and development extensions only; remote search, install,
+  upgrade, and automatic extension updates fail closed. Locally installed and
+  **Install Dev Extension** workflows remain available.
+- Preview does not download a headless remote-server artifact from a hosted
+  release service. Direct SSH can reuse an exact matching cached server binary;
+  otherwise install the matching server binary manually before connecting.
 - Automatic updates are not supported. Users must download and verify each new
   Preview manually.
 - Third-party agents, model providers, source-control hosts, and other
   integrations are separately configured and governed by their own terms and
   data practices; their availability is not guaranteed by Orion Studio.
+- Commands launched in Orion Studio's integrated terminal are separate programs
+  and may ask macOS for privacy-sensitive access. macOS can attribute those
+  prompts to Orion Studio as the responsible host. Review the requesting
+  command and deny access unless it is expected; Orion Studio itself declares
+  only Apple Events, microphone input, and Wasmtime executable-memory release
+  entitlements.
 
 ## Report a Problem
 

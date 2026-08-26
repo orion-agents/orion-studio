@@ -1,4 +1,4 @@
-use super::register_zed_scheme;
+use super::register_application_schemes;
 use anyhow::Result;
 use gpui::{AppContext as _, AsyncApp, Context, PromptLevel, Window, actions};
 use release_channel::ReleaseChannel;
@@ -17,7 +17,7 @@ actions!(
     ]
 );
 
-const CANT_INSTALL_DOCS_URL: &str = "https://orion.dev/docs/macos#cant-install-cli";
+const CANT_INSTALL_DOCS_URL: &str = "https://github.com/orion-agents/orion-studio/blob/main/docs/src/macos.md#cant-install-cli-cant-install-cli";
 const CANONICAL_CLI_INSTALL_PATH: &str = "/usr/local/bin/orion-studio";
 
 /// Attempts to install the CLI symlink. Returns the installed path on success,
@@ -141,7 +141,7 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
             )
         })?;
         // Keep opening zed:// links created before the Orion Studio migration.
-        register_zed_scheme(cx).await.log_err();
+        register_application_schemes(cx).await.log_err();
         Ok(())
     })
     .detach_and_prompt_err(

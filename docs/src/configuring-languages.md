@@ -288,7 +288,10 @@ You can toggle language server support globally or per-language:
   }
 ```
 
-This disables the language server for Markdown files, which can be useful for performance in large documentation projects. You can configure this globally in your `~/.config/orion-studio/settings.json` or inside the compatibility project path `.zed/settings.json`.
+This disables the language server for Markdown files, which can be useful for
+performance in large documentation projects. Configure this globally in
+`~/.config/orion-studio/settings.json` or for a project in
+`.orion/settings.json`.
 
 ## Formatting and Linting
 

@@ -279,6 +279,11 @@ impl Onboarding {
     }
 
     fn handle_sign_in(&mut self, _: &SignIn, window: &mut Window, cx: &mut Context<Self>) {
+        if !release_channel::ReleaseChannel::global(cx).hosted_services_available() {
+            cx.open_url(&zed_urls::account_url(cx));
+            return;
+        }
+
         let client = Client::global(cx);
         let workspace = self.workspace.clone();
 

@@ -31,11 +31,10 @@
         <content_attribute id="social-audio">intense</content_attribute>
     </content_rating>
 
-    <url type="homepage">https://orion.dev</url>
+    <url type="homepage">https://github.com/orion-agents/orion-studio</url>
     <url type="bugtracker">https://github.com/orion-agents/orion-studio/issues</url>
-    <url type="faq">https://orion.dev/faq</url>
-    <url type="help">https://orion.dev/docs/getting-started</url>
-    <url type="contact">https://orion.dev/community-links</url>
+    <url type="help">https://github.com/orion-agents/orion-studio/blob/main/docs/src/getting-started.md</url>
+    <url type="contact">https://github.com/orion-agents/orion-studio/issues</url>
     <url type="vcs-browser">https://github.com/orion-agents/orion-studio</url>
     <url type="contribute">https://github.com/orion-agents/orion-studio/blob/main/CONTRIBUTING.md</url>
 
@@ -47,29 +46,6 @@
         <control>keyboard</control>
         <display_length compare="ge">768</display_length>
     </recommends>
-
-    <screenshots>
-        <screenshot type="default">
-            <caption>Orion Studio with a large project open, showing language server and gitblame support</caption>
-            <image>https://orion.dev/img/flatpak/flatpak-1.png</image>
-        </screenshot>
-        <screenshot>
-            <caption>Orion Studio with a file open and a channel message thread in the right sidebar</caption>
-            <image>https://orion.dev/img/flatpak/flatpak-2.png</image>
-        </screenshot>
-        <screenshot>
-            <caption>Example of a channel's shared document</caption>
-            <image>https://orion.dev/img/flatpak/flatpak-3.png</image>
-        </screenshot>
-        <screenshot>
-            <caption>Orion Studio's extension list</caption>
-            <image>https://orion.dev/img/flatpak/flatpak-4.png</image>
-        </screenshot>
-        <screenshot>
-            <caption>Theme switcher UI and example theme</caption>
-            <image>https://orion.dev/img/flatpak/flatpak-5.png</image>
-        </screenshot>
-    </screenshots>
 
     <releases>
 		@release_info@

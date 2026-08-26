@@ -41,7 +41,9 @@ For most languages, the fastest way to get started is to run {#action debugger::
 
 You can open the same modal by clicking the "plus" button at the top right of the debug panel.
 
-For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the retained project-format compatibility path `.zed/debug.json`. This file should be an array of configuration objects:
+For languages that don't provide preconfigured debug tasks (this includes C,
+C++, and some extension-supported languages), define debug configurations in
+`.orion/debug.json`. This file should be an array of configuration objects:
 
 ```json [debug]
 [
@@ -58,9 +60,14 @@ For languages that don't provide preconfigured debug tasks (this includes C, C++
 ]
 ```
 
-Check the documentation for your language for example configurations covering typical use-cases. Once you've added configurations to `.zed/debug.json`, they'll appear in the list in the new process modal.
+Check the documentation for your language for example configurations covering
+typical use cases. Configurations added to `.orion/debug.json` appear in the
+list in the new process modal.
 
-Orion Studio will also load debug configurations from `.vscode/launch.json`, and show them in the new process modal if no configurations are found in `.zed/debug.json`.
+> **Note:** Existing `.zed/debug.json` files are supported only as a legacy,
+> read-only fallback. If both project files exist, `.orion/debug.json` takes
+> precedence. If neither project file defines configurations, Orion Studio can
+> load them from `.vscode/launch.json`.
 
 #### Global debug configurations
 
@@ -70,7 +77,10 @@ If you run the same launch profiles across multiple projects, you can store them
 - **Linux/BSD:** `$XDG_CONFIG_HOME/orion-studio/debug.json` (falls back to `~/.config/orion-studio/debug.json`)
 - **Windows:** `%APPDATA%\Orion Studio\debug.json`
 
-Populate this file with the same array of objects you would place in `.zed/debug.json`. Any scenarios defined there are merged into every workspace, so your favorite launch presets appear automatically in the "New Debug Session" dialog.
+Populate this file with the same array of objects you would place in
+`.orion/debug.json`. Any scenarios defined there are merged into every
+workspace, so your favorite launch presets appear automatically in the "New
+Debug Session" dialog.
 
 ### Launching & Attaching
 

@@ -561,10 +561,53 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
+async fn test_project_task_source_precedence(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
     let worktree_id = WorktreeId::from_usize(0);
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".orion"),
+                }),
+                Some(&mock_tasks_from_names(["orion_task"])),
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        task_template_names(&inventory, Some(worktree_id), cx).await,
+        vec!["orion_task"],
+        "canonical-only Orion tasks should appear"
+    );
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".orion"),
+                }),
+                None,
+            )
+            .unwrap();
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some(&mock_tasks_from_names(["legacy_task"])),
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        task_template_names(&inventory, Some(worktree_id), cx).await,
+        vec!["legacy_task"],
+        "legacy-only Zed tasks should remain readable"
+    );
 
     inventory.update(cx, |inventory, _| {
         inventory
@@ -579,8 +622,89 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
     });
     assert_eq!(
         task_template_names(&inventory, Some(worktree_id), cx).await,
-        vec!["vscode_task"],
-        "With only .vscode tasks, they should appear"
+        vec!["legacy_task"],
+        "legacy Zed tasks should take precedence over VS Code at the same scope"
+    );
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".orion"),
+                }),
+                Some(&mock_tasks_from_names(["orion_task"])),
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        task_template_names(&inventory, Some(worktree_id), cx).await,
+        vec!["orion_task"],
+        "Orion tasks should deterministically win when all sources are present"
+    );
+
+    register_worktree_task_used(&inventory, worktree_id, "orion_task", cx).await;
+    let resolved = resolved_task_names(&inventory, Some(worktree_id), cx).await;
+    assert!(
+        !resolved
+            .iter()
+            .any(|name| name == "legacy_task" || name == "vscode_task"),
+        "shadowed legacy and VS Code tasks should not reappear from history, got: {resolved:?}"
+    );
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".orion"),
+                }),
+                None,
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        task_template_names(&inventory, Some(worktree_id), cx).await,
+        vec!["legacy_task"],
+        "removing the canonical source should restore the legacy fallback"
+    );
+}
+
+#[gpui::test]
+async fn test_blank_canonical_tasks_keep_legacy_source_shadowed(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(Inventory::new);
+    let worktree_id = WorktreeId::from_usize(0);
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some(&mock_tasks_from_names(["legacy_task"])),
+            )
+            .unwrap();
+        assert!(
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Worktree(SettingsLocation {
+                        worktree_id,
+                        path: rel_path(".orion"),
+                    }),
+                    Some("   "),
+                )
+                .is_err(),
+            "a blank canonical file should remain present but report invalid JSON"
+        );
+    });
+
+    assert!(
+        task_template_names(&inventory, Some(worktree_id), cx)
+            .await
+            .is_empty(),
+        "a present canonical file must shadow legacy tasks even while blank"
     );
 
     inventory.update(cx, |inventory, _| {
@@ -590,21 +714,136 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
                     worktree_id,
                     path: rel_path(".zed"),
                 }),
-                Some(&mock_tasks_from_names(["zed_task"])),
+                Some(&mock_tasks_from_names(["updated_legacy_task"])),
+            )
+            .unwrap();
+    });
+    assert!(
+        task_template_names(&inventory, Some(worktree_id), cx)
+            .await
+            .is_empty(),
+        "updating a shadowed legacy source must not reveal it"
+    );
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".orion"),
+                }),
+                None,
             )
             .unwrap();
     });
     assert_eq!(
         task_template_names(&inventory, Some(worktree_id), cx).await,
-        vec!["zed_task"],
-        "With both .zed and .vscode tasks, only .zed tasks should appear"
+        vec!["updated_legacy_task"],
+        "removing the canonical file should reveal the latest legacy definition"
     );
+}
 
-    register_worktree_task_used(&inventory, worktree_id, "zed_task", cx).await;
-    let resolved = resolved_task_names(&inventory, Some(worktree_id), cx).await;
+#[gpui::test]
+async fn test_shadowed_legacy_debug_updates_do_not_replace_canonical_history(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let inventory = cx.update(Inventory::new);
+    let worktree_id = WorktreeId::from_usize(0);
+    let scenario_json = |adapter: &str| {
+        format!(
+            r#"[{{
+                "label": "shared scenario",
+                "adapter": "{adapter}",
+                "request": "launch",
+                "program": "app"
+            }}]"#
+        )
+    };
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_scenarios(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some(&scenario_json("Delve")),
+            )
+            .unwrap();
+        inventory
+            .update_file_based_scenarios(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".orion"),
+                }),
+                Some(&scenario_json("CodeLLDB")),
+            )
+            .unwrap();
+    });
+
+    let mut task_contexts = TaskContexts::default();
+    task_contexts.active_worktree_context = Some((worktree_id, Default::default()));
+    let canonical_scenario = inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(&task_contexts, vec![], vec![], false, cx)
+        })
+        .await
+        .1
+        .into_iter()
+        .map(|(_, scenario)| scenario)
+        .find(|scenario| scenario.label == "shared scenario")
+        .expect("canonical debug scenario should be visible");
+    assert_eq!(canonical_scenario.adapter, "CodeLLDB");
+
+    inventory.update(cx, |inventory, _| {
+        inventory.scenario_scheduled(
+            canonical_scenario,
+            Default::default(),
+            Some(worktree_id),
+            None,
+        );
+        inventory
+            .update_file_based_scenarios(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some(&scenario_json("LLDB")),
+            )
+            .unwrap();
+    });
+
+    let (recent, current) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(&task_contexts, vec![], vec![], false, cx)
+        })
+        .await;
+    assert_eq!(recent[0].0.adapter, "CodeLLDB");
+    assert_eq!(current[0].1.adapter, "CodeLLDB");
+
+    inventory.update(cx, |inventory, _| {
+        assert!(
+            inventory
+                .update_file_based_scenarios(
+                    TaskSettingsLocation::Worktree(SettingsLocation {
+                        worktree_id,
+                        path: rel_path(".orion"),
+                    }),
+                    Some(""),
+                )
+                .is_err()
+        );
+    });
     assert!(
-        !resolved.iter().any(|name| name == "vscode_task"),
-        "Previously used .vscode tasks should not appear when .zed tasks exist, got: {resolved:?}"
+        inventory
+            .update(cx, |inventory, cx| {
+                inventory.list_debug_scenarios(&task_contexts, vec![], vec![], false, cx)
+            })
+            .await
+            .1
+            .is_empty(),
+        "a blank canonical debug file must continue to shadow legacy scenarios"
     );
 }
 

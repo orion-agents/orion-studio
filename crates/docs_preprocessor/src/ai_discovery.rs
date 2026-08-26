@@ -8,6 +8,9 @@ use std::sync::OnceLock;
 
 use crate::FRONT_MATTER_COMMENT;
 
+const GITHUB_DOCS_SOURCE_URL: &str =
+    "https://github.com/orion-agents/orion-studio/blob/main/docs/src";
+
 #[derive(Debug)]
 pub(crate) struct DocsPage {
     section: String,
@@ -307,25 +310,38 @@ fn split_fragment(path: &str) -> (&str, &str) {
 
 pub(crate) fn rewrite_docs_links(contents: &str, site_url: &str) -> String {
     const STABLE_DOCS_PREFIX: &str = "https://orion.dev/docs/";
+    const PREVIEW_DOCS_PREFIX: &str = "https://orion.dev/docs/preview/";
+    const NIGHTLY_DOCS_PREFIX: &str = "https://orion.dev/docs/nightly/";
     let channel_docs_prefix = absolute_docs_url(site_url, Path::new(""));
     if channel_docs_prefix == STABLE_DOCS_PREFIX {
         return contents.to_string();
     }
 
-    let mut output = String::with_capacity(contents.len());
-    let mut remaining = contents;
-    while let Some(index) = remaining.find(STABLE_DOCS_PREFIX) {
-        output.push_str(&remaining[..index]);
-        let after_prefix = &remaining[index + STABLE_DOCS_PREFIX.len()..];
-        if after_prefix.starts_with("preview/") || after_prefix.starts_with("nightly/") {
-            output.push_str(STABLE_DOCS_PREFIX);
-        } else {
-            output.push_str(&channel_docs_prefix);
-        }
-        remaining = after_prefix;
+    if channel_docs_prefix.starts_with(GITHUB_DOCS_SOURCE_URL) {
+        return orion_hosted_docs_url_regex()
+            .replace_all(contents, |captures: &regex::Captures<'_>| {
+                let (path, fragment) = split_fragment(&captures[1]);
+                let mut path = path.strip_suffix(".html").unwrap_or(path).to_string();
+                if Path::new(&path).extension().is_none() {
+                    path.push_str(".md");
+                }
+                format!("{GITHUB_DOCS_SOURCE_URL}/{path}{fragment}")
+            })
+            .into_owned();
     }
-    output.push_str(remaining);
-    output
+
+    contents
+        .replace(PREVIEW_DOCS_PREFIX, &channel_docs_prefix)
+        .replace(NIGHTLY_DOCS_PREFIX, &channel_docs_prefix)
+        .replace(STABLE_DOCS_PREFIX, &channel_docs_prefix)
+}
+
+fn orion_hosted_docs_url_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r#"https://orion\.dev/docs/(?:(?:preview|nightly)/)?([^\s)\]}"'<>]+)"#)
+            .expect("Orion hosted documentation URL pattern must compile")
+    })
 }
 
 pub(crate) fn add_markdown_alternate_link(
@@ -386,7 +402,16 @@ fn absolute_docs_url(site_url: &str, path: &Path) -> String {
     if url.starts_with("http://") || url.starts_with("https://") {
         url
     } else {
-        format!("https://orion.dev{}", url)
+        let source_path = url
+            .trim_start_matches('/')
+            .strip_prefix("docs/preview/")
+            .or_else(|| url.trim_start_matches('/').strip_prefix("docs/nightly/"))
+            .or_else(|| url.trim_start_matches('/').strip_prefix("docs/"))
+            .unwrap_or_else(|| url.trim_start_matches('/'));
+        let source_path = source_path
+            .strip_suffix(".html")
+            .map_or_else(|| source_path.to_string(), |path| format!("{path}.md"));
+        format!("{GITHUB_DOCS_SOURCE_URL}/{source_path}")
     }
 }
 
@@ -433,7 +458,7 @@ mod tests {
                 "See [Code Actions](https://orion.dev/docs/configuring-languages#code-actions) and [Preview](https://orion.dev/docs/preview/ai/overview.html).",
                 "/docs/preview/"
             ),
-            "See [Code Actions](https://orion.dev/docs/preview/configuring-languages#code-actions) and [Preview](https://orion.dev/docs/preview/ai/overview.html)."
+            "See [Code Actions](https://github.com/orion-agents/orion-studio/blob/main/docs/src/configuring-languages.md#code-actions) and [Preview](https://github.com/orion-agents/orion-studio/blob/main/docs/src/ai/overview.md)."
         );
     }
 
@@ -522,18 +547,22 @@ mod tests {
         let llms_txt = std::fs::read_to_string(destination.join("llms.txt"))?;
         assert!(llms_txt.contains("## Docs"));
         assert!(llms_txt.contains(
-            "- [Getting Started](https://orion.dev/docs/getting-started.md): Start using Orion Studio."
+            "- [Getting Started](https://github.com/orion-agents/orion-studio/blob/main/docs/src/getting-started.md): Start using Orion Studio."
         ));
         assert!(llms_txt.contains("## AI"));
         assert!(
             llms_txt.contains(
-                "- [MCP](https://orion.dev/docs/ai/mcp.md): Connect model context servers."
+                "- [MCP](https://github.com/orion-agents/orion-studio/blob/main/docs/src/ai/mcp.md): Connect model context servers."
             )
         );
 
         let sitemap_xml = std::fs::read_to_string(destination.join("sitemap.xml"))?;
-        assert!(sitemap_xml.contains("<loc>https://orion.dev/docs/getting-started.html</loc>"));
-        assert!(sitemap_xml.contains("<loc>https://orion.dev/docs/ai/mcp.html</loc>"));
+        assert!(sitemap_xml.contains(
+            "<loc>https://github.com/orion-agents/orion-studio/blob/main/docs/src/getting-started.md</loc>"
+        ));
+        assert!(sitemap_xml.contains(
+            "<loc>https://github.com/orion-agents/orion-studio/blob/main/docs/src/ai/mcp.md</loc>"
+        ));
 
         let mcp_markdown = std::fs::read_to_string(destination.join("ai/mcp.md"))?;
         assert!(mcp_markdown.starts_with(

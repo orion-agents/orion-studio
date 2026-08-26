@@ -1,4 +1,5 @@
-//! The Orion Studio Rust Extension API allows you write extensions for [Orion Studio](https://orion.dev/) in Rust.
+//! The Orion Studio Rust Extension API allows you to write extensions for
+//! [Orion Studio](https://github.com/orion-agents/orion-studio) in Rust.
 
 pub mod http_client;
 pub mod process;

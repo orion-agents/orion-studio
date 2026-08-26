@@ -1,0 +1,11 @@
+# Deliberate fake credentials used by filesystem boundary tests.
+d2779c344350bcac5efabf840bbd31ba5b866ab4:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:559
+d2779c344350bcac5efabf840bbd31ba5b866ab4:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:882
+d2779c344350bcac5efabf840bbd31ba5b866ab4:crates/agent/src/tools/grep_tool.rs:generic-api-key:1048
+d2779c344350bcac5efabf840bbd31ba5b866ab4:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1031
+d2779c344350bcac5efabf840bbd31ba5b866ab4:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1546
+d2779c344350bcac5efabf840bbd31ba5b866ab4:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1608
+d2779c344350bcac5efabf840bbd31ba5b866ab4:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1662
+
+# Public AWS CLI package-signing fingerprint embedded in an upstream dev-container fixture.
+d2779c344350bcac5efabf840bbd31ba5b866ab4:crates/dev_container/src/devcontainer_manifest.rs:generic-api-key:9540

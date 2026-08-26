@@ -27,7 +27,7 @@ On your local machine, Orion Studio runs its UI, talks to language models, uses 
 1. [Build Orion Studio](./installation.md) or install a verified published release.
 1. Use {#kb projects::OpenRemote} to open the "Remote Projects" dialog.
 1. Click "Connect New Server" and enter the command you use to SSH into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
-1. Your local machine will attempt to connect using the `ssh` binary on your path. Automatic remote-server download requires a configured Orion release service; otherwise, build and install the server manually as described below.
+1. Your local machine will attempt to connect using the `ssh` binary on your path. Automatic remote-server download requires a configured Orion release service. Preview and Dev builds never contact that service: they reuse only an exact matching cached server binary or require you to build and install the server manually as described below.
 1. Once the Orion Studio server is running, you will be prompted to choose a path to open on the remote server.
    > **Note:** Orion Studio does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
@@ -181,8 +181,7 @@ When opening a remote project there are three relevant settings locations:
 - The local Orion Studio settings in `~/.config/orion-studio/settings.json` on
   macOS, or `$XDG_CONFIG_HOME/orion-studio/settings.json` on Linux.
 - The server Orion Studio settings (in the same place) on the remote server.
-- Project settings in `.zed/settings.json` or `.editorconfig`. The `.zed`
-  directory is a retained project-format compatibility path.
+- Project settings in `.orion/settings.json` or `.editorconfig`.
 
 Both the local Orion Studio and the server Orion Studio read the project settings, but they are not aware of the other's main settings file.
 
@@ -228,11 +227,13 @@ Any prompts that SSH needs will be shown in the UI, so you can verify host keys,
 
 Once the master connection is established, Orion Studio will check to see if the remote server binary is present in `~/.orion_server` on the remote, and that its version matches the current version of Orion Studio that you're using.
 
-If the binary is missing or its version does not match, Orion Studio can use a
-configured release service to download it. Until such a service is deployed,
-install the matching server binary manually. `upload_binary_over_ssh` changes
-where a configured download occurs; it does not make an unavailable release
-service available.
+If the binary is missing or its version does not match, a separately configured
+Stable or Nightly deployment can use its release service to download it.
+Preview and Dev builds fail closed before hosted artifact lookup and can reuse
+only an exact matching artifact already present in the local download cache.
+Otherwise install the matching server binary manually. `upload_binary_over_ssh`
+changes where an allowed download occurs; it does not enable hosted downloads
+for Preview or Dev.
 
 Build the server from this repository:
 
@@ -292,6 +293,6 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 - [Git Worktrees](./git.md#git-worktrees): Create and switch between linked
   Git worktrees. Orion Studio supports the worktree picker in remote projects when the
   remote connection is active.
-- [Configuring Orion Studio](./configuring-zed.md): Manage shared and project settings,
-  including the retained `.zed/settings.json` project path.
+- [Configuring Orion Studio](./configuring-zed.md): Manage shared and project
+  settings, including the canonical `.orion/settings.json` project path.
 - [Agent Panel](./ai/agent-panel.md): Use AI workflows in remote projects.

@@ -398,8 +398,8 @@ craneLib.buildPackage (
 
     meta = {
       description = "High-performance collaborative code editor";
-      homepage = "https://orion.dev";
-      changelog = "https://orion.dev/releases/preview";
+      homepage = "https://github.com/orion-agents/orion-studio";
+      changelog = "https://github.com/orion-agents/orion-studio/releases";
       license = lib.licenses.gpl3Only;
       mainProgram = "orion";
       platforms = lib.platforms.linux ++ lib.platforms.darwin;

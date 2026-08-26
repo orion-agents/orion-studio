@@ -39,6 +39,7 @@ multi_buffer.workspace = true
 paths.workspace = true
 project.workspace = true
 regex.workspace = true
+release_channel.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 text.workspace = true
@@ -57,5 +58,4 @@ indoc.workspace = true
 project = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-
 

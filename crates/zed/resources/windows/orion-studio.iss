@@ -3,9 +3,9 @@ AppId={#AppId}
 AppName={#AppName}
 AppVerName={#AppDisplayName}
 AppPublisher={#AppPublisher}
-AppPublisherURL=https://orion.dev/
-AppSupportURL=https://orion.dev/
-AppUpdatesURL=https://orion.dev/
+AppPublisherURL=https://github.com/orion-agents/orion-studio
+AppSupportURL=https://github.com/orion-agents/orion-studio/issues
+AppUpdatesURL=https://github.com/orion-agents/orion-studio/releases
 UninstallDisplayName={#AppDisplayName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -1379,7 +1379,7 @@ begin
     RaiseException('Unable to register the ' + Scheme + ' protocol command.');
 end;
 
-procedure RegisterLegacyZedProtocolIfAvailable();
+procedure RegisterLegacyEditorProtocolIfAvailable();
 begin
   if ProtocolCanBeRegisteredByThisInstallation('zed') then
   begin
@@ -1488,14 +1488,14 @@ begin
 end;
 #endif
 
-function LegacyZedInstallationDetected(): Boolean;
+function LegacyEditorInstallationDetected(): Boolean;
 begin
   Result := RegKeyExists(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#LegacyAppId}_is1');
 end;
 
 function InitializeSetup(): Boolean;
 begin
-  if LegacyZedInstallationDetected() then
+  if LegacyEditorInstallationDetected() then
     Log('Legacy Zed installation detected; Orion Studio will install side-by-side without replacing its zed:// handler.');
   Result := True;
 end;
@@ -1514,7 +1514,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    RegisterLegacyZedProtocolIfAvailable();
+    RegisterLegacyEditorProtocolIfAvailable();
     if IsUpdating() then
     begin
       SaveStringToFile(ExpandConstant('{app}\updates\versions.txt'), '{#Version}' + #13#10, True);

@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+checker="${script_directory}/check-orion-brand"
+temporary_base=${TMPDIR:-/tmp}
+temporary_base=${temporary_base%/}
+test_root=$(mktemp -d "${temporary_base}/orion-brand-tests.XXXXXX")
+fixture_repository="${test_root}/repository"
+captured_output=""
+pass_count=0
+
+cleanup() {
+    local status=$?
+
+    trap - EXIT
+    case "${test_root}" in
+        "${temporary_base}"/orion-brand-tests.*)
+            rm -rf -- "${test_root}"
+            ;;
+        *)
+            printf 'error: refusing to remove unexpected test directory %s\n' "${test_root}" >&2
+            status=1
+            ;;
+    esac
+    exit "${status}"
+}
+trap cleanup EXIT
+
+fail() {
+    printf 'not ok - %s\n' "$*" >&2
+    exit 1
+}
+
+pass() {
+    pass_count=$((pass_count + 1))
+    printf 'ok %d - %s\n' "${pass_count}" "$1"
+}
+
+run_checker() {
+    (
+        cd "${fixture_repository}"
+        ./script/check-orion-brand "$@"
+    )
+}
+
+expect_success() {
+    local name=$1
+    shift
+
+    if captured_output=$("$@" 2>&1); then
+        pass "${name}"
+    else
+        printf '%s\n' "${captured_output}" >&2
+        fail "${name}"
+    fi
+}
+
+expect_failure_containing() {
+    local name=$1
+    local expected=$2
+    shift 2
+
+    if captured_output=$("$@" 2>&1); then
+        printf '%s\n' "${captured_output}" >&2
+        fail "${name} unexpectedly succeeded"
+    fi
+    if [[ "${captured_output}" != *"${expected}"* ]]; then
+        printf '%s\n' "${captured_output}" >&2
+        fail "${name} did not report ${expected}"
+    fi
+    pass "${name}"
+}
+
+line_digest() {
+    python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$1"
+}
+
+[[ -x "${checker}" ]] || fail "checker is not executable: ${checker}"
+command -v git >/dev/null 2>&1 || fail "git is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+
+git init -q "${fixture_repository}"
+mkdir -p "${fixture_repository}/script" "${fixture_repository}/src" \
+    "${fixture_repository}/docs/plan/evidence"
+cp "${checker}" "${fixture_repository}/script/check-orion-brand"
+chmod +x "${fixture_repository}/script/check-orion-brand"
+printf 'path\ttoken\tline_sha256\toccurrence\tcategory\treason\n' \
+    >"${fixture_repository}/docs/plan/evidence/orion-brand-allowlist.tsv"
+git -C "${fixture_repository}" add script/check-orion-brand \
+    docs/plan/evidence/orion-brand-allowlist.tsv
+
+sample_line='pub struct OpenZedUrl;'
+printf '%s\n' "${sample_line}" >"${fixture_repository}/src/sample.rs"
+git -C "${fixture_repository}" add src/sample.rs
+expect_failure_containing "embedded CamelCase legacy product token is rejected" \
+    'legacy-camel-product-token' run_checker
+
+sample_digest=$(line_digest "${sample_line}")
+printf 'src/sample.rs\tZed\t%s\t1\tcompatibility\tRetained serialized action alias for existing keymaps.\n' \
+    "${sample_digest}" >>"${fixture_repository}/docs/plan/evidence/orion-brand-allowlist.tsv"
+expect_success "exact compatibility rule permits the audited symbol" run_checker
+
+printf '%s\n' 'pub struct OpenZedRepo;' >"${fixture_repository}/src/sample.rs"
+expect_failure_containing "changed source invalidates the exact allowlist rule" \
+    'kind="stale"' run_checker
+
+printf '1..%d\n' "${pass_count}"

@@ -1385,15 +1385,16 @@ mod tests {
     async fn test_streaming_authorize(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(cx, json!({})).await;
 
-        // Test 1: Path with .zed component should require confirmation
+        // Test 1: Canonical project settings should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx
-            .update(|cx| edit_tool.authorize(&PathBuf::from(".zed/settings.json"), &stream_tx, cx));
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(&PathBuf::from(".orion/settings.json"), &stream_tx, cx)
+        });
 
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
             event.tool_call.fields.title,
-            Some("Edit `.zed/settings.json` (local settings)".into())
+            Some("Edit `.orion/settings.json` (local settings)".into())
         );
 
         // Test 2: Path outside project should require confirmation
@@ -1414,7 +1415,7 @@ mod tests {
             .unwrap();
         assert!(stream_rx.try_recv().is_err());
 
-        // Test 4: Path with .zed in the middle should require confirmation
+        // Test 4: A legacy project settings path should remain protected
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
         let _auth = cx.update(|cx| {
             edit_tool.authorize(&PathBuf::from("root/.zed/tasks.json"), &stream_tx, cx)
@@ -1433,14 +1434,15 @@ mod tests {
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 
-        // 5.1: .zed/settings.json is a sensitive path — still prompts
+        // 5.1: Canonical project settings are sensitive — still prompts
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx
-            .update(|cx| edit_tool.authorize(&PathBuf::from(".zed/settings.json"), &stream_tx, cx));
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(&PathBuf::from(".orion/settings.json"), &stream_tx, cx)
+        });
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
             event.tool_call.fields.title,
-            Some("Edit `.zed/settings.json` (local settings)".into())
+            Some("Edit `.orion/settings.json` (local settings)".into())
         );
 
         // 5.2: /etc/hosts is outside the project, but Allow auto-approves
