@@ -74,6 +74,7 @@ jobs:
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
+        permission-issues: write
         permission-pull-requests: write
         permission-workflows: write
     - name: steps::checkout_repo
@@ -155,6 +156,7 @@ jobs:
         owner: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
         repositories: ${{ vars.ORION_STUDIO_EXTENSION_REGISTRY_REPOSITORY }}
         permission-contents: write
+        permission-issues: write
         permission-pull-requests: write
         permission-workflows: write
     - id: short-sha

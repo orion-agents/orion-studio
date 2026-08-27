@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     os::windows::ffi::OsStrExt,
     path::Path,
     sync::LazyLock,
@@ -520,7 +520,22 @@ fn release_file_handles(app_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) -> Result<()> {
+#[allow(clippy::disallowed_methods, reason = "doesn't run in the main binary")]
+fn orion_studio_launch_command(
+    app_dir: &Path,
+    launch_arguments: &[OsString],
+) -> std::process::Command {
+    let mut command = std::process::Command::new(app_dir.join("orion-studio.exe"));
+    command.args(launch_arguments);
+    command
+}
+
+pub(crate) fn perform_update(
+    app_dir: &Path,
+    hwnd: Option<isize>,
+    launch: bool,
+    launch_arguments: &[OsString],
+) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
     // Try to release file handles before starting the update
@@ -586,7 +601,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
 
     if launch {
         #[allow(clippy::disallowed_methods, reason = "doesn't run in the main binary")]
-        std::process::Command::new(app_dir.join("orion-studio.exe"))
+        let _child = orion_studio_launch_command(app_dir, launch_arguments)
             .spawn()
             .context("Failed to relaunch Orion Studio after the update")?;
     }
@@ -596,12 +611,14 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
 
 #[cfg(test)]
 mod test {
+    use std::{ffi::OsString, path::Path};
+
     use super::{
-        RollbackState, TRANSACTIONAL_JOB_COUNT, initial_restart_manager_capacity, perform_update,
-        production_jobs, query_affected_processes_with,
+        RollbackState, TRANSACTIONAL_JOB_COUNT, initial_restart_manager_capacity,
+        orion_studio_launch_command, perform_update, production_jobs,
+        query_affected_processes_with,
     };
     use anyhow::Result;
-    use std::path::Path;
     use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_MORE_DATA, ERROR_SUCCESS};
 
     fn write_fixture_file(app_directory: &Path, relative_path: &str, content: &str) -> Result<()> {
@@ -679,6 +696,28 @@ mod test {
     }
 
     #[test]
+    fn test_orion_studio_launch_command_preserves_arguments() {
+        let arguments = vec![
+            OsString::from("--user-data-dir"),
+            OsString::from(r"C:\Orion Studio Data"),
+        ];
+        let command =
+            orion_studio_launch_command(Path::new(r"C:\Program Files\Orion Studio"), &arguments);
+
+        assert_eq!(
+            command.get_program(),
+            Path::new(r"C:\Program Files\Orion Studio\orion-studio.exe").as_os_str()
+        );
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            arguments
+                .iter()
+                .map(OsString::as_os_str)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn restart_manager_more_data_requests_a_second_query() -> Result<()> {
         assert_eq!(
             initial_restart_manager_capacity(ERROR_MORE_DATA, 2)?,
@@ -716,13 +755,13 @@ mod test {
     fn test_perform_update() -> Result<(), Box<dyn std::error::Error>> {
         let app_dir = tempfile::tempdir()?;
         let app_dir = app_dir.path();
-        assert!(perform_update(app_dir, None, false).is_ok());
+        assert!(perform_update(app_dir, None, false, &[]).is_ok());
 
         let app_dir = tempfile::tempdir()?;
         let app_dir = app_dir.path();
         // Simulate a timeout
         unsafe { std::env::set_var("ORION_STUDIO_AUTO_UPDATE_TEST", "err1") };
-        let return_value = perform_update(app_dir, None, false);
+        let return_value = perform_update(app_dir, None, false, &[]);
         assert!(
             return_value
                 .is_err_and(|error| error.to_string() == "Autoupdate failed, nothing to rollback")
@@ -732,7 +771,7 @@ mod test {
         let app_dir = app_dir.path();
         // Simulate a timeout
         unsafe { std::env::set_var("ORION_STUDIO_AUTO_UPDATE_TEST", "err2") };
-        let return_value = perform_update(app_dir, None, false);
+        let return_value = perform_update(app_dir, None, false, &[]);
         assert!(
             return_value
                 .is_err_and(|error| error.to_string() == "Autoupdate failed, rollback successful")

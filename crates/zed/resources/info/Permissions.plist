@@ -24,3 +24,5 @@
 <string>An application in Orion Studio wants to use speech recognition.</string>
 <key>NSRemindersUsageDescription</key>
 <string>An application in Orion Studio wants to use your reminders.</string>
+<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
+<true/>

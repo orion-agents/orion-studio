@@ -1623,7 +1623,7 @@ pub(crate) fn resolve_path(path: &mut String) {
         *path = format!(
             "$ORION_STUDIO_WORKTREE_ROOT{}{}",
             std::path::MAIN_SEPARATOR,
-            &strip_path
+            strip_path
         );
     };
 }

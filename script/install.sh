@@ -630,6 +630,16 @@ linux() {
     mv "$staged_app" "$pending_app"
     activate_pending
 
+    orion_studio_executable="$target_app/libexec/orion-studio"
+    if [ -x "$orion_studio_executable" ] && command -v ldd >/dev/null 2>&1; then
+        missing="$(ldd "$orion_studio_executable" 2>/dev/null | sed -n 's/^[[:space:]]*\(.*\) => not found$/\1/p')"
+        if [ -n "$missing" ]; then
+            echo "Warning: your system is missing libraries that Orion Studio needs:"
+            echo "$missing" | sed 's/^/    /'
+            echo "Install them with your package manager, or Orion Studio will fail to start."
+        fi
+    fi
+
     # Setup ~/.local directories
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 

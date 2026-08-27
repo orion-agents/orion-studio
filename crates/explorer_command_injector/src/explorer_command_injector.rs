@@ -127,14 +127,11 @@ impl IClassFactory_Impl for ExplorerCommandInjectorFactory_Impl {
     }
 }
 
-const MODULE_ID: GUID = if cfg!(feature = "stable") {
-    GUID::from_u128(0xc1e23d1e_e207_5a51_a4ab_478f089db20d)
-} else if cfg!(feature = "preview") {
-    GUID::from_u128(0x8ba111e7_78dc_552f_8a22_e2b3a0ac5b18)
-} else if cfg!(feature = "nightly") {
-    GUID::from_u128(0x67a57c33_a5c5_58c7_97ad_2997ce4cbb6b)
-} else {
-    GUID::from_u128(0xc3239233_395a_5e92_9784_503ee241313a)
+const MODULE_ID: GUID = cfg_select! {
+    feature = "stable" => { GUID::from_u128(0xc1e23d1e_e207_5a51_a4ab_478f089db20d) },
+    feature = "preview" => { GUID::from_u128(0x8ba111e7_78dc_552f_8a22_e2b3a0ac5b18) },
+    feature = "nightly" => { GUID::from_u128(0x67a57c33_a5c5_58c7_97ad_2997ce4cbb6b) },
+    _ => { GUID::from_u128(0xc3239233_395a_5e92_9784_503ee241313a) },
 };
 
 #[unsafe(no_mangle)]
@@ -183,14 +180,11 @@ fn get_orion_studio_executable_path() -> Option<String> {
 
 #[inline]
 fn retrieve_command_description() -> Result<HSTRING> {
-    const REG_PATH: &str = if cfg!(feature = "stable") {
-        "Software\\Classes\\OrionStudio-StableContextMenu"
-    } else if cfg!(feature = "preview") {
-        "Software\\Classes\\OrionStudio-PreviewContextMenu"
-    } else if cfg!(feature = "nightly") {
-        "Software\\Classes\\OrionStudio-NightlyContextMenu"
-    } else {
-        "Software\\Classes\\OrionStudio-DevContextMenu"
+    const REG_PATH: &str = cfg_select! {
+        feature = "stable" => { r#"Software\Classes\OrionStudio-StableContextMenu"# },
+        feature = "preview" => { r#"Software\Classes\OrionStudio-PreviewContextMenu"# },
+        feature = "nightly" => { r#"Software\Classes\OrionStudio-NightlyContextMenu"# },
+        _ => { r#"Software\Classes\OrionStudio-DevContextMenu"# },
     };
 
     let key = windows_registry::CURRENT_USER.open(REG_PATH)?;

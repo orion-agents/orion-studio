@@ -102,6 +102,7 @@ fn update_sha_in_orion_studio(publish_job: &NamedJob, message: &WorkflowInput) -
         .for_repository(RepositoryTarget::current())
         .with_permissions([
             (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Issues, Level::Write),
             (TokenPermissions::PullRequests, Level::Write),
             (TokenPermissions::Workflows, Level::Write),
         ])
@@ -178,6 +179,7 @@ fn update_sha_in_registry(publish_job: &NamedJob, message: &WorkflowInput) -> Na
         .for_repository(registry_repository)
         .with_permissions([
             (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Issues, Level::Write),
             (TokenPermissions::PullRequests, Level::Write),
             (TokenPermissions::Workflows, Level::Write),
         ])

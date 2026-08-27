@@ -150,8 +150,9 @@ jobs:
         private-key: ${{ secrets.ORION_STUDIO_AUTOMATION_APP_PRIVATE_KEY }}
         owner: ${{ vars.ORION_STUDIO_EXTENSION_ORGANIZATION }}
         repositories: ${{ matrix.repo }}
-        permission-pull-requests: write
         permission-contents: write
+        permission-issues: write
+        permission-pull-requests: write
         permission-workflows: write
     - name: checkout_extension_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

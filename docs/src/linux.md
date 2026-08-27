@@ -70,6 +70,10 @@ If Orion Studio was installed using the repository installation script, pass
 orion-studio --uninstall
 ```
 
+This uninstalls the Orion Studio installation targeted by the launcher. If you
+have multiple parallel installations, use the intended installation's absolute
+path as described below.
+
 If there are no errors, the shell will then prompt you whether you'd like to keep your preferences or delete them. After making a choice, you should see a message that Orion Studio was successfully uninstalled.
 
 If `orion-studio` is not in your path, try one of these commands:
@@ -78,14 +82,15 @@ If `orion-studio` is not in your path, try one of these commands:
 $HOME/.local/bin/orion-studio --uninstall
 ```
 
-or
+or the absolute path to your installation, such as
 
 ```sh
 $HOME/.local/orion-studio.app/bin/orion-studio --uninstall
 ```
 
-The first case can fail when the launcher symlink was not created. The second
-works when the bundle is in its default location.
+The first case can fail when the launcher symlink was not created or was
+overwritten by another installation. The second works when the bundle is in its
+default location.
 
 If Orion Studio was installed elsewhere, invoke that bundle's `bin/orion-studio`
 launcher with `--uninstall`.

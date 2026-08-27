@@ -55,6 +55,7 @@ jobs:
           owner: orion-agents
           repositories: orion-studio
           permission-issues: read
+          permission-members: read
           permission-organization-projects: write
           permission-pull-requests: read
 

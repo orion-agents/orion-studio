@@ -309,3 +309,37 @@ For example, `ctrl-n` creates a new tab in Orion Studio on Linux. If you want to
 
 You can also bind keys to launch Orion Studio Tasks defined in your `tasks.json`.
 See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.
+
+### Subword Navigation
+
+Orion Studio exposes word and subword motions as separate actions. Word motions stop at whitespace and punctuation boundaries, while subword motions also stop inside identifiers such as `camelCase`, `PascalCase`, and `snake_case`.
+
+The JetBrains base keymap uses editor-local `alt-left` / `alt-right` and `shift-alt-left` / `shift-alt-right` for subword navigation to match JetBrains-style CamelHump navigation. If you use another base keymap and want that behavior, add this to your `keymap.json`:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-right": "editor::MoveToNextSubwordEnd",
+      "shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      "shift-alt-right": "editor::SelectToNextSubwordEnd"
+    }
+  }
+]
+```
+
+If you use the JetBrains base keymap and want `alt-left` / `alt-right` to keep moving between tabs in editors, add this override:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "pane::ActivatePreviousItem",
+      "alt-right": "pane::ActivateNextItem"
+    }
+  }
+]
+```
