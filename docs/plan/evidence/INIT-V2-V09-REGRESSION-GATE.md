@@ -1,5 +1,74 @@
 # INIT-V2-V09 — 全量回归与发布门禁
 
+## 2026-08-27 Local Init Runtime Closure
+
+> **状态：`PASS / LOCAL-ONLY`。** 本记录覆盖下方与之冲突的旧本地运行结论，
+> 但不改变公开 Preview 的 `NO-GO / EXTERNAL-BLOCKED` 状态。
+
+### 根因与修改边界
+
+- `crates/zed/src/main.rs:86-95` 的 `build_application` 默认构造
+  `Application::new_inaccessible`，所以 System Events 返回 0 个窗口不能证明 GPUI
+  没有窗口。
+- `crates/zed/src/main.rs:1515-1647` 的 `restore_or_create_workspace` 继续负责恢复；
+  `1625-1647` 在恢复后仍无窗口时调用 `workspace::open_new`。运行证据证明该路径有效。
+- `crates/workspace/src/workspace.rs:9007` 在首帧完成后记录 `Rendered first frame`。
+  CoreGraphics 随后观察到 layer 0、alpha 1、onscreen 的真实主窗口。
+- 因此根因是验收探针假阴性，不是启动代码缺陷。本轮没有修改 GPUI、Workspace、
+  Project、Editor 或启动源码。
+- 除收尾文档外，唯一改动是
+  `docs/plan/evidence/orion-brand-allowlist.tsv`：为同一迁移测试夹具的 6 个精确出现位置
+  增加 `test-fixture` 规则，不扩大 allowlist 模式。
+
+### 验证结果
+
+| 门禁 | 当前实测结果 |
+| --- | --- |
+| 分支 / HEAD | `release/orion-studio-v1.16.1-pre` / `5bf21d2707eb95d35ce16c10ba864838a3963c9a` |
+| `cargo +stable test -p paths` | PASS：64 passed、0 failed，覆盖首装、幂等、冲突、失败保留、权限、符号链接和 LMDB 锁 |
+| `./script/test-orion-brand` | PASS：3/3 |
+| `./script/check-orion-brand --max-findings 1000` | PASS：6,066/6,066 approved；0 unapproved、0 stale、0 ambiguous、0 errors |
+| Info.plist | PASS：`Orion Studio Dev`、`dev.orion.OrionStudio-Dev`、1.16.1、最低 macOS 11.0 |
+| Mach-O / HEAD | PASS：单一 arm64；主程序嵌入当前完整 HEAD |
+| `codesign --verify --deep --strict --verbose=2` | PASS：ad-hoc，TeamIdentifier 未设置，符合本机 Dev 边界 |
+| `hdiutil verify` | PASS：DMG checksum valid |
+| 首次启动 | PASS：PID 3571；1 个 1482×879 layer 0、alpha 1、onscreen 窗口 |
+| 项目 / 编辑界面 | PASS：持有项目根目录；窗口标题 `orion-studio — README.md` |
+| 菜单品牌 | PASS：`Orion Studio Dev`、`About Orion Studio`、`Quit Orion Studio` |
+| 正常退出 / 重启 | PASS：菜单退出后进程结束；PID 4522 重启后恢复 1 个 onscreen 窗口和项目 |
+| 数据库 | PASS：首次与重启均打开 3 个 Orion LMDB data 句柄和 2 个 lock 句柄 |
+| 迁移现场 | PASS：两处 marker 为普通文件且权限 600；旧目录保留；0 个迁移临时目录 |
+| 最新日志 | PASS：0 panic、0 fatal、0 migration conflict、0 lock.mdb mention |
+
+迁移实现边界也与运行结果一致：`crates/paths/src/migration.rs:1966-1970` 对有效 v3
+成功 marker 幂等短路，`3039-3040` 跳过源 LMDB 瞬态锁，`3095-3108` 接受目标中的
+普通 LMDB 锁文件但拒绝不安全条目。
+
+### 构建、产物与资源
+
+- 命令：
+  `CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 ./script/bundle-mac -i aarch64-apple-darwin`。
+- 主 App Release 88m24s；remote server 22m06s。首次在最终 Git 工具下载处遇到
+  `curl: (35) SSL_ERROR_SYSCALL`，已构建产物保持完整；网络恢复后缓存复跑分别为
+  1.92s、1.20s 和 1.24s，并完成下载校验、组包、签名、DMG 与安装。
+- 安装位置：`/Applications/Orion Studio Dev.app`；约 400 MiB。
+- 主程序 SHA-256：
+  `cb3d4ab85a7d8c7d4fdc0f329e8c48e1844ad4a576576e80d45c61bc31fb4d06`。
+- DMG 构建时大小 152,229,332 bytes，SHA-256：
+  `944fde28ae03ab53586761c55ad4d51788429cdaa6684f3c0a1f2207d9037436`；
+  完整性验证后随可重建 `target` 一并清理。
+- 构建期主 App rustc 采样峰值约 3.5 GB RSS，remote server 约 4.6 GB RSS；
+  `memory_pressure`/`vm_stat` 未观察到 throttling。
+- 清理前 `target` 为 25,834,280 KiB；`cargo clean` 删除 58,667 个文件、24.5 GiB，
+  `target` 归零，文件系统可用空间实际增加 25,008,760 KiB。已安装且运行中的 App、
+  源码、用户配置、数据库和旧数据均保留。
+
+### 剩余非阻塞项
+
+- llama.cpp provider 当前返回 502，但不影响窗口、项目、编辑器或数据库；Init 不处理。
+- 本机 App 只有 ad-hoc 签名。Developer ID、notarization、干净机器验收和 GitHub
+  Release 都未执行，不得把本记录当作公开发布证据。
+
 ## 2026-08-26 Release Readiness Continuation
 
 > **当前生效状态：** 本节覆盖下方与之冲突的 2026-08-15 结论。当前基线为

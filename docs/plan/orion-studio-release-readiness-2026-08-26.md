@@ -1,5 +1,23 @@
 # Orion Studio 准出发布计划与审计
 
+## 2026-08-27 Local Init Runtime Closure
+
+本地 Init 已在
+`release/orion-studio-v1.16.1-pre@5bf21d2707eb95d35ce16c10ba864838a3963c9a`
+重新完成验收：1.16.1 arm64 Dev App 构建、ad-hoc 签名、DMG 校验和安装通过；
+`/Applications/Orion Studio Dev.app` 正常出现 CoreGraphics 可见窗口，能打开当前项目和
+`README.md`，通过应用菜单退出后可重启恢复。System Events 的 0 窗口结果是
+inaccessible GPUI 应用的探测假阴性，没有触发启动核心源码修改。
+
+迁移测试 64/64、品牌门禁 6,066/6,066 和品牌脚本 3/3 均通过；旧数据保留、marker
+权限为 600、无迁移临时目录，Orion LMDB 在首次启动和重启后均打开。构建缓存已用
+`cargo clean` 回收 24.5 GiB，安装 App 和用户数据保留。详细证据见
+`evidence/INIT-V2-V09-REGRESSION-GATE.md`。
+
+这只把本地 Dev 交付维持为 **VERIFIED / LOCAL-ONLY**。Developer ID、Apple 公证、
+受信任 runner、签名 tag、干净机器验收和公开 GitHub Release 仍未完成，因此公开
+Preview 继续保持 **NO-GO / EXTERNAL-BLOCKED**。
+
 ## 1. 当前结论
 
 本计划以 `main@bb9ec1fbd72ddf7765a6c7b61630304ae0e2788d` 为改造基线，首个公开
