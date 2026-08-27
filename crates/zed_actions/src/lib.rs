@@ -819,6 +819,10 @@ actions!(
         OpenGitIntegrationOnboarding
     ]
 );
+actions!(
+    call_hierarchy,
+    [ShowIncomingCalls, ShowOutgoingCalls, ToggleDirection]
+);
 
 pub mod debug_panel {
     use gpui::actions;
