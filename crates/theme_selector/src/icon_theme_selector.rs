@@ -341,7 +341,9 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                                 .color(Color::Muted),
                         )
                         .on_click(|_event, _window, cx| {
-                            cx.open_url("https://orion.dev/docs/icon-themes");
+                            cx.open_url(
+                                "https://github.com/orion-agents/orion-studio/blob/main/docs/src/icon-themes.md",
+                            );
                         }),
                 )
                 .child(

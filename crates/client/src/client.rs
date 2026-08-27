@@ -200,6 +200,10 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     cx.on_action({
         let client = client.clone();
         move |_: &SignIn, cx| {
+            if !release_channel::hosted_services_available(cx) {
+                log::warn!("Sign-in is unavailable for this Orion Studio release channel");
+                return;
+            }
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, cx).await)
                     .detach_and_log_err(cx);
@@ -220,6 +224,10 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     .on_action({
         let client = client;
         move |_: &Reconnect, cx| {
+            if !release_channel::hosted_services_available(cx) {
+                log::warn!("Reconnect is unavailable for this Orion Studio release channel");
+                return;
+            }
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
                     client.reconnect(cx);
@@ -247,6 +255,7 @@ pub struct Client {
     handler_set: Mutex<ProtoMessageHandlerSet>,
     message_to_client_handlers: Mutex<Vec<MessageToClientHandler>>,
     sign_out_tx: Mutex<Option<mpsc::UnboundedSender<()>>>,
+    hosted_services_available: bool,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -592,6 +601,10 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Arc<Self> {
+        let hosted_services_available = release_channel::ReleaseChannel::try_global(cx)
+            .map(|channel| channel.hosted_services_available())
+            .unwrap_or(cfg!(any(test, feature = "test-support")));
+
         Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
@@ -603,6 +616,7 @@ impl Client {
             handler_set: Default::default(),
             message_to_client_handlers: Mutex::new(Vec::new()),
             sign_out_tx: Mutex::new(None),
+            hosted_services_available,
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
@@ -914,6 +928,11 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
+        anyhow::ensure!(
+            self.hosted_services_available,
+            "Orion-hosted services are unavailable for this release channel"
+        );
+
         let is_reauthenticating = if self.status().borrow().is_signed_out() {
             self.set_status(Status::Authenticating, cx);
             false
@@ -1125,6 +1144,12 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> ConnectionResult<()> {
+        if !self.hosted_services_available {
+            return ConnectionResult::Result(Err(anyhow!(
+                "Orion-hosted services are unavailable for this release channel"
+            )));
+        }
+
         let was_disconnected = match *self.status().borrow() {
             Status::SignedOut | Status::Authenticated => true,
             Status::ConnectionError
@@ -1748,6 +1773,10 @@ impl Client {
     }
 
     pub fn reconnect(self: &Arc<Self>, cx: &AsyncApp) {
+        if !self.hosted_services_available {
+            log::warn!("Reconnect is unavailable for this Orion Studio release channel");
+            return;
+        }
         self.peer.teardown();
         self.set_status(Status::ConnectionLost, cx);
     }
@@ -2099,6 +2128,27 @@ mod tests {
             ProxySettings::from_settings(&content).proxy.as_deref(),
             Some("http://127.0.0.1:10809")
         );
+    }
+
+    #[gpui::test]
+    async fn preview_client_refuses_hosted_connections(cx: &mut TestAppContext) {
+        init_test(cx);
+        let client = cx.update(|cx| {
+            release_channel::init_test(
+                semver::Version::new(1, 16, 1),
+                release_channel::ReleaseChannel::Preview,
+                cx,
+            );
+            Client::new(
+                Arc::new(FakeSystemClock::new()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
+
+        let result = client.connect(false, &cx.to_async()).await;
+        assert!(matches!(result, ConnectionResult::Result(Err(_))));
+        assert_eq!(*client.status().borrow(), Status::SignedOut);
     }
 
     #[gpui::test(iterations = 10)]

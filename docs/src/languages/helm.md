@@ -12,8 +12,8 @@ Support for Helm in Orion Studio is provided by the community-maintained [Helm e
 
 ## Setup
 
-Enable Helm language for Helm files by editing the retained project-format
-compatibility file `.zed/settings.json` and adding:
+Enable Helm language for Helm files by editing `.orion/settings.json` and
+adding:
 
 ```json [settings]
   "file_types": {

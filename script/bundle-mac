@@ -760,7 +760,7 @@ else
     echo "cargo::warning=Missing ${document_icon_source}; macOS document icons may not appear in Finder."
 fi
 
-signing_variables=(
+required_signing_variables=(
     MACOS_CERTIFICATE
     MACOS_CERTIFICATE_PASSWORD
     APPLE_NOTARIZATION_KEY
@@ -771,7 +771,7 @@ signing_variables=(
 )
 missing_signing_variables=()
 present_signing_input_count=0
-for variable_name in "${signing_variables[@]}"; do
+for variable_name in "${required_signing_variables[@]}"; do
     if [[ -n "${!variable_name-}" ]]; then
         present_signing_input_count=$((present_signing_input_count + 1))
     else
@@ -780,8 +780,6 @@ for variable_name in "${signing_variables[@]}"; do
 done
 if [[ -n "${provisioning_profile}" ]]; then
     present_signing_input_count=$((present_signing_input_count + 1))
-else
-    missing_signing_variables+=("ORION_STUDIO_MACOS_PROVISIONING_PROFILE or ORION_STUDIO_MACOS_PROVISIONING_PROFILE_BASE64")
 fi
 
 if [[ ${#missing_signing_variables[@]} -eq 0 ]]; then
@@ -793,37 +791,39 @@ if [[ ${#missing_signing_variables[@]} -eq 0 ]]; then
         echo "ORION_STUDIO_MACOS_SIGNING_IDENTITY must not contain line breaks." >&2
         exit 1
     fi
-    if [[ ! -f "${provisioning_profile}" || -L "${provisioning_profile}" ]]; then
-        echo "The private Orion Studio provisioning profile copy is invalid: ${provisioning_profile}" >&2
-        exit 1
-    fi
+    if [[ -n "${provisioning_profile}" ]]; then
+        if [[ ! -f "${provisioning_profile}" || -L "${provisioning_profile}" ]]; then
+            echo "The private Orion Studio provisioning profile copy is invalid: ${provisioning_profile}" >&2
+            exit 1
+        fi
 
-    if ! /usr/bin/security cms -D -i "${provisioning_profile}" > "${provisioning_profile_plist}"; then
-        echo "The configured Orion Studio provisioning profile is not a valid CMS profile." >&2
-        exit 1
-    fi
-    if ! profile_team_identifier=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "${provisioning_profile_plist}") || \
-        ! profile_entitlement_team_identifier=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.team-identifier' "${provisioning_profile_plist}") || \
-        ! profile_application_identifier=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "${provisioning_profile_plist}") || \
-        ! profile_expiration=$(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "${provisioning_profile_plist}"); then
-        echo "The provisioning profile is missing required team, application, or expiration fields." >&2
-        exit 1
-    fi
-    if [[ "${profile_team_identifier}" != "${signing_team_identifier}" || "${profile_entitlement_team_identifier}" != "${signing_team_identifier}" ]]; then
-        echo "The provisioning profile Team ID does not match ORION_STUDIO_MACOS_TEAM_ID." >&2
-        exit 1
-    fi
-    if [[ "${profile_application_identifier}" != "${signing_team_identifier}.${expected_bundle_identifier}" ]]; then
-        echo "The provisioning profile application identifier does not match ${expected_bundle_identifier}." >&2
-        exit 1
-    fi
-    if ! profile_expiration_epoch=$(LC_ALL=C date -j -f '%a %b %d %T %Z %Y' "${profile_expiration}" '+%s' 2>/dev/null); then
-        echo "Could not parse the provisioning profile expiration date." >&2
-        exit 1
-    fi
-    if [[ "${profile_expiration_epoch}" -le "$(date '+%s')" ]]; then
-        echo "The configured Orion Studio provisioning profile has expired." >&2
-        exit 1
+        if ! /usr/bin/security cms -D -i "${provisioning_profile}" > "${provisioning_profile_plist}"; then
+            echo "The configured Orion Studio provisioning profile is not a valid CMS profile." >&2
+            exit 1
+        fi
+        if ! profile_team_identifier=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "${provisioning_profile_plist}") || \
+            ! profile_entitlement_team_identifier=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.team-identifier' "${provisioning_profile_plist}") || \
+            ! profile_application_identifier=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "${provisioning_profile_plist}") || \
+            ! profile_expiration=$(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "${provisioning_profile_plist}"); then
+            echo "The provisioning profile is missing required team, application, or expiration fields." >&2
+            exit 1
+        fi
+        if [[ "${profile_team_identifier}" != "${signing_team_identifier}" || "${profile_entitlement_team_identifier}" != "${signing_team_identifier}" ]]; then
+            echo "The provisioning profile Team ID does not match ORION_STUDIO_MACOS_TEAM_ID." >&2
+            exit 1
+        fi
+        if [[ "${profile_application_identifier}" != "${signing_team_identifier}.${expected_bundle_identifier}" ]]; then
+            echo "The provisioning profile application identifier does not match ${expected_bundle_identifier}." >&2
+            exit 1
+        fi
+        if ! profile_expiration_epoch=$(LC_ALL=C date -j -f '%a %b %d %T %Z %Y' "${profile_expiration}" '+%s' 2>/dev/null); then
+            echo "Could not parse the provisioning profile expiration date." >&2
+            exit 1
+        fi
+        if [[ "${profile_expiration_epoch}" -le "$(date '+%s')" ]]; then
+            echo "The configured Orion Studio provisioning profile has expired." >&2
+            exit 1
+        fi
     fi
 
     signing_keychain="${session_directory}/signing.keychain-db"
@@ -1054,10 +1054,12 @@ function sign_app_binaries() {
     download_git "${target_triple}" "${app_path}/Contents/MacOS/git"
 
     if [[ $can_code_sign = true ]]; then
-        cp "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"
-        if ! cmp -s "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"; then
-            echo "The embedded provisioning profile does not match the verified private copy." >&2
-            return 1
+        if [[ -n "${provisioning_profile}" ]]; then
+            cp "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"
+            if ! cmp -s "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"; then
+                echo "The embedded provisioning profile does not match the verified private copy." >&2
+                return 1
+            fi
         fi
         echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
@@ -1073,9 +1075,11 @@ function sign_app_binaries() {
         verify_signed_item "${app_path}" application "${expected_bundle_identifier}"
         verify_signed_entitlements "${app_path}" "${app_entitlements}" application "${expected_bundle_identifier}"
         verify_bundle_info_plist
-        if ! cmp -s "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"; then
-            echo "The embedded provisioning profile changed during application signing." >&2
-            return 1
+        if [[ -n "${provisioning_profile}" ]]; then
+            if ! cmp -s "${provisioning_profile}" "${app_path}/Contents/embedded.provisionprofile"; then
+                echo "The embedded provisioning profile changed during application signing." >&2
+                return 1
+            fi
         fi
     else
         echo "====== WARNING ======"

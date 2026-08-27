@@ -489,8 +489,16 @@ pub fn devcontainer_dir() -> &'static PathBuf {
     DEVCONTAINER_DIR.get_or_init(|| data_dir().join("devcontainer"))
 }
 
-/// Returns the relative path to a `.zed` folder within a project.
+/// Returns the canonical relative path to an Orion Studio configuration folder within a project.
 pub fn local_settings_folder_name() -> &'static str {
+    ".orion"
+}
+
+/// Returns the legacy Zed project configuration folder name.
+///
+/// This path is read-only compatibility input. New files must use
+/// [`local_settings_folder_name`].
+pub fn local_settings_folder_name_legacy() -> &'static str {
     ".zed"
 }
 
@@ -499,15 +507,39 @@ pub fn local_vscode_folder_name() -> &'static str {
     ".vscode"
 }
 
-/// Returns the relative path to a `settings.json` file within a project.
+/// Returns the canonical relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> = LazyLock::new(|| {
+        RelPath::from_unix_str(".orion/settings.json")
+            .expect("canonical project settings path must be normalized")
+    });
+    *CACHED
+}
+
+/// Returns the legacy Zed relative path to a project `settings.json` file.
+///
+/// This path is read-only compatibility input. New files must use
+/// [`local_settings_file_relative_path`].
+pub fn local_settings_file_relative_path_legacy() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
         LazyLock::new(|| RelPath::from_unix_str(".zed/settings.json").unwrap());
     *CACHED
 }
 
-/// Returns the relative path to a `tasks.json` file within a project.
+/// Returns the canonical relative path to a `tasks.json` file within a project.
 pub fn local_tasks_file_relative_path() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> = LazyLock::new(|| {
+        RelPath::from_unix_str(".orion/tasks.json")
+            .expect("canonical project tasks path must be normalized")
+    });
+    *CACHED
+}
+
+/// Returns the legacy Zed relative path to a project `tasks.json` file.
+///
+/// This path is read-only compatibility input. New files must use
+/// [`local_tasks_file_relative_path`].
+pub fn local_tasks_file_relative_path_legacy() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
         LazyLock::new(|| RelPath::from_unix_str(".zed/tasks.json").unwrap());
     *CACHED
@@ -528,9 +560,20 @@ pub fn task_file_name() -> &'static str {
     "tasks.json"
 }
 
-/// Returns the relative path to a `debug.json` file within a project.
-/// .zed/debug.json
+/// Returns the canonical relative path to a `debug.json` file within a project.
 pub fn local_debug_file_relative_path() -> &'static RelPath {
+    static CACHED: LazyLock<&'static RelPath> = LazyLock::new(|| {
+        RelPath::from_unix_str(".orion/debug.json")
+            .expect("canonical project debug path must be normalized")
+    });
+    *CACHED
+}
+
+/// Returns the legacy Zed relative path to a project `debug.json` file.
+///
+/// This path is read-only compatibility input. New files must use
+/// [`local_debug_file_relative_path`].
+pub fn local_debug_file_relative_path_legacy() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
         LazyLock::new(|| RelPath::from_unix_str(".zed/debug.json").unwrap());
     *CACHED
@@ -704,6 +747,40 @@ mod tests {
         assert_eq!(
             remote_wsl_server_dir_relative().as_unix_str(),
             ".orion_wsl_server"
+        );
+    }
+
+    #[test]
+    fn project_configuration_paths_use_orion_for_new_files() {
+        assert_eq!(local_settings_folder_name(), ".orion");
+        assert_eq!(
+            local_settings_file_relative_path().as_unix_str(),
+            ".orion/settings.json"
+        );
+        assert_eq!(
+            local_tasks_file_relative_path().as_unix_str(),
+            ".orion/tasks.json"
+        );
+        assert_eq!(
+            local_debug_file_relative_path().as_unix_str(),
+            ".orion/debug.json"
+        );
+    }
+
+    #[test]
+    fn legacy_project_configuration_paths_remain_readable_only() {
+        assert_eq!(local_settings_folder_name_legacy(), ".zed");
+        assert_eq!(
+            local_settings_file_relative_path_legacy().as_unix_str(),
+            ".zed/settings.json"
+        );
+        assert_eq!(
+            local_tasks_file_relative_path_legacy().as_unix_str(),
+            ".zed/tasks.json"
+        );
+        assert_eq!(
+            local_debug_file_relative_path_legacy().as_unix_str(),
+            ".zed/debug.json"
         );
     }
 }

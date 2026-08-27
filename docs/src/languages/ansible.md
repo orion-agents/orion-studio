@@ -16,7 +16,10 @@ Support for Ansible in Orion Studio is provided via a community-maintained [Ansi
 
 To avoid mishandling non-Ansible YAML files, the Ansible Language is not associated with any file extensions by default.
 
-To change this behavior, add a `"file_types"` section to the retained project-settings path `.zed/settings.json`, or to your Orion Studio user settings at `~/.config/orion-studio/settings.json`, to match your folder and naming conventions. For example:
+To change this behavior, add a `"file_types"` section to the project settings at
+`.orion/settings.json`, or to your Orion Studio user settings at
+`~/.config/orion-studio/settings.json`, to match your folder and naming
+conventions. For example:
 
 ```json [settings]
 {

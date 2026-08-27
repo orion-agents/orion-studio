@@ -10,8 +10,18 @@ Orion Studio opens a worktree each time you run `orion some/path`, drag a file o
 
 > Note: This is broader than a [Git worktree](./git.md#git-worktrees). A Git worktree is a linked checkout managed by Git; Orion Studio's trust model applies to every opened file or folder root, including Git worktrees.
 
-Every worktree opened may contain a `.zed/settings.json` file with extra configuration options that may require installing and spawning language servers or MCP servers. The `.zed` project directory is a retained compatibility path.
-To let users choose based on their own threat model and risk tolerance, all worktrees start in Restricted Mode. Restricted Mode prevents downloading and running related items from `.zed/settings.json`. Until a worktree is trusted, Orion Studio does not run related untrusted actions and waits for user confirmation. This gives users a chance to review project settings, MCP servers, and language servers.
+Every worktree opened may contain an `.orion/settings.json` file with extra
+configuration options that may require installing and spawning language servers
+or MCP servers. Existing `.zed/settings.json` files are recognized only as a
+legacy, read-only fallback; `.orion/settings.json` takes precedence in the same
+scope.
+
+To let you choose based on your threat model and risk tolerance, all worktrees
+start in Restricted Mode. Restricted Mode prevents downloading and running
+related items from either project settings path. Until a worktree is trusted,
+Orion Studio does not run related untrusted actions and waits for your
+confirmation. This gives you a chance to review project settings, MCP servers,
+and language servers.
 
 Orion Studio still trusts tools it installs globally. Global MCP servers and global language servers such as Prettier and Copilot are installed and started as usual, independent of worktree trust.
 
@@ -26,7 +36,8 @@ This feature works locally and on SSH and WSL remote hosts. Orion Studio tracks 
 
 Restricted Mode prevents:
 
-- Project settings (`.zed/settings.json`) from being parsed and applied
+- Project settings (`.orion/settings.json` and the legacy, read-only fallback
+  `.zed/settings.json`) from being parsed and applied
 - Language servers from being installed and spawned
 - MCP servers from being installed and spawned
 

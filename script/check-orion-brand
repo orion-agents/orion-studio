@@ -106,6 +106,7 @@ MAX_BRAND_HITS = 100_000
 # Keep the spellings split so this checker does not report its own definitions.
 LOWER_PRODUCT = "z" + "ed"
 UPPER_PRODUCT = "Z" + "ED"
+TITLE_PRODUCT = "Z" + "ed"
 MATCHERS = (
     (
         "legacy-domain",
@@ -138,6 +139,14 @@ MATCHERS = (
         re.compile(
             r"(?<![A-Za-z0-9])" + re.escape(LOWER_PRODUCT) + r"://",
             re.IGNORECASE,
+        ),
+    ),
+    (
+        "legacy-camel-product-token",
+        re.compile(
+            r"(?<=[a-z0-9])"
+            + re.escape(TITLE_PRODUCT)
+            + r"(?=[A-Z0-9_]|$)"
         ),
     ),
     (

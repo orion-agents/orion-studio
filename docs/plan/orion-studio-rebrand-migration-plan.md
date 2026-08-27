@@ -1,5 +1,41 @@
 # Orion Studio 品牌与底层身份迁移改造计划
 
+## 2026-08-27 Local Init Runtime Closure
+
+> **当前生效状态：** 本节覆盖下方与之冲突的旧本地运行结论。Init 的范围收敛为
+> 用户可见品牌、兼容迁移和本机 Dev 可用性；不扩大为内部架构重命名、功能开发或
+> 公开发布。
+
+**Init v1/v2：`DONE`；本地 macOS Dev：`VERIFIED`；公开 Preview：`NO-GO`。**
+
+- **基线：** `release/orion-studio-v1.16.1-pre@5bf21d2707eb95d35ce16c10ba864838a3963c9a`。
+  本轮未提交、未推送、未打 tag、未创建 Release。
+- **根因：** “进程存在但窗口数为 0”是 System Events 对 inaccessible GPUI 应用的
+  探测假阴性，不是窗口创建失败。CoreGraphics 在首次启动和重启后都确认 1 个
+  layer 0、alpha 1、onscreen 的 1482×879 主窗口；现有窗口恢复和无窗口兜底正常工作，
+  因此没有修改启动、GPUI、Workspace、Project 或 Editor 源码。
+- **最小修改：** 仅为 6 条迁移测试夹具补充精确品牌 allowlist，并追加本节和关联
+  证据。`./script/check-orion-brand --max-findings 1000` 为 6,066/6,066 approved，
+  0 unapproved、0 stale、0 ambiguous、0 errors；`./script/test-orion-brand` 3/3 通过。
+- **迁移验证：** `CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 cargo +stable test -p paths`
+  64/64 通过。两处完成 marker 均为权限 600 的普通文件，旧数据目录保留，无遗留
+  迁移临时目录；应用实际打开 Orion LMDB，日志无 panic、fatal、迁移冲突或锁冲突。
+- **构建与安装：** 主 App Release 88m24s，remote server 22m06s；首次打包尾段遇到
+  一次 GitHub TLS 下载中断，缓存复跑后成功。`Orion Studio Dev.app` 1.16.1 为 arm64、
+  400 MiB、ad-hoc 签名，已安装到 `/Applications/Orion Studio Dev.app`，嵌入当前 HEAD。
+  DMG 验证通过，SHA-256 为
+  `944fde28ae03ab53586761c55ad4d51788429cdaa6684f3c0a1f2207d9037436`。
+- **运行验收：** 正常启动、打开仓库、打开 `README.md`、应用菜单正常退出、重启恢复
+  均通过；重启后窗口标题为 `orion-studio — README.md`，项目根目录和 LMDB 句柄恢复。
+  应用保持运行供本机使用。
+- **资源：** 构建期主 App rustc 采样峰值约 3.5 GB RSS，remote server 约 4.6 GB RSS，
+  无内存 throttling。`cargo clean` 删除 58,667 个文件、24.5 GiB；已安装 App、源码、
+  用户配置、数据库和旧数据均未删除。
+- **剩余边界：** llama.cpp 502 是非阻断的外部 provider 噪声。Developer ID、Apple
+  公证、干净机器验收和 GitHub 公开发布仍未执行。
+
+详细证据见 `docs/plan/evidence/INIT-V2-V09-REGRESSION-GATE.md` 的同日收尾记录。
+
 ## 2026-08-15 Finalization Update
 
 > **当前生效状态：** 本节是截至 2026-08-15 的最终本地验收结论，覆盖下方与之冲突的旧结论。下方旧状态、旧命令结果和旧阻塞记录仅作为历史证据保留，不得再将其中的 `PARTIAL`、`PENDING` 或 Metal/WebRTC 阻塞描述当作当前状态。

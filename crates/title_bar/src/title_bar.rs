@@ -37,6 +37,7 @@ use project::{
     Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
     trusted_worktrees::TrustedWorktrees,
 };
+use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
 
@@ -357,6 +358,9 @@ impl Render for TitleBar {
                 status,
                 client::Status::SignedOut | client::Status::AuthenticationError
             );
+        let hosted_services_available = ReleaseChannel::try_global(cx)
+            .unwrap_or_default()
+            .hosted_services_available();
 
         children.push(
             h_flex()
@@ -364,15 +368,18 @@ impl Render for TitleBar {
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(self.render_call_controls(window, cx))
-                .children(self.render_connection_status(status, cx))
+                .when(hosted_services_available, |this| {
+                    this.children(self.render_connection_status(status, cx))
+                })
                 .child(self.update_version.clone())
                 .when(
-                    user.is_none()
+                    hosted_services_available
+                        && user.is_none()
                         && is_signed_out_or_auth_error
                         && TitleBarSettings::get_global(cx).show_sign_in,
                     |this| this.child(self.render_sign_in_button(cx)),
                 )
-                .when(is_signing_in, |this| {
+                .when(hosted_services_available && is_signing_in, |this| {
                     this.child(
                         Label::new("Signing in…")
                             .size(LabelSize::Small)
@@ -1205,6 +1212,12 @@ impl TitleBar {
 
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let show_update_button = self.update_version.read(cx).show_update_in_menu_bar();
+        let hosted_services_available = ReleaseChannel::try_global(cx)
+            .unwrap_or_default()
+            .hosted_services_available();
+        let extension_registry_available = ReleaseChannel::try_global(cx)
+            .unwrap_or_default()
+            .extension_registry_available();
 
         let user_store = self.user_store.clone();
         let workspace = self.workspace.clone();
@@ -1280,7 +1293,7 @@ impl TitleBar {
                 let is_custom = matches!(current_layout, WindowLayout::Custom(_));
 
                 ContextMenu::build(window, cx, |menu, _, _cx| {
-                    menu.when(is_signed_in, |this| {
+                    menu.when(hosted_services_available && is_signed_in, |this| {
                         let username = username.clone();
                         this.custom_entry(
                             move |_window, _cx| {
@@ -1322,60 +1335,68 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .map(|this| {
-                        let mut this = this.header("Organization");
+                    .when(
+                        hosted_services_available && !organizations.is_empty(),
+                        |this| {
+                            let mut this = this.header("Organization");
 
-                        for (organization, plan) in &organizations {
-                            let organization = organization.clone();
-                            let plan = *plan;
+                            for (organization, plan) in &organizations {
+                                let organization = organization.clone();
+                                let plan = *plan;
 
-                            let is_current =
-                                current_organization
-                                    .as_ref()
-                                    .is_some_and(|current_organization| {
+                                let is_current = current_organization.as_ref().is_some_and(
+                                    |current_organization| {
                                         current_organization.id == organization.id
-                                    });
+                                    },
+                                );
 
-                            this = this.custom_entry(
-                                {
-                                    let organization = organization.clone();
-                                    move |_window, _cx| {
-                                        h_flex()
-                                            .w_full()
-                                            .gap_4()
-                                            .justify_between()
-                                            .child(
-                                                h_flex()
-                                                    .gap_1()
-                                                    .child(Label::new(&organization.name))
-                                                    .when(is_current, |this| {
-                                                        this.child(
-                                                            Icon::new(IconName::Check)
-                                                                .color(Color::Accent),
-                                                        )
-                                                    }),
-                                            )
-                                            .children(plan.map(|plan| PlanChip::new(plan)))
-                                            .into_any_element()
-                                    }
-                                },
-                                {
-                                    let user_store = user_store.clone();
-                                    let organization = organization.clone();
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        let task = user_store.update(cx, |user_store, cx| {
-                                            user_store
-                                                .set_current_organization(organization.clone(), cx)
-                                        });
-                                        task.detach_and_notify_err(workspace.clone(), window, cx);
-                                    }
-                                },
-                            );
-                        }
+                                this = this.custom_entry(
+                                    {
+                                        let organization = organization.clone();
+                                        move |_window, _cx| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_4()
+                                                .justify_between()
+                                                .child(
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .child(Label::new(&organization.name))
+                                                        .when(is_current, |this| {
+                                                            this.child(
+                                                                Icon::new(IconName::Check)
+                                                                    .color(Color::Accent),
+                                                            )
+                                                        }),
+                                                )
+                                                .children(plan.map(|plan| PlanChip::new(plan)))
+                                                .into_any_element()
+                                        }
+                                    },
+                                    {
+                                        let user_store = user_store.clone();
+                                        let organization = organization.clone();
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            let task = user_store.update(cx, |user_store, cx| {
+                                                user_store.set_current_organization(
+                                                    organization.clone(),
+                                                    cx,
+                                                )
+                                            });
+                                            task.detach_and_notify_err(
+                                                workspace.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    },
+                                );
+                            }
 
-                        this.separator()
-                    })
+                            this.separator()
+                        },
+                    )
                     .action("Settings", zed_actions::OpenSettings.boxed_clone())
                     .action("Keymap", Box::new(zed_actions::OpenKeymap))
                     .action(
@@ -1387,7 +1408,11 @@ impl TitleBar {
                         zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                     )
                     .action(
-                        "Extensions",
+                        if extension_registry_available {
+                            "Extensions"
+                        } else {
+                            "Local Extensions"
+                        },
                         zed_actions::Extensions::default().boxed_clone(),
                     )
                     .when(ai_enabled, |menu| {
@@ -1420,7 +1445,7 @@ impl TitleBar {
                                 })
                             })
                     })
-                    .when(is_signed_in, |this| {
+                    .when(hosted_services_available && is_signed_in, |this| {
                         this.separator()
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })

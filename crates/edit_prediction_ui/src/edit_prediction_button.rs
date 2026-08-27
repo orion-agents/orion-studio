@@ -54,8 +54,6 @@ actions!(
 
 const COPILOT_SETTINGS_PATH: &str = "/settings/copilot";
 const COPILOT_SETTINGS_URL: &str = concat!("https://github.com", "/settings/copilot");
-const PRIVACY_DOCS: &str = "https://orion.dev/docs/ai/privacy-and-security";
-
 struct CopilotErrorToast;
 
 pub struct EditPredictionButton {
@@ -80,6 +78,12 @@ impl Render for EditPredictionButton {
         }
 
         let language_settings = all_language_settings(None, cx);
+
+        if language_settings.edit_predictions.provider == EditPredictionProvider::Orion
+            && !hosted_orion_edit_predictions_available(cx)
+        {
+            return div().hidden();
+        }
 
         match language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
@@ -412,7 +416,7 @@ impl Render for EditPredictionButton {
                                 );
                                 // Keep dispatching the public legacy action used by existing keymaps.
                                 window.dispatch_action(
-                                    zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                                    zed_actions::OpenOrionPredictOnboarding.boxed_clone(),
                                     cx,
                                 );
                             })),
@@ -979,7 +983,10 @@ impl EditPredictionButton {
                         "Edit Prediction Menu Action",
                         action = "view_docs",
                     );
-                    cx.open_url(PRIVACY_DOCS);
+                    cx.open_url(&release_channel::docs_url(
+                        "ai/privacy-and-security",
+                        cx,
+                    ));
                 })
         );
 
@@ -1492,7 +1499,9 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
 pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     let mut providers = Vec::new();
 
-    providers.push(EditPredictionProvider::Orion);
+    if hosted_orion_edit_predictions_available(cx) {
+        providers.push(EditPredictionProvider::Orion);
+    }
 
     let app_state = workspace::AppState::global(cx);
     if copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
@@ -1525,6 +1534,12 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     }
 
     providers
+}
+
+fn hosted_orion_edit_predictions_available(cx: &App) -> bool {
+    release_channel::ReleaseChannel::try_global(cx)
+        .unwrap_or(*release_channel::RELEASE_CHANNEL)
+        .hosted_services_available()
 }
 
 fn toggle_show_edit_predictions_for_language(

@@ -111,7 +111,10 @@ TBD: Get this working
 
 ### REditorSupport/languageserver Configuration
 
-You can configure the [R languageserver settings](https://github.com/REditorSupport/languageserver#settings) through Orion Studio project settings at the retained compatibility path `.zed/settings.json`, or through Orion Studio user settings at `~/.config/orion-studio/settings.json`:
+You can configure the
+[R languageserver settings](https://github.com/REditorSupport/languageserver#settings)
+through project settings at `.orion/settings.json`, or through Orion Studio user
+settings at `~/.config/orion-studio/settings.json`:
 
 For example to disable Lintr linting and suppress code snippet suggestions (both enabled by default):
 

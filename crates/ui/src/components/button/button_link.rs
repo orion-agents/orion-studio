@@ -91,7 +91,11 @@ impl Component for ButtonLink {
             .child(
                 example_group(vec![single_example(
                     "Simple",
-                    ButtonLink::new("orion.dev", "https://orion.dev").into_any_element(),
+                    ButtonLink::new(
+                        "Orion Studio",
+                        "https://github.com/orion-agents/orion-studio",
+                    )
+                    .into_any_element(),
                 )])
                 .vertical(),
             )

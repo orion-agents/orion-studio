@@ -507,14 +507,17 @@ pub enum ClientRegistrationStrategy {
     Unavailable,
 }
 
-/// Determine how to register with the authorization server, following the
-/// spec's recommended priority: CIMD first, DCR fallback.
-pub fn determine_registration_strategy(
+/// Determine how to register with the authorization server while allowing the
+/// application layer to disable an unavailable CIMD identity.
+pub fn determine_registration_strategy_with_cimd(
     auth_server_metadata: &AuthServerMetadata,
+    cimd_client_id: Option<&str>,
 ) -> ClientRegistrationStrategy {
-    if auth_server_metadata.client_id_metadata_document_supported {
+    if auth_server_metadata.client_id_metadata_document_supported
+        && let Some(client_id) = cimd_client_id
+    {
         ClientRegistrationStrategy::Cimd {
-            client_id: CIMD_URL.to_string(),
+            client_id: client_id.to_string(),
         }
     } else if let Some(ref endpoint) = auth_server_metadata.registration_endpoint {
         ClientRegistrationStrategy::Dcr {
@@ -523,6 +526,14 @@ pub fn determine_registration_strategy(
     } else {
         ClientRegistrationStrategy::Unavailable
     }
+}
+
+/// Determine how to register with the authorization server, following the
+/// spec's recommended priority: CIMD first, DCR fallback.
+pub fn determine_registration_strategy(
+    auth_server_metadata: &AuthServerMetadata,
+) -> ClientRegistrationStrategy {
+    determine_registration_strategy_with_cimd(auth_server_metadata, Some(CIMD_URL))
 }
 
 // -- PKCE (RFC 7636) ---------------------------------------------------------
@@ -894,7 +905,20 @@ pub async fn resolve_client_registration(
     discovery: &OAuthDiscovery,
     redirect_uri: &str,
 ) -> Result<OAuthClientRegistration> {
-    match determine_registration_strategy(&discovery.auth_server_metadata) {
+    resolve_client_registration_with_cimd(http_client, discovery, redirect_uri, Some(CIMD_URL))
+        .await
+}
+
+/// Resolve OAuth client registration using the supplied CIMD identity. Passing
+/// `None` disables CIMD while preserving standard Dynamic Client Registration.
+pub async fn resolve_client_registration_with_cimd(
+    http_client: &Arc<dyn HttpClient>,
+    discovery: &OAuthDiscovery,
+    redirect_uri: &str,
+    cimd_client_id: Option<&str>,
+) -> Result<OAuthClientRegistration> {
+    match determine_registration_strategy_with_cimd(&discovery.auth_server_metadata, cimd_client_id)
+    {
         ClientRegistrationStrategy::Cimd { client_id } => Ok(OAuthClientRegistration {
             client_id,
             client_secret: None,
@@ -914,6 +938,16 @@ pub async fn resolve_client_registration(
             .await
         }
         ClientRegistrationStrategy::Unavailable => {
+            if discovery
+                .auth_server_metadata
+                .client_id_metadata_document_supported
+                && cimd_client_id.is_none()
+            {
+                bail!(
+                    "OAuth client metadata is unavailable in this release. Configure a pre-registered OAuth client or use an authorization server that supports Dynamic Client Registration"
+                )
+            }
+
             bail!("authorization server supports neither CIMD nor DCR")
         }
     }
@@ -1654,8 +1688,24 @@ mod tests {
 
     // -- Client registration strategy tests ----------------------------------
 
+    fn auth_server_metadata_for_registration(
+        client_id_metadata_document_supported: bool,
+        registration_endpoint: Option<Url>,
+    ) -> AuthServerMetadata {
+        AuthServerMetadata {
+            issuer: Url::parse("https://auth.example.com").unwrap(),
+            authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
+            token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+            registration_endpoint,
+            scopes_supported: None,
+            code_challenge_methods_supported: Some(vec!["S256".into()]),
+            client_id_metadata_document_supported,
+            grant_types_supported: None,
+        }
+    }
+
     #[test]
-    fn test_registration_strategy_prefers_cimd() {
+    fn test_registration_strategy_prefers_available_cimd() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
@@ -1667,10 +1717,34 @@ mod tests {
             grant_types_supported: None,
         };
         assert_eq!(
-            determine_registration_strategy(&metadata),
+            determine_registration_strategy_with_cimd(&metadata, Some(CIMD_URL)),
             ClientRegistrationStrategy::Cimd {
                 client_id: CIMD_URL.to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn test_disabled_cimd_uses_dcr_instead() {
+        let registration_endpoint = Url::parse("https://auth.example.com/register").unwrap();
+        let metadata =
+            auth_server_metadata_for_registration(true, Some(registration_endpoint.clone()));
+
+        assert_eq!(
+            determine_registration_strategy_with_cimd(&metadata, None),
+            ClientRegistrationStrategy::Dcr {
+                registration_endpoint,
+            }
+        );
+    }
+
+    #[test]
+    fn test_disabled_cimd_without_dcr_is_unavailable() {
+        let metadata = auth_server_metadata_for_registration(true, None);
+
+        assert_eq!(
+            determine_registration_strategy_with_cimd(&metadata, None),
+            ClientRegistrationStrategy::Unavailable,
         );
     }
 
@@ -1688,7 +1762,7 @@ mod tests {
             grant_types_supported: None,
         };
         assert_eq!(
-            determine_registration_strategy(&metadata),
+            determine_registration_strategy_with_cimd(&metadata, Some(CIMD_URL)),
             ClientRegistrationStrategy::Dcr {
                 registration_endpoint: reg_endpoint,
             }
@@ -1708,7 +1782,7 @@ mod tests {
             grant_types_supported: None,
         };
         assert_eq!(
-            determine_registration_strategy(&metadata),
+            determine_registration_strategy_with_cimd(&metadata, Some(CIMD_URL)),
             ClientRegistrationStrategy::Unavailable,
         );
     }
@@ -2301,6 +2375,111 @@ mod tests {
             assert_eq!(registration.client_id, CIMD_URL);
             assert_eq!(registration.client_secret, None);
             assert_eq!(discovery.scopes, vec!["mcp:read"]);
+        });
+    }
+
+    #[test]
+    fn test_preview_registration_request_boundary_contains_no_orion_url() {
+        gpui::block_on(async {
+            let requests = Arc::new(SyncMutex::new(Vec::new()));
+            let client = make_fake_http_client({
+                let requests = requests.clone();
+                move |request| {
+                    let requests = requests.clone();
+                    Box::pin(async move {
+                        let (parts, mut body) = request.into_parts();
+                        let mut body_text = String::new();
+                        body.read_to_string(&mut body_text).await?;
+                        requests
+                            .lock()
+                            .push(format!("{}\n{}", parts.uri, body_text));
+
+                        json_response(
+                            201,
+                            r#"{
+                                "client_id": "preview-dcr-client",
+                                "client_secret": "preview-dcr-secret"
+                            }"#,
+                        )
+                    })
+                }
+            });
+            let discovery = OAuthDiscovery {
+                resource_metadata: ProtectedResourceMetadata {
+                    resource: Url::parse("https://mcp.example.com").unwrap(),
+                    authorization_servers: vec![Url::parse("https://auth.example.com").unwrap()],
+                    scopes_supported: Some(vec!["mcp:read".into()]),
+                },
+                auth_server_metadata: auth_server_metadata_for_registration(
+                    true,
+                    Some(Url::parse("https://auth.example.com/register").unwrap()),
+                ),
+                scopes: vec!["mcp:read".into()],
+            };
+
+            let registration = resolve_client_registration_with_cimd(
+                &client,
+                &discovery,
+                "http://127.0.0.1:12345/callback",
+                None,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(registration.client_id, "preview-dcr-client");
+            let auth_url = build_authorization_url(
+                &discovery.auth_server_metadata,
+                &registration.client_id,
+                "http://127.0.0.1:12345/callback",
+                &discovery.scopes,
+                discovery.resource_metadata.resource.as_str(),
+                &generate_pkce_challenge(),
+                "preview-state",
+            );
+            assert!(!auth_url.as_str().contains("orion.dev"));
+
+            let requests = requests.lock();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].starts_with("https://auth.example.com/register"));
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| !request.contains("orion.dev"))
+            );
+        });
+    }
+
+    #[test]
+    fn test_preview_cimd_only_server_returns_actionable_error_without_http_request() {
+        gpui::block_on(async {
+            let client = make_fake_http_client(|request| {
+                Box::pin(
+                    async move { unreachable!("unexpected OAuth request to {}", request.uri()) },
+                )
+            });
+            let discovery = OAuthDiscovery {
+                resource_metadata: ProtectedResourceMetadata {
+                    resource: Url::parse("https://mcp.example.com").unwrap(),
+                    authorization_servers: vec![Url::parse("https://auth.example.com").unwrap()],
+                    scopes_supported: None,
+                },
+                auth_server_metadata: auth_server_metadata_for_registration(true, None),
+                scopes: Vec::new(),
+            };
+
+            let error = resolve_client_registration_with_cimd(
+                &client,
+                &discovery,
+                "http://127.0.0.1:12345/callback",
+                None,
+            )
+            .await
+            .unwrap_err();
+            let message = error.to_string();
+
+            assert!(message.contains("unavailable in this release"));
+            assert!(message.contains("pre-registered OAuth client"));
+            assert!(message.contains("Dynamic Client Registration"));
         });
     }
 

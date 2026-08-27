@@ -1285,7 +1285,7 @@ mod tests {
 
     impl AgentServer for TestAgentServer {
         fn logo(&self) -> IconName {
-            IconName::ZedAssistant
+            IconName::OrionAssistant
         }
 
         fn agent_id(&self) -> AgentId {

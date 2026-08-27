@@ -25,6 +25,8 @@ use windows::{
 
 use crate::{Args, OpenListener, RawOpenRequest};
 
+use super::open_listener::{canonical_cli_url, canonical_dock_action_url};
+
 #[inline]
 fn is_first_instance() -> bool {
     unsafe {
@@ -110,13 +112,13 @@ fn retrieve_message_from_pipe_inner(pipe: HANDLE) -> anyhow::Result<String> {
 // This part of code is mostly from crates/cli/src/main.rs
 fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     if let Some(dock_menu_action_idx) = args.dock_action {
-        let url = format!("zed-dock-action://{}", dock_menu_action_idx);
+        let url = canonical_dock_action_url(dock_menu_action_idx);
         return write_message_to_instance_pipe(url.as_bytes());
     }
 
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("handshake before Orion Studio spawn")?;
-    let url = format!("zed-cli://{server_name}");
+    let url = canonical_cli_url(&server_name);
 
     let request = {
         let mut paths = vec![];

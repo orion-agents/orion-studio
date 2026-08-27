@@ -8,6 +8,11 @@ description: Orion Studio telemetry defaults, controls, and deployment boundarie
 Client diagnostics and metrics are disabled by default. No public Orion
 telemetry or crash-reporting endpoint is assumed to be deployed.
 
+Preview and Dev builds enforce this boundary at the network client: metrics,
+diagnostics, and crash-report uploads are discarded without making a hosted
+request. Changing the settings below can still enable local event inspection,
+but cannot re-enable hosted telemetry in those channels.
+
 Open Settings with {#kb zed::OpenSettings} and search for **telemetry**, or edit
 your settings file:
 
@@ -25,7 +30,8 @@ it does not identify the product shown in the UI.
 
 ## Enabling telemetry in a deployment
 
-An operator must configure an Orion-owned endpoint and publish the data fields,
+Only a separately configured Stable or Nightly deployment may enable hosted
+telemetry. Its operator must configure an Orion-owned endpoint and publish the data fields,
 purpose, retention, subprocessors, regional handling, deletion process, and
 contact information before enabling telemetry. The application must not send
 Orion Studio diagnostics to a Zed endpoint.

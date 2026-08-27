@@ -24,10 +24,13 @@ To build Orion Studio from source, see the [macOS development documentation](./d
 
 ## System Requirements
 
-- macOS 10.15.7 (Catalina) or later
-- Apple Silicon (M1/M2/M3/M4) or Intel processor
+The supported Preview requires:
 
-Orion Studio uses Metal for GPU-accelerated rendering, which is available on all supported macOS versions.
+- macOS 11.0 or later; and
+- Apple Silicon (arm64).
+
+Intel builds and older macOS releases are not part of the current supported
+release. Orion Studio uses Metal for GPU-accelerated rendering.
 
 ## Installing the CLI
 
@@ -79,19 +82,18 @@ rm -f ~/.local/bin/orion-studio ~/.local/bin/orion /usr/local/bin/orion-studio
 
 ### Orion Studio won't open or shows "damaged" warning
 
-If macOS reports that Orion Studio is damaged or can't be opened, it's likely a Gatekeeper issue. Try:
-
-1. Right-click (or Control-click) on Orion Studio in Applications
-2. Select "Open" from the context menu
-3. Click "Open" in the dialog that appears
-
-This tells macOS to trust the application.
-
-If that doesn't work, remove the quarantine attribute:
+If macOS reports that Orion Studio is damaged or cannot be opened, do not remove
+quarantine attributes or force the app open. Verify the downloaded checksum,
+signature, Gatekeeper assessment, and architecture:
 
 ```sh
-xattr -cr /Applications/Orion Studio.app
+codesign --verify --deep --strict --verbose=2 "/Applications/Orion Studio Preview.app"
+spctl --assess --type execute --verbose=4 "/Applications/Orion Studio Preview.app"
+file "/Applications/Orion Studio Preview.app/Contents/MacOS/orion-studio"
 ```
+
+If any check fails, delete the app and DMG and report the release URL and redacted
+command output through the [support process](../SUPPORT.md).
 
 ### CLI command not found
 

@@ -17,6 +17,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
   RUST_BACKTRACE: '1'
 
 jobs:
@@ -48,6 +49,18 @@ jobs:
         run: |
           bash -n script/validate-preview-release script/test-preview-release
           ./script/test-preview-release
+      - name: Configure trusted SSH release tag signers
+        env:
+          ALLOWED_SIGNERS_BASE64: ${{ vars.ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 }}
+        run: |
+          set -euo pipefail
+          [[ -n "${ALLOWED_SIGNERS_BASE64}" ]] || { echo "::error::ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 is required"; exit 1; }
+          allowed_signers_file="${RUNNER_TEMP}/orion-studio-release-allowed-signers"
+          printf '%s' "${ALLOWED_SIGNERS_BASE64}" | base64 --decode >"${allowed_signers_file}"
+          [[ -s "${allowed_signers_file}" ]] || { echo "::error::decoded release allowed-signers file is empty"; exit 1; }
+          chmod 600 "${allowed_signers_file}"
+          git config --local gpg.format ssh
+          git config --local gpg.ssh.allowedSignersFile "${allowed_signers_file}"
       - id: release
         name: Validate tag, main ancestry, channel, and version
         env:
@@ -62,8 +75,12 @@ jobs:
   build_preview:
     name: Build, sign, notarize, and verify macOS arm64
     needs: validate_release
-    runs-on: macos-15
-    timeout-minutes: 120
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - orion-studio-macos-release
+    timeout-minutes: 180
     permissions:
       contents: read
     environment:
@@ -77,16 +94,16 @@ jobs:
     steps:
       - name: Verify Apple Silicon runner and raw disk capacity
         env:
-          MINIMUM_FREE_GIB: '12'
+          MINIMUM_FREE_GIB: '100'
         run: |
           set -euo pipefail
-          [[ "$(uname -m)" == arm64 ]] || { echo "::error::macos-15 runner must report arm64"; exit 1; }
+          [[ "$(uname -m)" == arm64 ]] || { echo "::error::the dedicated release runner must report arm64"; exit 1; }
           available_kib=$(LC_ALL=C df -Pk "${GITHUB_WORKSPACE}" | awk 'NR == 2 { print $4 }')
           required_kib=$((MINIMUM_FREE_GIB * 1024 * 1024))
           [[ "${available_kib}" =~ ^[0-9]+$ ]] || { echo "::error::could not parse runner disk capacity"; exit 1; }
           (( available_kib >= required_kib )) || { echo "::error::runner has ${available_kib} KiB free; bootstrap build requires at least ${MINIMUM_FREE_GIB} GiB before checkout"; exit 1; }
           df -h "${GITHUB_WORKSPACE}"
-          echo "::notice::the standard 14 GB runner is capacity-experimental; the observed local release target was about 18 GB, so any capacity failure blocks the draft release"
+          echo "::notice::the dedicated release runner must provide at least ${MINIMUM_FREE_GIB} GiB free before checkout"
       - name: Check out immutable preview commit
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -95,12 +112,24 @@ jobs:
           fetch-tags: false
           persist-credentials: false
       - name: Verify post-checkout disk capacity
-        run: ./script/validate-preview-release disk-space 10 .
+        run: ./script/validate-preview-release disk-space 90 .
       - name: Revalidate checked-out source
         env:
           EXPECTED_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
           PREVIEW_TAG: ${{ needs.validate_release.outputs.tag }}
         run: ./script/validate-preview-release checkout "${PREVIEW_TAG}" "${EXPECTED_COMMIT}"
+      - name: Run immutable source release gates
+        run: |
+          set -euo pipefail
+          bash -n script/validate-preview-release script/test-preview-release script/bundle-mac
+          ./script/test-preview-release
+          ./script/test-orion-brand
+          ./script/check-orion-brand
+          ./script/check-secrets
+          ./script/check-macos-entitlements
+          ./script/test-uninstall
+          cargo fmt --all -- --check
+          git diff --check
       - name: Validate signing and notarization inputs before compiling
         env:
           APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
@@ -135,6 +164,11 @@ jobs:
           set -euo pipefail
           env GITHUB_REF_TYPE=tag GITHUB_REF_NAME="${PREVIEW_TAG}" \
             ./script/bundle-mac aarch64-apple-darwin
+      - name: Record post-build disk usage
+        run: |
+          set -euo pipefail
+          df -h "${GITHUB_WORKSPACE}"
+          du -sh target target/aarch64-apple-darwin/release
       - name: Verify capacity for artifact validation and upload
         run: ./script/validate-preview-release disk-space 1 target/aarch64-apple-darwin/release
       - name: Verify Developer ID, notarization, DMG, identity, version, and architecture
@@ -162,6 +196,14 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Reclaim workspace build artifacts
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.toml ]]; then
+            cargo clean
+          fi
+          df -h "${GITHUB_WORKSPACE}"
 
   create_draft_prerelease:
     name: Create draft prerelease and upload verified assets
@@ -182,6 +224,18 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+      - name: Configure trusted SSH release tag signers
+        env:
+          ALLOWED_SIGNERS_BASE64: ${{ vars.ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 }}
+        run: |
+          set -euo pipefail
+          [[ -n "${ALLOWED_SIGNERS_BASE64}" ]] || { echo "::error::ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 is required"; exit 1; }
+          allowed_signers_file="${RUNNER_TEMP}/orion-studio-release-allowed-signers"
+          printf '%s' "${ALLOWED_SIGNERS_BASE64}" | base64 --decode >"${allowed_signers_file}"
+          [[ -s "${allowed_signers_file}" ]] || { echo "::error::decoded release allowed-signers file is empty"; exit 1; }
+          chmod 600 "${allowed_signers_file}"
+          git config --local gpg.format ssh
+          git config --local gpg.ssh.allowedSignersFile "${allowed_signers_file}"
       - name: Revalidate tag immediately before creating the draft
         env:
           EXPECTED_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}

@@ -648,7 +648,11 @@ impl DebugPanel {
         let documentation_button = || {
             IconButton::new("debug-open-documentation", IconName::CircleHelp)
                 .icon_size(IconSize::Small)
-                .on_click(move |_, _, cx| cx.open_url("https://orion.dev/docs/debugger"))
+                .on_click(move |_, _, cx| {
+                    cx.open_url(
+                        "https://github.com/orion-agents/orion-studio/blob/main/docs/src/debugger.md",
+                    )
+                })
                 .tooltip(Tooltip::text("Open Documentation"))
         };
 
@@ -1183,7 +1187,7 @@ impl DebugPanel {
                             .read(cx)
                             .project_path_for_absolute_path(path, cx)
                             .context(
-                                "Couldn't get project path for .zed/debug.json in active worktree",
+                                "Couldn't get project path for .orion/debug.json in active worktree",
                             )
                     })??;
 
@@ -1786,7 +1790,9 @@ impl Render for DebugPanel {
                                         .color(Color::Muted),
                                 )
                                 .on_click(|_, _, cx| {
-                                    cx.open_url("https://orion.dev/docs/debugger")
+                                    cx.open_url(
+                                        "https://github.com/orion-agents/orion-studio/blob/main/docs/src/debugger.md",
+                                    )
                                 }),
                         )
                         .child(

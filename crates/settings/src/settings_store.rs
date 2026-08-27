@@ -10,7 +10,7 @@ use gpui::{
     App, AppContext, AsyncApp, BorrowAppContext, Entity, Global, SharedString, Task, UpdateGlobal,
 };
 
-use paths::{local_settings_file_relative_path, task_file_name};
+use paths::{debug_task_file_name, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
 use serde_json::Value;
 use settings_content::{CommandAliasTarget, ParseStatus};
@@ -784,7 +784,7 @@ impl SettingsStore {
     }
 
     #[inline(always)]
-    fn parse_and_migrate_zed_settings<SettingsContentType: RootUserSettings>(
+    fn parse_and_migrate_settings<SettingsContentType: RootUserSettings>(
         &mut self,
         user_settings_content: &str,
         file: SettingsFile,
@@ -938,7 +938,7 @@ impl SettingsStore {
         }
         self.last_user_settings_content = Some(user_settings_content.to_string());
 
-        let (settings, parse_result) = self.parse_and_migrate_zed_settings::<UserSettingsContent>(
+        let (settings, parse_result) = self.parse_and_migrate_settings::<UserSettingsContent>(
             user_settings_content,
             SettingsFile::User,
         );
@@ -965,7 +965,7 @@ impl SettingsStore {
         }
         self.last_global_settings_content = Some(global_settings_content.to_string());
 
-        let (settings, parse_result) = self.parse_and_migrate_zed_settings::<SettingsContent>(
+        let (settings, parse_result) = self.parse_and_migrate_settings::<SettingsContent>(
             global_settings_content,
             SettingsFile::Global,
         );
@@ -1042,29 +1042,23 @@ impl SettingsStore {
         let content = settings_content
             .map(|content| content.trim())
             .filter(|content| !content.is_empty());
-        let mut zed_settings_changed = false;
+        let mut project_settings_changed = false;
         match (path.clone(), kind, content) {
             (LocalSettingsPath::InWorktree(directory_path), LocalSettingsKind::Tasks, _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
-                    path: directory_path
-                        .join(RelPath::from_unix_str(task_file_name()).unwrap())
-                        .as_std_path()
-                        .to_path_buf(),
+                    path: directory_path.as_std_path().join(task_file_name()),
                 });
             }
             (LocalSettingsPath::InWorktree(directory_path), LocalSettingsKind::Debug, _) => {
                 return Err(InvalidSettingsError::Debug {
                     message: "Attempted to submit debugger config into the settings store"
                         .to_string(),
-                    path: directory_path
-                        .join(RelPath::from_unix_str(task_file_name()).unwrap())
-                        .as_std_path()
-                        .to_path_buf(),
+                    path: directory_path.as_std_path().join(debug_task_file_name()),
                 });
             }
             (LocalSettingsPath::InWorktree(directory_path), LocalSettingsKind::Settings, None) => {
-                zed_settings_changed = self
+                project_settings_changed = self
                     .local_settings
                     .remove(&(root_id, directory_path.clone()))
                     .is_some();
@@ -1077,7 +1071,7 @@ impl SettingsStore {
                 Some(settings_contents),
             ) => {
                 let (new_settings, parse_result) = self
-                    .parse_and_migrate_zed_settings::<ProjectSettingsContent>(
+                    .parse_and_migrate_settings::<ProjectSettingsContent>(
                         settings_contents,
                         SettingsFile::Project((root_id, directory_path.clone())),
                     );
@@ -1098,7 +1092,7 @@ impl SettingsStore {
                                 project: new_settings,
                                 ..Default::default()
                             });
-                            zed_settings_changed = true;
+                            project_settings_changed = true;
                         }
                         btree_map::Entry::Occupied(mut o) => {
                             if &o.get().project != &new_settings {
@@ -1106,7 +1100,7 @@ impl SettingsStore {
                                     project: new_settings,
                                     ..Default::default()
                                 });
-                                zed_settings_changed = true;
+                                project_settings_changed = true;
                             }
                         }
                     }
@@ -1127,7 +1121,7 @@ impl SettingsStore {
             }
         }
         if let LocalSettingsPath::InWorktree(directory_path) = &path {
-            if zed_settings_changed {
+            if project_settings_changed {
                 self.recompute_values(Some((root_id, &directory_path)), cx);
             }
         }

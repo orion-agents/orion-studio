@@ -20,11 +20,14 @@ pub struct OpenBrowser {
     pub url: Arc<str>,
 }
 
-/// Opens a zed:// URL within the application.
+/// Opens a canonical or legacy application URL within Orion Studio.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = zed)]
+#[action(
+    namespace = orion_studio,
+    deprecated_aliases = ["zed::OpenZedUrl"]
+)]
 #[serde(deny_unknown_fields)]
-pub struct OpenZedUrl {
+pub struct OpenApplicationUrl {
     pub url: Arc<str>,
 }
 
@@ -65,16 +68,14 @@ actions!(
         OpenServerSettings,
         /// Quits the application.
         Quit,
-        /// Shows information about Zed.
+        /// Shows information about Orion Studio.
         About,
         /// Opens the documentation website.
         OpenDocs,
         /// Views open source licenses.
         OpenLicenses,
-        /// Opens the Zed status page.
+        /// Opens Orion Studio release status on GitHub.
         OpenStatusPage,
-        /// Opens the Zed merch store.
-        GetMerch,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -313,7 +314,7 @@ pub enum NewWorktreeBranchTarget {
 #[action(namespace = git)]
 #[serde(deny_unknown_fields)]
 pub struct CreateWorktree {
-    /// When this is None, Zed will randomly generate a worktree name.
+    /// When this is None, Orion Studio will randomly generate a worktree name.
     pub worktree_name: Option<String>,
     pub branch_target: NewWorktreeBranchTarget,
 }
@@ -427,8 +428,9 @@ pub mod feedback {
     actions!(
         feedback,
         [
-            /// Opens email client to send feedback to Zed support.
-            EmailZed,
+            /// Opens Orion Studio support on GitHub.
+            #[action(deprecated_aliases = ["feedback::EmailZed", "feedback::EmailOrionStudio"])]
+            OpenSupport,
             /// Opens the bug report form.
             FileBugReport,
             /// Opens the feature request form.
@@ -797,10 +799,11 @@ pub mod outline {
 }
 
 actions!(
-    zed_predict_onboarding,
+    orion_predict_onboarding,
     [
         /// Opens the edit prediction onboarding modal.
-        OpenZedPredictOnboarding
+        #[action(deprecated_aliases = ["zed_predict_onboarding::OpenZedPredictOnboarding"])]
+        OpenOrionPredictOnboarding
     ]
 );
 actions!(

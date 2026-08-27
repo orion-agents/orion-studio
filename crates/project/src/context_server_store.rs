@@ -35,6 +35,21 @@ use crate::{
 /// Prevents extremely large timeout values from tying up resources indefinitely.
 const MAX_TIMEOUT_SECS: u64 = 600; // 10 minutes
 
+fn orion_cimd_client_id(hosted_services_available: bool) -> Option<&'static str> {
+    hosted_services_available.then_some(oauth::CIMD_URL)
+}
+
+fn oauth_client_id_allowed(client_id: &str, hosted_services_available: bool) -> bool {
+    hosted_services_available || client_id != oauth::CIMD_URL
+}
+
+fn oauth_session_allowed(session: &OAuthSession, hosted_services_available: bool) -> bool {
+    oauth_client_id_allowed(
+        &session.client_registration.client_id,
+        hosted_services_available,
+    )
+}
+
 pub fn init(cx: &mut App) {
     extension::init(cx);
 }
@@ -995,8 +1010,12 @@ impl ContextServerStore {
                     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
                     let http_client = cx.update(|cx| cx.http_client());
 
+                    let hosted_services_available =
+                        cx.update(|cx| release_channel::hosted_services_available(cx));
                     match Self::load_session(&credentials_provider, url, &cx).await {
-                        Ok(Some(session)) => {
+                        Ok(Some(session))
+                            if oauth_session_allowed(&session, hosted_services_available) =>
+                        {
                             log::info!("{} loaded cached OAuth session from keychain", id);
                             Some(Self::create_oauth_token_provider(
                                 &id,
@@ -1006,6 +1025,13 @@ impl ContextServerStore {
                                 credentials_provider,
                                 cx,
                             ))
+                        }
+                        Ok(Some(_)) => {
+                            log::info!(
+                                "{} ignored a cached Orion CIMD OAuth session because hosted services are unavailable",
+                                id
+                            );
+                            None
                         }
                         Ok(None) => None,
                         Err(err) => {
@@ -1451,6 +1477,8 @@ impl ContextServerStore {
 
         let http_client = cx.update(|cx| cx.http_client());
         let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+        let hosted_services_available =
+            cx.update(|cx| release_channel::hosted_services_available(cx));
         let server_url = match configuration.as_ref() {
             ContextServerConfiguration::Http { url, .. } => url.clone(),
             _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
@@ -1462,6 +1490,10 @@ impl ContextServerStore {
                 oauth: Some(oauth_settings),
                 ..
             } => {
+                anyhow::ensure!(
+                    oauth_client_id_allowed(&oauth_settings.client_id, hosted_services_available),
+                    "The configured Orion CIMD OAuth client is unavailable in this release. Configure a third-party pre-registered OAuth client instead"
+                );
                 // Pre-registered client. Resolve the secret from settings, then keychain.
                 let client_secret = if oauth_settings.client_secret.is_some() {
                     oauth_settings.client_secret.clone()
@@ -1476,9 +1508,14 @@ impl ContextServerStore {
                     client_secret,
                 }
             }
-            _ => oauth::resolve_client_registration(&http_client, &discovery, &redirect_uri)
-                .await
-                .context("Failed to resolve OAuth client registration")?,
+            _ => oauth::resolve_client_registration_with_cimd(
+                &http_client,
+                &discovery,
+                &redirect_uri,
+                orion_cimd_client_id(hosted_services_available),
+            )
+            .await
+            .context("Failed to resolve OAuth client registration")?,
         };
 
         let auth_url = oauth::build_authorization_url(
@@ -1919,12 +1956,25 @@ async fn resolve_start_failure(
         };
 
         let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+        let hosted_services_available =
+            cx.update(|cx| release_channel::hosted_services_available(cx));
         match ContextServerStore::load_session(&credentials_provider, &server_url, cx).await {
-            Ok(Some(_)) => {
+            Ok(Some(session)) if oauth_session_allowed(&session, hosted_services_available) => {
                 log::info!("{id} start failed with a cached OAuth session present; clearing it");
                 ContextServerStore::clear_session(&credentials_provider, &server_url, cx)
                     .await
                     .log_err();
+            }
+            Ok(Some(_)) => {
+                log::info!(
+                    "{id} kept an ignored Orion CIMD OAuth session because hosted services are unavailable"
+                );
+                log::error!("{id} context server failed to start: {err}");
+                return ContextServerState::Error {
+                    configuration,
+                    server,
+                    error: err.to_string().into(),
+                };
             }
             _ => {
                 log::error!("{id} context server failed to start: {err}");
@@ -1991,29 +2041,45 @@ async fn resolve_auth_required(
     match context_server::oauth::discover(&http_client, &server_url, www_authenticate).await {
         Ok(discovery) => {
             use context_server::oauth::{
-                ClientRegistrationStrategy, determine_registration_strategy,
+                ClientRegistrationStrategy, determine_registration_strategy_with_cimd,
             };
 
-            let has_preregistered_client_id = matches!(
-                configuration.as_ref(),
-                ContextServerConfiguration::Http { oauth: Some(_), .. }
+            let hosted_services_available =
+                cx.update(|cx| release_channel::hosted_services_available(cx));
+            let preregistered_client_id = match configuration.as_ref() {
+                ContextServerConfiguration::Http {
+                    oauth: Some(oauth_settings),
+                    ..
+                } => Some(oauth_settings.client_id.as_str()),
+                _ => None,
+            };
+
+            if preregistered_client_id.is_some_and(|client_id| {
+                !oauth_client_id_allowed(client_id, hosted_services_available)
+            }) {
+                return ContextServerState::Error {
+                    configuration,
+                    server,
+                    error: "The configured Orion CIMD OAuth client is unavailable in this release. Configure a third-party pre-registered OAuth client instead."
+                        .into(),
+                };
+            }
+
+            let strategy = determine_registration_strategy_with_cimd(
+                &discovery.auth_server_metadata,
+                orion_cimd_client_id(hosted_services_available),
             );
 
-            let strategy = determine_registration_strategy(&discovery.auth_server_metadata);
-
             if matches!(strategy, ClientRegistrationStrategy::Unavailable)
-                && !has_preregistered_client_id
+                && preregistered_client_id.is_none()
             {
                 log::error!(
-                    "{id} authorization server supports neither CIMD nor DCR, \
-                     and no pre-registered client_id is configured"
+                    "{id} authorization server has no client registration method available for this release, and no pre-registered client_id is configured"
                 );
                 return ContextServerState::Error {
                     configuration,
                     server,
-                    error: "Authorization server supports neither CIMD nor DCR. \
-                            Configure a pre-registered client_id in your settings \
-                            under the \"oauth\" key."
+                    error: "No OAuth client registration method is available in this release. Configure a third-party pre-registered client_id under the \"oauth\" key, or use an authorization server that supports Dynamic Client Registration."
                         .into(),
                 };
             }

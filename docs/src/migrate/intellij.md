@@ -41,7 +41,9 @@ Settings IntelliJ users typically configure first:
 | `inlay_hints`           | Show parameter names and type hints inline, like IntelliJ's hints.              |
 | `relative_line_numbers` | Useful if you're coming from IdeaVim.                                           |
 
-Orion Studio also supports per-project settings. Create a `.zed/settings.json` file in your project root to override global settings for that project, similar to how you might use `.idea` folders in IntelliJ. The `.zed` directory name is retained for project-format compatibility.
+Orion Studio also supports per-project settings. Create
+`.orion/settings.json` in your project root to override global settings for
+that project, similar to how you might use `.idea` folders in IntelliJ.
 
 > **Tip:** If you're joining an existing project, check `format_on_save` before making your first commit. Otherwise you might accidentally reformat an entire file when you only meant to change one line.
 
@@ -165,8 +167,10 @@ This means:
 
 **How to adapt:**
 
-- Create a `.zed/settings.json` in your project root for project-specific settings
-- Define common commands in `tasks.json` (open via Command Palette: {#action zed::OpenTasks}):
+- Create `.orion/settings.json` in your project root for project-specific
+  settings
+- Define common commands in `.orion/tasks.json` (open via Command Palette:
+  {#action zed::OpenTasks}):
 
 ```json
 [

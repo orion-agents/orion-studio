@@ -36,7 +36,9 @@ use language::{ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content
 
 use async_channel::{self, Sender};
 use parking_lot::Mutex;
-use paths::{local_settings_folder_name, local_vscode_folder_name};
+use paths::{
+    local_settings_folder_name, local_settings_folder_name_legacy, local_vscode_folder_name,
+};
 use postage::{
     barrier,
     prelude::{Sink as _, Stream as _},
@@ -6145,8 +6147,7 @@ impl BackgroundScanner {
 
         scannable
             || entry.path.file_name() == Some(DOT_GIT)
-            || entry.path.file_name() == Some(local_settings_folder_name())
-            || entry.path.file_name() == Some(local_vscode_folder_name())
+            || is_project_config_directory(&entry.path)
             || state.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || state
                 .paths_to_scan
@@ -6166,6 +6167,14 @@ impl BackgroundScanner {
         }
         Ok(request)
     }
+}
+
+fn is_project_config_directory(path: &RelPath) -> bool {
+    path.file_name().is_some_and(|file_name| {
+        file_name == local_settings_folder_name()
+            || file_name == local_settings_folder_name_legacy()
+            || file_name == local_vscode_folder_name()
+    })
 }
 
 async fn discover_ancestor_git_repo(
@@ -7206,6 +7215,7 @@ fn decode_byte_full(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use util::rel_path::rel_path;
 
     /// reproduction of issue #50785
     fn build_pcm16_wav_bytes() -> Vec<u8> {
@@ -7400,5 +7410,14 @@ mod tests {
                 "{label} should be detected as Binary"
             );
         }
+    }
+
+    #[test]
+    fn project_configuration_directories_are_always_scanned() {
+        assert!(is_project_config_directory(rel_path(".orion")));
+        assert!(is_project_config_directory(rel_path(".zed")));
+        assert!(is_project_config_directory(rel_path(".vscode")));
+        assert!(is_project_config_directory(rel_path("nested/.orion")));
+        assert!(!is_project_config_directory(rel_path(".git")));
     }
 }

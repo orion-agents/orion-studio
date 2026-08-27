@@ -1,7 +1,7 @@
 use crate::{
-    Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
-    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
-    RELOAD_DEBOUNCE_DURATION, SchemaVersion,
+    EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE, Event, ExtensionIndex, ExtensionIndexEntry,
+    ExtensionIndexLanguageEntry, ExtensionIndexThemeEntry, ExtensionManifest, ExtensionOperation,
+    ExtensionStore, GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
@@ -16,14 +16,17 @@ use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::{DEFAULT_COMPLETION_CONTEXT, Project};
-use release_channel::AppVersion;
+use release_channel::{AppVersion, ReleaseChannel};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 use theme::ThemeRegistry;
 use util::{rel_path::rel_path_buf, test::TempTree};
@@ -32,6 +35,11 @@ use util::{rel_path::rel_path_buf, test::TempTree};
 #[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
+}
+
+#[gpui::test]
+fn extension_registry_uninitialized_app_fails_closed(cx: &mut TestAppContext) {
+    cx.update(|cx| assert!(!crate::extension_registry_available(cx)));
 }
 
 fn remote_sync_entry(id: &str, manifest_body: &str) -> ExtensionIndexEntry {
@@ -211,6 +219,194 @@ fn remote_sync_keeps_debug_adapters() {
     };
 
     assert_eq!(remote_sync_extension_ids(&index), ["foo"]);
+}
+
+async fn assert_extension_registry_network_boundaries_fail_closed(
+    release_channel: ReleaseChannel,
+    extension_dir: &str,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        release_channel::init_test(semver::Version::new(0, 0, 0), release_channel, cx);
+    });
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let http_client = FakeHttpClient::create({
+        let request_count = request_count.clone();
+        move |_| {
+            request_count.fetch_add(1, Ordering::SeqCst);
+            async {
+                Ok(Response::new(
+                    "unexpected extension registry request".into(),
+                ))
+            }
+        }
+    });
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        extension_dir,
+        json!({
+            "installed": {}
+        }),
+    )
+    .await;
+
+    let store = cx.new(|cx| {
+        ExtensionStore::new(
+            PathBuf::from(extension_dir),
+            None,
+            Arc::new(ExtensionHostProxy::new()),
+            fs,
+            http_client.clone(),
+            http_client,
+            None,
+            NodeRuntime::unavailable(),
+            cx,
+        )
+    });
+
+    cx.executor().run_until_parked();
+    assert_eq!(request_count.load(Ordering::SeqCst), 0);
+
+    let fetch_error = store
+        .update(cx, |store, cx| store.fetch_extensions(None, None, cx))
+        .await
+        .expect_err("extension registry search should be rejected");
+    assert_eq!(
+        fetch_error.to_string(),
+        EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE
+    );
+
+    let versions_error = store
+        .update(cx, |store, cx| {
+            store.fetch_extension_versions("example", cx)
+        })
+        .await
+        .expect_err("extension registry version lookup should be rejected");
+    assert_eq!(
+        versions_error.to_string(),
+        EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE
+    );
+
+    let updates_error = store
+        .update(cx, |store, cx| {
+            store.fetch_extensions_with_update_available(cx)
+        })
+        .await
+        .expect_err("extension registry update lookup should be rejected");
+    assert_eq!(
+        updates_error.to_string(),
+        EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE
+    );
+
+    let upgrade_error = store
+        .update(cx, |store, cx| {
+            store.upgrade_extension("example".into(), "1.0.0".into(), cx)
+        })
+        .await
+        .expect_err("extension registry upgrade should be rejected");
+    assert_eq!(
+        upgrade_error.to_string(),
+        EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE
+    );
+
+    let download_error = store
+        .update(cx, |store, cx| {
+            store.install_or_upgrade_extension_at_endpoint(
+                "example".into(),
+                url::Url::parse("https://registry.invalid/example.tar.gz")
+                    .expect("test URL should be valid"),
+                ExtensionOperation::Install,
+                cx,
+            )
+        })
+        .await
+        .expect_err("extension registry download should be rejected");
+    assert_eq!(
+        download_error.to_string(),
+        EXTENSION_REGISTRY_UNAVAILABLE_MESSAGE
+    );
+
+    store.update(cx, |store, cx| {
+        store.install_latest_extension("example".into(), cx);
+        store.install_extension("example".into(), "1.0.0".into(), cx);
+        store.auto_install_extensions(cx);
+        store.check_for_updates(cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(request_count.load(Ordering::SeqCst), 0);
+}
+
+#[gpui::test]
+async fn dev_extension_registry_network_boundaries_fail_closed(cx: &mut TestAppContext) {
+    assert_extension_registry_network_boundaries_fail_closed(
+        ReleaseChannel::Dev,
+        "/dev-extension-dir",
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn preview_extension_registry_network_boundaries_fail_closed(cx: &mut TestAppContext) {
+    assert_extension_registry_network_boundaries_fail_closed(
+        ReleaseChannel::Preview,
+        "/preview-extension-dir",
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn nightly_and_stable_extension_registry_searches_use_the_network(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let http_client = FakeHttpClient::create({
+        let request_count = request_count.clone();
+        move |_| {
+            request_count.fetch_add(1, Ordering::SeqCst);
+            async { Ok(Response::new(r#"{"data":[]}"#.into())) }
+        }
+    });
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/hosted-extension-dir",
+        json!({
+            "installed": {}
+        }),
+    )
+    .await;
+
+    let store = cx.new(|cx| {
+        ExtensionStore::new(
+            PathBuf::from("/hosted-extension-dir"),
+            None,
+            Arc::new(ExtensionHostProxy::new()),
+            fs,
+            http_client.clone(),
+            http_client,
+            None,
+            NodeRuntime::unavailable(),
+            cx,
+        )
+    });
+    cx.executor().run_until_parked();
+
+    for release_channel in [ReleaseChannel::Nightly, ReleaseChannel::Stable] {
+        cx.update(|cx| {
+            release_channel::init_test(semver::Version::new(0, 0, 0), release_channel, cx);
+        });
+        let extensions = store
+            .update(cx, |store, cx| store.fetch_extensions(None, None, cx))
+            .await
+            .expect("hosted release channel should be able to search the extension registry");
+        assert!(extensions.is_empty());
+    }
+
+    assert_eq!(request_count.load(Ordering::SeqCst), 2);
 }
 
 #[gpui::test]

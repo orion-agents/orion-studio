@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
@@ -8,8 +8,10 @@ use git::repository::DEFAULT_WORKTREE_DIRECTORY;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
-    EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
-    local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
+    EDITORCONFIG_NAME, debug_task_file_name, local_debug_file_relative_path,
+    local_debug_file_relative_path_legacy, local_settings_file_relative_path,
+    local_settings_file_relative_path_legacy, local_tasks_file_relative_path,
+    local_tasks_file_relative_path_legacy, local_vscode_launch_file_relative_path,
     local_vscode_tasks_file_relative_path, task_file_name,
 };
 use rpc::{
@@ -28,7 +30,7 @@ use settings::{
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
-use util::{ResultExt, rel_path::RelPath, serde::default_true};
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
@@ -809,6 +811,14 @@ pub enum SettingsObserverMode {
     Remote { via_collab: bool },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProjectSettingsSource {
+    Orion,
+    LegacyZed,
+}
+
+type LocalConfigReadKey = (WorktreeId, Arc<RelPath>, LocalSettingsKind);
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SettingsObserverEvent {
     LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
@@ -826,6 +836,8 @@ pub struct SettingsObserver {
     task_store: Entity<TaskStore>,
     pending_local_settings:
         HashMap<PathTrust, BTreeMap<(WorktreeId, Arc<RelPath>), Option<String>>>,
+    active_project_settings_sources: HashMap<(WorktreeId, Arc<RelPath>), ProjectSettingsSource>,
+    local_config_read_generations: HashMap<LocalConfigReadKey, u64>,
     _trusted_worktrees_watcher: Option<Subscription>,
     _user_settings_watcher: Option<Subscription>,
     _editorconfig_watcher: Option<Subscription>,
@@ -833,11 +845,9 @@ pub struct SettingsObserver {
     _global_debug_config_watcher: Task<()>,
 }
 
-/// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
-/// (or the equivalent protobuf messages from upstream) and updates local settings
-/// and sends notifications downstream.
-/// In ssh mode it also monitors ~/.config/zed/{settings, task}.json and sends the content
-/// upstream.
+/// Observes canonical `.orion` project configuration and read-only legacy `.zed` fallback files.
+/// Equivalent protobuf messages remain source-agnostic so remote protocol behavior is unchanged.
+/// In SSH mode it also monitors Orion Studio's global configuration and sends the content upstream.
 impl SettingsObserver {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_message_handler(Self::handle_update_worktree_settings);
@@ -870,11 +880,19 @@ impl SettingsObserver {
                                     {
                                         let path =
                                             LocalSettingsPath::InWorktree(directory_path.clone());
+                                        let settings_event_path = project_settings_event_path(
+                                            &directory_path,
+                                            settings_observer
+                                                .active_project_settings_sources
+                                                .get(&(worktree_id, directory_path.clone()))
+                                                .copied(),
+                                        );
                                         apply_local_settings(
                                             worktree_id,
                                             path.clone(),
                                             LocalSettingsKind::Settings,
                                             &settings_contents,
+                                            Some(settings_event_path),
                                             cx,
                                         );
                                         if let Some(downstream_client) =
@@ -926,6 +944,7 @@ impl SettingsObserver {
                                 path.clone(),
                                 LocalSettingsKind::Editorconfig,
                                 content.clone(),
+                                None,
                             )],
                             false,
                             cx,
@@ -942,6 +961,8 @@ impl SettingsObserver {
             downstream_client: None,
             _trusted_worktrees_watcher,
             pending_local_settings: HashMap::default(),
+            active_project_settings_sources: HashMap::default(),
+            local_config_read_generations: HashMap::default(),
             _user_settings_watcher: None,
             _editorconfig_watcher: Some(_editorconfig_watcher),
             project_id: REMOTE_SERVER_PROJECT_ID,
@@ -1006,6 +1027,8 @@ impl SettingsObserver {
             project_id: REMOTE_SERVER_PROJECT_ID,
             _trusted_worktrees_watcher: None,
             pending_local_settings: HashMap::default(),
+            active_project_settings_sources: HashMap::default(),
+            local_config_read_generations: HashMap::default(),
             _user_settings_watcher: user_settings_watcher,
             _editorconfig_watcher: None,
             _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
@@ -1109,6 +1132,7 @@ impl SettingsObserver {
                     path,
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
+                    None,
                 )],
                 is_via_collab,
                 cx,
@@ -1147,12 +1171,22 @@ impl SettingsObserver {
                 })
                 .detach(),
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
+                self.active_project_settings_sources
+                    .retain(|(stored_worktree_id, _), _| stored_worktree_id != worktree_id);
+                self.local_config_read_generations
+                    .retain(|(stored_worktree_id, _, _), _| stored_worktree_id != worktree_id);
                 cx.update_global::<SettingsStore, _>(|store, cx| {
                     store.clear_local_settings(*worktree_id, cx).log_err();
                 });
             }
             _ => {}
         }
+    }
+
+    fn next_local_config_read_generation(&mut self, key: LocalConfigReadKey) -> u64 {
+        let generation = self.local_config_read_generations.entry(key).or_default();
+        *generation = generation.wrapping_add(1).max(1);
+        *generation
     }
 
     fn update_local_worktree_settings(
@@ -1164,65 +1198,97 @@ impl SettingsObserver {
         let SettingsObserverMode::Local(fs) = &self.mode else {
             return;
         };
+        let fs = Arc::clone(fs);
 
-        let mut settings_contents = Vec::new();
+        enum ConfigReadRequest {
+            ProjectSettings {
+                key: LocalConfigReadKey,
+                generation: u64,
+                scope: Arc<RelPath>,
+                canonical_abs_path: PathBuf,
+                legacy_abs_path: PathBuf,
+            },
+            File {
+                key: LocalConfigReadKey,
+                generation: u64,
+                settings_dir: Arc<RelPath>,
+                kind: LocalSettingsKind,
+                abs_path: PathBuf,
+                removed: bool,
+            },
+        }
+
+        enum LoadedConfig {
+            ProjectSettings {
+                key: LocalConfigReadKey,
+                generation: u64,
+                scope: Arc<RelPath>,
+                source: Option<ProjectSettingsSource>,
+                content: anyhow::Result<Option<String>>,
+            },
+            File {
+                key: LocalConfigReadKey,
+                generation: u64,
+                settings_dir: Arc<RelPath>,
+                kind: LocalSettingsKind,
+                content: Option<anyhow::Result<String>>,
+            },
+        }
+
+        let worktree_id = worktree.read(cx).id();
+        let mut read_requests = Vec::new();
+        let mut affected_project_settings_scopes = HashSet::default();
         for (path, _, change) in changes.iter() {
-            let (settings_dir, kind) = if path.ends_with(local_settings_file_relative_path()) {
-                let settings_dir = path
-                    .ancestors()
-                    .nth(local_settings_file_relative_path().components().count())
-                    .unwrap()
-                    .into();
-                (settings_dir, LocalSettingsKind::Settings)
-            } else if path.ends_with(local_tasks_file_relative_path()) {
-                let settings_dir = path
-                    .ancestors()
-                    .nth(
-                        local_tasks_file_relative_path()
-                            .components()
-                            .count()
-                            .saturating_sub(1),
-                    )
-                    .unwrap()
-                    .into();
+            if let Some(scope) = project_settings_scope_for_path(path) {
+                affected_project_settings_scopes.insert(scope);
+                continue;
+            }
+
+            let (settings_dir, kind) = if path.ends_with(local_tasks_file_relative_path()) {
+                let Some(settings_dir) =
+                    config_directory_for_path(path, local_tasks_file_relative_path())
+                else {
+                    continue;
+                };
+                (settings_dir, LocalSettingsKind::Tasks)
+            } else if path.ends_with(local_tasks_file_relative_path_legacy()) {
+                let Some(settings_dir) =
+                    config_directory_for_path(path, local_tasks_file_relative_path_legacy())
+                else {
+                    continue;
+                };
                 (settings_dir, LocalSettingsKind::Tasks)
             } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
-                let settings_dir = path
-                    .ancestors()
-                    .nth(
-                        local_vscode_tasks_file_relative_path()
-                            .components()
-                            .count()
-                            .saturating_sub(1),
-                    )
-                    .unwrap()
-                    .into();
+                let Some(settings_dir) =
+                    config_directory_for_path(path, local_vscode_tasks_file_relative_path())
+                else {
+                    continue;
+                };
                 (settings_dir, LocalSettingsKind::Tasks)
             } else if path.ends_with(local_debug_file_relative_path()) {
-                let settings_dir = path
-                    .ancestors()
-                    .nth(
-                        local_debug_file_relative_path()
-                            .components()
-                            .count()
-                            .saturating_sub(1),
-                    )
-                    .unwrap()
-                    .into();
+                let Some(settings_dir) =
+                    config_directory_for_path(path, local_debug_file_relative_path())
+                else {
+                    continue;
+                };
+                (settings_dir, LocalSettingsKind::Debug)
+            } else if path.ends_with(local_debug_file_relative_path_legacy()) {
+                let Some(settings_dir) =
+                    config_directory_for_path(path, local_debug_file_relative_path_legacy())
+                else {
+                    continue;
+                };
                 (settings_dir, LocalSettingsKind::Debug)
             } else if path.ends_with(local_vscode_launch_file_relative_path()) {
-                let settings_dir = path
-                    .ancestors()
-                    .nth(
-                        local_vscode_tasks_file_relative_path()
-                            .components()
-                            .count()
-                            .saturating_sub(1),
-                    )
-                    .unwrap()
-                    .into();
+                let Some(settings_dir) =
+                    config_directory_for_path(path, local_vscode_launch_file_relative_path())
+                else {
+                    continue;
+                };
                 (settings_dir, LocalSettingsKind::Debug)
-            } else if path.ends_with(RelPath::from_unix_str(EDITORCONFIG_NAME).unwrap()) {
+            } else if RelPath::from_unix_str(EDITORCONFIG_NAME)
+                .is_ok_and(|editorconfig_path| path.ends_with(editorconfig_path))
+            {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
                 };
@@ -1248,49 +1314,148 @@ impl SettingsObserver {
                 continue;
             };
 
-            let removed = change == &PathChange::Removed;
-            let fs = fs.clone();
             let abs_path = worktree.read(cx).absolutize(path);
-            settings_contents.push(async move {
-                (
-                    settings_dir,
-                    kind,
-                    if removed {
-                        None
-                    } else {
-                        Some(
-                            async move {
+            let key = (worktree_id, settings_dir.clone(), kind);
+            let generation = self.next_local_config_read_generation(key.clone());
+            read_requests.push(ConfigReadRequest::File {
+                key,
+                generation,
+                settings_dir,
+                kind,
+                abs_path,
+                removed: change == &PathChange::Removed,
+            });
+        }
+
+        for scope in affected_project_settings_scopes {
+            let canonical_path = scope.join(local_settings_file_relative_path());
+            let legacy_path = scope.join(local_settings_file_relative_path_legacy());
+            let key = (worktree_id, scope.clone(), LocalSettingsKind::Settings);
+            let generation = self.next_local_config_read_generation(key.clone());
+            read_requests.push(ConfigReadRequest::ProjectSettings {
+                key,
+                generation,
+                scope,
+                canonical_abs_path: worktree.read(cx).absolutize(&canonical_path),
+                legacy_abs_path: worktree.read(cx).absolutize(&legacy_path),
+            });
+        }
+
+        if read_requests.is_empty() {
+            return;
+        }
+
+        let settings_contents = read_requests.into_iter().map(move |request| {
+            let fs = fs.clone();
+            async move {
+                match request {
+                    ConfigReadRequest::ProjectSettings {
+                        key,
+                        generation,
+                        scope,
+                        canonical_abs_path,
+                        legacy_abs_path,
+                    } => {
+                        let mut load_error = None;
+                        for _ in 0..2 {
+                            let preferred_file = if fs.is_file(&canonical_abs_path).await {
+                                Some((
+                                    ProjectSettingsSource::Orion,
+                                    canonical_abs_path.as_path(),
+                                ))
+                            } else if fs.is_file(&legacy_abs_path).await {
+                                Some((
+                                    ProjectSettingsSource::LegacyZed,
+                                    legacy_abs_path.as_path(),
+                                ))
+                            } else {
+                                None
+                            };
+                            let Some((source, abs_path)) = preferred_file else {
+                                return LoadedConfig::ProjectSettings {
+                                    key,
+                                    generation,
+                                    scope,
+                                    source: None,
+                                    content: Ok(None),
+                                };
+                            };
+
+                            match fs.load(abs_path).await.with_context(|| {
+                                format!("loading project settings file {abs_path:?}")
+                            }) {
+                                Ok(content) => {
+                                    return LoadedConfig::ProjectSettings {
+                                        key,
+                                        generation,
+                                        scope,
+                                        source: Some(source),
+                                        content: Ok(Some(content)),
+                                    };
+                                }
+                                Err(error) => load_error = Some(error),
+                            }
+                        }
+
+                        LoadedConfig::ProjectSettings {
+                            key,
+                            generation,
+                            scope,
+                            source: None,
+                            content: Err(load_error.unwrap_or_else(|| {
+                                anyhow::anyhow!("project settings read failed without an error")
+                            })),
+                        }
+                    }
+                    ConfigReadRequest::File {
+                        key,
+                        generation,
+                        settings_dir,
+                        kind,
+                        abs_path,
+                        removed,
+                    } => {
+                        let content = if removed {
+                            None
+                        } else {
+                            Some(async {
                                 let content = fs.load(&abs_path).await?;
-                                if abs_path.ends_with(local_vscode_tasks_file_relative_path().as_std_path()) {
+                                if abs_path.ends_with(
+                                    local_vscode_tasks_file_relative_path().as_std_path(),
+                                ) {
                                     let vscode_tasks =
                                         parse_json_with_comments::<VsCodeTaskFile>(&content)
                                             .with_context(|| {
-                                                format!("parsing VSCode tasks, file {abs_path:?}")
+                                                format!("parsing VS Code tasks, file {abs_path:?}")
                                             })?;
-                                    let zed_tasks = TaskTemplates::try_from(vscode_tasks)
+                                    let orion_tasks = TaskTemplates::try_from(vscode_tasks)
                                         .with_context(|| {
                                             format!(
-                                        "converting VS Code tasks into Orion Studio tasks, file {abs_path:?}"
-                                    )
+                                                "converting VS Code tasks into Orion Studio tasks, file {abs_path:?}"
+                                            )
                                         })?;
-                                    serde_json::to_string(&zed_tasks).with_context(|| {
+                                    serde_json::to_string(&orion_tasks).with_context(|| {
                                         format!(
                                             "serializing Orion Studio tasks into JSON, file {abs_path:?}"
                                         )
                                     })
-                                } else if abs_path.ends_with(local_vscode_launch_file_relative_path().as_std_path()) {
+                                } else if abs_path.ends_with(
+                                    local_vscode_launch_file_relative_path().as_std_path(),
+                                ) {
                                     let vscode_tasks =
                                         parse_json_with_comments::<VsCodeDebugTaskFile>(&content)
                                             .with_context(|| {
-                                                format!("parsing VSCode debug tasks, file {abs_path:?}")
+                                                format!(
+                                                    "parsing VS Code debug tasks, file {abs_path:?}"
+                                                )
                                             })?;
-                                    let zed_tasks = DebugTaskFile::try_from(vscode_tasks)
+                                    let orion_tasks = DebugTaskFile::try_from(vscode_tasks)
                                         .with_context(|| {
                                             format!(
-                                        "converting VS Code debug tasks into Orion Studio tasks, file {abs_path:?}"
-                                    )
+                                                "converting VS Code debug tasks into Orion Studio tasks, file {abs_path:?}"
+                                            )
                                         })?;
-                                    serde_json::to_string(&zed_tasks).with_context(|| {
+                                    serde_json::to_string(&orion_tasks).with_context(|| {
                                         format!(
                                             "serializing Orion Studio tasks into JSON, file {abs_path:?}"
                                         )
@@ -1299,35 +1464,117 @@ impl SettingsObserver {
                                     Ok(content)
                                 }
                             }
-                            .await,
-                        )
-                    },
-                )
-            });
-        }
+                            .await)
+                        };
 
-        if settings_contents.is_empty() {
-            return;
-        }
+                        LoadedConfig::File {
+                            key,
+                            generation,
+                            settings_dir,
+                            kind,
+                            content,
+                        }
+                    }
+                }
+            }
+        });
 
         let worktree = worktree.clone();
         cx.spawn(async move |this, cx| {
-            let settings_contents: Vec<(Arc<RelPath>, _, _)> =
-                futures::future::join_all(settings_contents).await;
+            let settings_contents = futures::future::join_all(settings_contents).await;
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
-                    this.update_settings(
-                        worktree,
-                        settings_contents.into_iter().map(|(path, kind, content)| {
-                            (
-                                LocalSettingsPath::InWorktree(path),
+                    let worktree_id = worktree.read(cx).id();
+                    let mut updates = Vec::new();
+                    for loaded_config in settings_contents {
+                        match loaded_config {
+                            LoadedConfig::ProjectSettings {
+                                key,
+                                generation,
+                                scope,
+                                source,
+                                content,
+                            } => {
+                                if this.local_config_read_generations.get(&key).copied()
+                                    != Some(generation)
+                                {
+                                    continue;
+                                }
+                                let content = match content {
+                                    Ok(content) => content,
+                                    Err(error) => {
+                                        log::error!("Failed to load project settings: {error:#}");
+                                        continue;
+                                    }
+                                };
+                                let source_key = (worktree_id, scope.clone());
+                                let previous_source = match source {
+                                    Some(source) => this
+                                        .active_project_settings_sources
+                                        .insert(source_key, source),
+                                    None => {
+                                        this.active_project_settings_sources.remove(&source_key)
+                                    }
+                                };
+
+                                if previous_source != source {
+                                    let reported_path = previous_source.or(source).map(|source| {
+                                        project_settings_event_path(&scope, Some(source))
+                                    });
+                                    updates.push((
+                                        LocalSettingsPath::InWorktree(scope.clone()),
+                                        LocalSettingsKind::Settings,
+                                        None,
+                                        reported_path,
+                                    ));
+                                }
+
+                                if let Some(content) = content {
+                                    updates.push((
+                                        LocalSettingsPath::InWorktree(scope),
+                                        LocalSettingsKind::Settings,
+                                        Some(content),
+                                        source.map(|source| {
+                                            project_settings_event_path(&key.1, Some(source))
+                                        }),
+                                    ));
+                                }
+                            }
+                            LoadedConfig::File {
+                                key,
+                                generation,
+                                settings_dir,
                                 kind,
-                                content.and_then(|c| c.log_err()),
-                            )
-                        }),
-                        false,
-                        cx,
-                    )
+                                content,
+                            } => {
+                                if this.local_config_read_generations.get(&key).copied()
+                                    != Some(generation)
+                                {
+                                    continue;
+                                }
+                                let content = match content {
+                                    Some(Ok(content)) => Some(content),
+                                    Some(Err(error)) => {
+                                        log::error!(
+                                            "Failed to load project configuration: {error:#}"
+                                        );
+                                        continue;
+                                    }
+                                    None => None,
+                                };
+                                updates.push((
+                                    LocalSettingsPath::InWorktree(settings_dir),
+                                    kind,
+                                    content,
+                                    None,
+                                ));
+                            }
+                        }
+                    }
+
+                    if !updates.is_empty() {
+                        this.update_settings(worktree, updates, false, cx);
+                    }
                 })
             })
         })
@@ -1338,7 +1585,12 @@ impl SettingsObserver {
         &mut self,
         worktree: Entity<Worktree>,
         settings_contents: impl IntoIterator<
-            Item = (LocalSettingsPath, LocalSettingsKind, Option<String>),
+            Item = (
+                LocalSettingsPath,
+                LocalSettingsKind,
+                Option<String>,
+                Option<PathBuf>,
+            ),
         >,
         is_via_collab: bool,
         cx: &mut Context<Self>,
@@ -1351,7 +1603,7 @@ impl SettingsObserver {
         } else {
             OnceCell::new()
         };
-        for (directory_path, kind, file_content) in settings_contents {
+        for (directory_path, kind, file_content, reported_path) in settings_contents {
             let mut applied = true;
             match (&directory_path, kind) {
                 (LocalSettingsPath::InWorktree(directory), LocalSettingsKind::Settings) => {
@@ -1364,11 +1616,20 @@ impl SettingsObserver {
                             true
                         }
                     }) {
+                        let settings_event_path = reported_path.unwrap_or_else(|| {
+                            project_settings_event_path(
+                                directory,
+                                self.active_project_settings_sources
+                                    .get(&(worktree_id, directory.clone()))
+                                    .copied(),
+                            )
+                        });
                         apply_local_settings(
                             worktree_id,
                             LocalSettingsPath::InWorktree(directory.clone()),
                             kind,
                             &file_content,
+                            Some(settings_event_path),
                             cx,
                         )
                     } else {
@@ -1425,22 +1686,29 @@ impl SettingsObserver {
                             log::error!(
                                 "Failed to set local debug scenarios in {path:?}: {message:?}"
                             );
-                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Err(
+                            cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Err(
                                 InvalidSettingsError::Debug { path, message },
                             )));
                         }
                         Err(e) => {
-                            log::error!("Failed to set local tasks: {e}");
+                            log::error!("Failed to set local debug scenarios: {e}");
                         }
                         Ok(()) => {
-                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
-                                .as_std_path()
-                                .join(task_file_name()))));
+                            cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Ok(
+                                directory.as_std_path().join(debug_task_file_name()),
+                            )));
                         }
                     }
                 }
                 (directory, LocalSettingsKind::Editorconfig) => {
-                    apply_local_settings(worktree_id, directory.clone(), kind, &file_content, cx);
+                    apply_local_settings(
+                        worktree_id,
+                        directory.clone(),
+                        kind,
+                        &file_content,
+                        None,
+                        cx,
+                    );
                 }
                 (LocalSettingsPath::OutsideWorktree(path), kind) => {
                     log::error!(
@@ -1569,7 +1837,7 @@ impl SettingsObserver {
                             file_path.clone(),
                         ))),
                         Err(err) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(
-                            Err(InvalidSettingsError::Tasks {
+                            Err(InvalidSettingsError::Debug {
                                 path: file_path.clone(),
                                 message: err.to_string(),
                             }),
@@ -1581,11 +1849,40 @@ impl SettingsObserver {
     }
 }
 
+fn project_settings_scope_for_path(path: &RelPath) -> Option<Arc<RelPath>> {
+    let relative_path = if path.ends_with(local_settings_file_relative_path()) {
+        local_settings_file_relative_path()
+    } else if path.ends_with(local_settings_file_relative_path_legacy()) {
+        local_settings_file_relative_path_legacy()
+    } else {
+        return None;
+    };
+
+    path.ancestors()
+        .nth(relative_path.components().count())
+        .map(Arc::from)
+}
+
+fn config_directory_for_path(path: &RelPath, relative_path: &RelPath) -> Option<Arc<RelPath>> {
+    path.ancestors()
+        .nth(relative_path.components().count().saturating_sub(1))
+        .map(Arc::from)
+}
+
+fn project_settings_event_path(scope: &RelPath, source: Option<ProjectSettingsSource>) -> PathBuf {
+    let relative_path = match source {
+        Some(ProjectSettingsSource::LegacyZed) => local_settings_file_relative_path_legacy(),
+        Some(ProjectSettingsSource::Orion) | None => local_settings_file_relative_path(),
+    };
+    scope.as_std_path().join(relative_path.as_std_path())
+}
+
 fn apply_local_settings(
     worktree_id: WorktreeId,
     path: LocalSettingsPath,
     kind: LocalSettingsKind,
     file_content: &Option<String>,
+    reported_path: Option<PathBuf>,
     cx: &mut Context<'_, SettingsObserver>,
 ) {
     cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -1594,6 +1891,11 @@ fn apply_local_settings(
 
         match result {
             Err(InvalidSettingsError::LocalSettings { path, message }) => {
+                let path = reported_path
+                    .as_deref()
+                    .and_then(|path| RelPath::new(path, PathStyle::local()).ok())
+                    .map(|path| path.as_ref().into_arc())
+                    .unwrap_or(path);
                 log::error!("Failed to set local settings in {path:?}: {message}");
                 cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(
                     InvalidSettingsError::LocalSettings { path, message },
@@ -1601,12 +1903,12 @@ fn apply_local_settings(
             }
             Err(e) => log::error!("Failed to set local settings: {e}"),
             Ok(()) => {
-                let settings_path = match &path {
+                let settings_path = reported_path.unwrap_or_else(|| match &path {
                     LocalSettingsPath::InWorktree(rel_path) => rel_path
                         .as_std_path()
                         .join(local_settings_file_relative_path().as_std_path()),
                     LocalSettingsPath::OutsideWorktree(abs_path) => abs_path.to_path_buf(),
-                };
+                });
                 cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(
                     settings_path,
                 )))
@@ -1656,4 +1958,27 @@ impl From<DapSettingsContent> for DapSettings {
 pub enum DapBinary {
     Default,
     Custom(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use util::rel_path::rel_path;
+
+    #[test]
+    fn project_settings_events_report_the_active_source_path() {
+        let scope = rel_path("nested");
+        assert_eq!(
+            project_settings_event_path(scope, Some(ProjectSettingsSource::Orion)),
+            PathBuf::from("nested/.orion/settings.json")
+        );
+        assert_eq!(
+            project_settings_event_path(scope, Some(ProjectSettingsSource::LegacyZed)),
+            PathBuf::from("nested/.zed/settings.json")
+        );
+        assert_eq!(
+            project_settings_event_path(scope, None),
+            PathBuf::from("nested/.orion/settings.json")
+        );
+    }
 }

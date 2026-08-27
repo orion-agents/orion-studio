@@ -34,12 +34,12 @@ pub const LEGACY_ZED_RELEASE_CHANNEL_HEADER: &str = "x-zed-release-channel";
 pub const LEGACY_ZED_HEADER_RETIREMENT_CONTRACT: &str =
     "Retire only after every supported Orion client sends negotiated Orion headers";
 
-pub type LegacyZedChecksumHeader = api::events::ZedChecksumHeader;
-pub type LegacyZedSystemIdHeader = api::SystemIdHeader;
-pub type LegacyZedProtocolVersionHeader = rpc::ProtocolVersion;
-pub type LegacyZedAppVersionHeader = rpc::AppVersionHeader;
-pub type LegacyZedReleaseChannelHeader = rpc::ReleaseChannelHeader;
-pub type LegacyZedVersion = rpc::ZedVersion;
+pub type LegacyEditorChecksumHeader = api::events::ZedChecksumHeader;
+pub type LegacyEditorSystemIdHeader = api::SystemIdHeader;
+pub type LegacyEditorProtocolVersionHeader = rpc::ProtocolVersion;
+pub type LegacyEditorAppVersionHeader = rpc::AppVersionHeader;
+pub type LegacyEditorReleaseChannelHeader = rpc::ReleaseChannelHeader;
+pub type LegacyEditorVersion = rpc::ZedVersion;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 

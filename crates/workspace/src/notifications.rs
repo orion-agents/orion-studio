@@ -1313,7 +1313,7 @@ pub mod simple_message_notification {
                 fn primary_action(&self) -> ErrorAction {
                     ErrorAction::link(
                         "See Docs",
-                        "https://orion.dev/docs/linux#i-cant-open-any-files",
+                        "https://github.com/orion-agents/orion-studio/blob/main/docs/src/linux.md#i-cant-open-any-files",
                     )
                 }
             }
@@ -1329,7 +1329,10 @@ pub mod simple_message_notification {
                     ErrorSeverity::Critical
                 }
                 fn primary_action(&self) -> ErrorAction {
-                    ErrorAction::link("Update Orion Studio", "https://orion.dev/releases")
+                    ErrorAction::link(
+                        "Update Orion Studio",
+                        "https://github.com/orion-agents/orion-studio/releases",
+                    )
                 }
                 fn secondary_action(&self) -> Option<ErrorAction> {
                     Some(ErrorAction::dismiss())

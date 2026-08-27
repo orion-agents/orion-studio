@@ -11,6 +11,7 @@ use language::{
         EditPredictionPromptFormat, EditPredictionProvider, all_language_settings,
     },
 };
+use release_channel::ReleaseChannel;
 
 use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -117,9 +118,10 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
     match provider {
         EditPredictionProvider::None => None,
         EditPredictionProvider::Copilot => Some(EditPredictionProviderConfig::Copilot),
-        EditPredictionProvider::Orion => {
+        EditPredictionProvider::Orion if hosted_orion_edit_predictions_available(cx) => {
             Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
         }
+        EditPredictionProvider::Orion => None,
         EditPredictionProvider::Codestral => Some(EditPredictionProviderConfig::Codestral),
         EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi => {
             let custom_settings = if provider == EditPredictionProvider::Ollama {
@@ -155,6 +157,12 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
             EditPredictionModel::Mercury,
         )),
     }
+}
+
+fn hosted_orion_edit_predictions_available(cx: &App) -> bool {
+    ReleaseChannel::try_global(cx)
+        .unwrap_or(*release_channel::RELEASE_CHANNEL)
+        .hosted_services_available()
 }
 
 fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
@@ -319,8 +327,41 @@ mod tests {
     use super::*;
     use editor::MultiBuffer;
     use gpui::{BorrowAppContext, TestAppContext};
+    use release_channel::ReleaseChannel;
+    use semver::Version;
     use settings::{EditPredictionPromptFormatContent, EditPredictionProvider, SettingsStore};
     use workspace::AppState;
+
+    #[gpui::test]
+    async fn test_orion_hosted_predictions_follow_release_channel(cx: &mut TestAppContext) {
+        let _app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            client::init(&app_state.client, cx);
+            language_model::init(cx);
+            app_state
+        });
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::Orion),
+                            ..Default::default()
+                        });
+                });
+            });
+
+            release_channel::init_test(Version::new(1, 16, 1), ReleaseChannel::Preview, cx);
+            assert!(edit_prediction_provider_config_for_settings(cx).is_none());
+
+            release_channel::init_test(Version::new(1, 16, 1), ReleaseChannel::Stable, cx);
+            assert!(matches!(
+                edit_prediction_provider_config_for_settings(cx),
+                Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
+            ));
+        });
+    }
 
     #[gpui::test]
     async fn test_sweep_prompt_format_routes_to_sweep_prompt_model(cx: &mut TestAppContext) {

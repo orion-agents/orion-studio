@@ -70,7 +70,7 @@ pub fn excerpt_context_lines(cx: &App) -> u32 {
 
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
-/// See <https://orion.dev/features#multi-buffers>
+/// See the [multi-buffer documentation](https://github.com/orion-agents/orion-studio/blob/main/docs/src/multibuffers.md).
 pub struct MultiBuffer {
     /// A snapshot of the [`Excerpt`]s in the MultiBuffer.
     /// Use [`MultiBuffer::snapshot`] to get a up-to-date snapshot.

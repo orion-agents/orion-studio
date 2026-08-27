@@ -550,7 +550,9 @@ impl PickerDelegate for ThemeSelectorDelegate {
                                 .color(Color::Muted),
                         )
                         .on_click(cx.listener(|_, _, _, cx| {
-                            cx.open_url("https://orion.dev/docs/themes");
+                            cx.open_url(
+                                "https://github.com/orion-agents/orion-studio/blob/main/docs/src/themes.md",
+                            );
                         })),
                 )
                 .child(

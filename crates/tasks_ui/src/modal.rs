@@ -759,7 +759,7 @@ mod tests {
         fs.insert_tree(
             path!("/dir"),
             json!({
-                ".zed": {
+                ".orion": {
                     "tasks.json": r#"[
                         {
                             "label": "example task",
@@ -932,7 +932,7 @@ mod tests {
         fs.insert_tree(
             path!("/dir"),
             json!({
-                ".zed": {
+                ".orion": {
                     "tasks.json": r#"[
                         {
                             "label": "hello from $ORION_STUDIO_FILE:$ORION_STUDIO_ROW:$ORION_STUDIO_COLUMN",

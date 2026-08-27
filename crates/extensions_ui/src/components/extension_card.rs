@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use cloud_api_types::{ExtensionApiManifest, ExtensionMetadata, ExtensionProvides};
 use extension::{ExtensionManifest, SchemaVersion};
-use extension_host::{ExtensionOperation, ExtensionStore};
+use extension_host::{ExtensionOperation, ExtensionStore, extension_registry_available};
 use gpui::{Anchor, ElementId, Entity, Point, SharedString, prelude::*};
 use num_format::{Locale, ToFormattedString};
 use release_channel::ReleaseChannel;
@@ -76,6 +76,7 @@ struct ExtensionCardDetails {
 #[derive(Clone)]
 enum ExtensionCardSource {
     Dev,
+    Installed,
     Remote {
         status: ExtensionStatus,
         download_count: u64,
@@ -89,14 +90,14 @@ impl ExtensionCardSource {
                 status: ExtensionStatus::Installed(installed_version),
                 ..
             } if installed_version != latest_version => Some(installed_version.clone()),
-            _ => None,
+            Self::Dev | Self::Installed | Self::Remote { .. } => None,
         }
     }
 
     fn download_count(&self) -> Option<u64> {
         match self {
             Self::Remote { download_count, .. } => Some(*download_count),
-            Self::Dev => None,
+            Self::Dev | Self::Installed => None,
         }
     }
 
@@ -132,6 +133,12 @@ impl ExtensionCard {
     pub fn for_remote(extension: &ExtensionMetadata, cx: &App) -> Self {
         let status = remote_extension_status(&extension.id, cx);
         Self::remote::<true>(extension, status, cx)
+    }
+
+    pub(crate) fn for_installed(extension: Arc<ExtensionManifest>, cx: &App) -> Self {
+        let extension_store = ExtensionStore::global(cx).read(cx);
+        let status = extension_status(&extension.id, extension_store);
+        Self::installed::<true>(extension, status)
     }
 
     fn dev<const ENABLE_HANDLERS: bool>(
@@ -177,6 +184,30 @@ impl ExtensionCard {
                 status,
                 download_count: extension.download_count,
             },
+        };
+
+        Self {
+            details,
+            actions,
+            context_menu: None,
+        }
+    }
+
+    fn installed<const ENABLE_HANDLERS: bool>(
+        extension: Arc<ExtensionManifest>,
+        status: ExtensionStatus,
+    ) -> Self {
+        let actions = Self::actions_for_installed_extension::<ENABLE_HANDLERS>(&extension, &status);
+        let details = ExtensionCardDetails {
+            id: extension.id.clone(),
+            name: extension.name.clone().into(),
+            version: extension.version.clone(),
+            description: extension.description.clone().map(Into::into),
+            authors: extension.authors.join(", ").into(),
+            repository_url: extension.repository.clone().map(Into::into),
+            repository_icon: IconName::Link,
+            provided_features: provided_feature_labels(extension.provides()),
+            source: ExtensionCardSource::Installed,
         };
 
         Self {
@@ -277,6 +308,22 @@ impl ExtensionCard {
         [Some(rebuild), Some(uninstall), configure]
     }
 
+    fn actions_for_installed_extension<const ENABLE_HANDLERS: bool>(
+        extension: &Arc<ExtensionManifest>,
+        status: &ExtensionStatus,
+    ) -> ExtensionCardActions {
+        let uninstall = Self::uninstall_button::<ENABLE_HANDLERS>(&extension.id, false)
+            .style(ButtonStyle::OutlinedGhost)
+            .disabled(status.disables_actions());
+        let configure = (!extension.context_servers.is_empty()).then(|| {
+            Self::configure_button::<ENABLE_HANDLERS>(&extension.id, Some(extension.clone()))
+                .style(ButtonStyle::OutlinedGhost)
+                .disabled(status.disables_actions())
+        });
+
+        [None, configure, Some(uninstall)]
+    }
+
     fn install_button<const ENABLE_HANDLERS: bool>(extension_id: &Arc<str>) -> Button {
         Button::new(
             Self::button_id(extension_id, ExtensionOperation::Install),
@@ -306,6 +353,7 @@ impl ExtensionCard {
         status: &ExtensionStatus,
         cx: &App,
     ) -> ExtensionCardActions {
+        let registry_available = extension_registry_available(cx);
         let is_configurable = extension
             .manifest
             .provides
@@ -317,22 +365,23 @@ impl ExtensionCard {
             | ExtensionStatus::Installing => [
                 None,
                 None,
-                Some(
+                registry_available.then(|| {
                     Self::install_button::<ENABLE_HANDLERS>(&extension.id)
-                        .disabled(status.disables_actions()),
-                ),
+                        .disabled(status.disables_actions())
+                }),
             ],
             ExtensionStatus::Upgrading | ExtensionStatus::Removing => {
                 let uninstall = Self::uninstall_button::<ENABLE_HANDLERS>(&extension.id, false)
                     .style(ButtonStyle::OutlinedGhost)
                     .disabled(status.disables_actions());
-                let upgrade = matches!(status, ExtensionStatus::Upgrading).then(|| {
-                    Button::new(
-                        Self::button_id(&extension.id, ExtensionOperation::Upgrade),
-                        "Upgrade",
-                    )
-                    .disabled(status.disables_actions())
-                });
+                let upgrade = (registry_available && matches!(status, ExtensionStatus::Upgrading))
+                    .then(|| {
+                        Button::new(
+                            Self::button_id(&extension.id, ExtensionOperation::Upgrade),
+                            "Upgrade",
+                        )
+                        .disabled(status.disables_actions())
+                    });
                 let configure = is_configurable.then(|| {
                     Self::configure_button::<ENABLE_HANDLERS>(&extension.id, None)
                         .disabled(status.disables_actions())
@@ -343,9 +392,11 @@ impl ExtensionCard {
             ExtensionStatus::Installed(installed_version) => {
                 let uninstall = Self::uninstall_button::<ENABLE_HANDLERS>(&extension.id, false)
                     .style(ButtonStyle::OutlinedGhost);
-                let upgrade = (installed_version != &extension.manifest.version).then(|| {
+                let upgrade = (registry_available
+                    && installed_version != &extension.manifest.version)
+                    .then(|| {
                     let is_compatible = extension_host::is_version_compatible(
-                        ReleaseChannel::global(cx),
+                        ReleaseChannel::try_global(cx).unwrap_or_default(),
                         extension,
                     );
                     Button::new(

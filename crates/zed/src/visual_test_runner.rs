@@ -1982,7 +1982,7 @@ impl StubAgentServer {
 #[cfg(target_os = "macos")]
 impl AgentServer for StubAgentServer {
     fn logo(&self) -> ui::IconName {
-        ui::IconName::ZedAssistant
+        ui::IconName::OrionAssistant
     }
 
     fn agent_id(&self) -> AgentId {

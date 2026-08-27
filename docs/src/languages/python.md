@@ -317,7 +317,9 @@ result = func( #sql
 
 ## Debugging
 
-Orion Studio supports Python debugging through the `debugpy` adapter. You can start with no configuration or define custom launch profiles in the retained project-format compatibility path `.zed/debug.json`.
+Orion Studio supports Python debugging through the `debugpy` adapter. You can
+start with no configuration or define custom launch profiles in
+`.orion/debug.json`.
 
 ### Start Debugging with No Setup
 
@@ -332,7 +334,8 @@ Orion Studio uses `debugpy` under the hood, but no manual adapter configuration 
 
 ### Define Custom Debug Configurations
 
-For reusable setups, create a `.zed/debug.json` file in your project root. This gives you more control over how Orion Studio runs and debugs your code.
+For reusable setups, create `.orion/debug.json` in your project root. This
+gives you more control over how Orion Studio runs and debugs your code.
 
 - [debugpy configuration documentation](https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings#launchattach-settings)
 

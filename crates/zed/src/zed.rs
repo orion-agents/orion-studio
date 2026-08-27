@@ -104,13 +104,12 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
-    OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
+    About, OpenAccountSettings, OpenApplicationUrl, OpenBrowser, OpenDocs, OpenProjectTasks,
+    OpenServerSettings, OpenSettingsFile, OpenStatusPage, Quit,
 };
 
-const DOCS_URL: &str = "https://orion.dev/docs/";
-const STATUS_URL: &str = "https://status.orion.dev";
-const MERCH_URL: &str = "https://merch.orion.dev/";
+const DOCS_URL: &str = "https://github.com/orion-agents/orion-studio/tree/main/docs";
+const STATUS_URL: &str = "https://github.com/orion-agents/orion-studio/releases";
 
 pub struct CrashHandler(pub Arc<crashes::Client>);
 
@@ -679,7 +678,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             db::indoc! {r#"
             inotify_init returned {}
 
-            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://orion.dev/docs/linux
+            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://github.com/orion-agents/orion-studio/blob/main/docs/src/linux.md
             "#},
             e
         );
@@ -693,7 +692,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
         cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
-                    cx.open_url("https://orion.dev/docs/linux#could-not-start-inotify");
+                    cx.open_url("https://github.com/orion-agents/orion-studio/blob/main/docs/src/linux.md#could-not-start-inotify");
                     cx.quit();
                 });
             }
@@ -710,7 +709,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             db::indoc! {r#"
             ReadDirectoryChangesW initialization failed: {}
 
-            This may occur on network filesystems and WSL paths. For troubleshooting see: https://orion.dev/docs/windows
+            This may occur on network filesystems and WSL paths. For troubleshooting see: https://github.com/orion-agents/orion-studio/blob/main/docs/src/windows.md
             "#},
             e
         );
@@ -724,7 +723,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
         cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
-                    cx.open_url("https://orion.dev/docs/windows");
+                    cx.open_url("https://github.com/orion-agents/orion-studio/blob/main/docs/src/windows.md");
                     cx.quit()
                 });
             }
@@ -745,14 +744,14 @@ fn show_software_emulation_warning_if_needed(
         let (graphics_api, docs_url, open_url) = if cfg!(target_os = "windows") {
             (
                 "DirectX",
-                "https://orion.dev/docs/windows",
-                "https://orion.dev/docs/windows",
+                "https://github.com/orion-agents/orion-studio/blob/main/docs/src/windows.md",
+                "https://github.com/orion-agents/orion-studio/blob/main/docs/src/windows.md",
             )
         } else {
             (
                 "Vulkan",
-                "https://orion.dev/docs/linux",
-                "https://orion.dev/docs/linux#orion-studio-fails-to-open-windows",
+                "https://github.com/orion-agents/orion-studio/blob/main/docs/src/linux.md",
+                "https://github.com/orion-agents/orion-studio/blob/main/docs/src/linux.md#orion-studio-fails-to-open-windows",
             )
         };
         let message = format!(
@@ -787,13 +786,15 @@ fn show_software_emulation_warning_if_needed(
 }
 
 fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<anyhow::Result<()>> {
+    let hosted_services_available = release_channel::hosted_services_available(cx);
     cx.spawn_in(window, async move |workspace_handle, cx| {
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
-        let channels_panel =
-            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+        let channels_panel = hosted_services_available.then(|| {
+            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone())
+        });
         let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
         async fn add_panel_when_ready(
@@ -811,12 +812,22 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
             }
         }
 
+        let channels_panel = {
+            let workspace_handle = workspace_handle.clone();
+            let cx = cx.clone();
+            async move {
+                if let Some(channels_panel) = channels_panel {
+                    add_panel_when_ready(channels_panel, workspace_handle, cx).await;
+                }
+            }
+        };
+
         futures::join!(
             add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
+            channels_panel,
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
             initialize_agent_panel(workspace_handle, cx.clone()).map(|r| r.log_err()),
         );
@@ -928,7 +939,6 @@ fn register_actions(
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &OpenStatusPage, _, cx| cx.open_url(STATUS_URL))
-        .register_action(|_, _: &GetMerch, _, cx| cx.open_url(MERCH_URL))
         .register_action(
             |workspace: &mut Workspace,
              _: &input_latency_ui::DumpInputLatencyHistogram,
@@ -1038,7 +1048,7 @@ fn register_actions(
         .register_action(|_, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
         })
-        .register_action(|_, action: &OpenZedUrl, _, cx| {
+        .register_action(|_, action: &OpenApplicationUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
                 urls: vec![String::from(&*action.url)],
                 ..Default::default()
@@ -1260,17 +1270,17 @@ fn register_actions(
                 }
             }
         })
-        .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
+        .register_action(|_, _: &install_cli::RegisterApplicationSchemes, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
-                install_cli::register_zed_scheme(cx).await?;
+                install_cli::register_application_schemes(cx).await?;
                 workspace.update_in(cx, |workspace, _, cx| {
-                    struct RegisterZedScheme;
+                    struct RegisterApplicationSchemes;
 
                     workspace.show_toast(
                         Toast::new(
-                            NotificationId::unique::<RegisterZedScheme>(),
+                            NotificationId::unique::<RegisterApplicationSchemes>(),
                             format!(
-                                "zed:// links will now open in {}.",
+                                "orion:// and legacy application links will now open in {}.",
                                 ReleaseChannel::global(cx).display_name()
                             ),
                         ),
@@ -1280,7 +1290,7 @@ fn register_actions(
                 Ok(())
             })
             .detach_and_prompt_err(
-                "Error registering zed:// scheme",
+                "Error registering Orion Studio application links",
                 window,
                 cx,
                 |_, _, _| None,

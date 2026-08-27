@@ -7,6 +7,7 @@ use ui::{
 };
 use workspace::ModalView;
 
+use super::open_listener::is_internal_app_url;
 use super::{OpenListener, RawOpenRequest};
 
 pub struct OpenUrlModal {
@@ -53,9 +54,8 @@ impl OpenUrlModal {
             return;
         }
 
-        // Handle canonical and legacy application URLs internally.
-        if url.starts_with("orion://") || url.starts_with("zed://") || url.starts_with("zed-cli://")
-        {
+        // Handle canonical application URLs and explicit legacy aliases internally.
+        if is_internal_app_url(&url) {
             OpenListener::global(cx).open(RawOpenRequest {
                 urls: vec![url],
                 ..Default::default()

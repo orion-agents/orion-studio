@@ -159,7 +159,7 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     eprintln!(
-        "Orion Studio failed to open a window: {e:?}. See https://orion.dev/docs/linux for troubleshooting steps."
+        "Orion Studio failed to open a window: {e:?}. See https://github.com/orion-agents/orion-studio/blob/main/docs/src/linux.md for troubleshooting steps."
     );
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
@@ -182,7 +182,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
                     Notification::new("Orion Studio failed to launch")
                         .body(Some(
                             format!(
-                                "{e:?}. See https://orion.dev/docs/linux for troubleshooting steps."
+                                "{e:?}. See https://github.com/orion-agents/orion-studio/blob/main/docs/src/linux.md for troubleshooting steps."
                             )
                             .as_str(),
                         ))
@@ -200,30 +200,44 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 
-struct LegacyMigrationNotice;
+fn legacy_migration_failed_on_launch(error: &paths::MigrationError) {
+    const MESSAGE: &str = "Orion Studio could not safely import existing editor data";
+    let details = format!(
+        "{error}\n\nExisting data was left unchanged. Orion Studio did not open its database, so you can resolve the reported conflict and retry."
+    );
+    eprintln!("{MESSAGE}: {details}");
 
-fn show_legacy_migration_notice(message: String, cx: &mut App) {
-    for window in cx.windows() {
-        let Some(multi_workspace) = window.downcast::<MultiWorkspace>() else {
-            continue;
-        };
-        let notice = message.clone();
-        match multi_workspace.update(cx, move |multi_workspace, _, cx| {
-            multi_workspace.workspace().update(cx, |workspace, cx| {
-                workspace.show_toast(
-                    Toast::new(NotificationId::unique::<LegacyMigrationNotice>(), notice),
+    build_application()
+        .with_quit_mode(QuitMode::Explicit)
+        .run(move |cx| {
+            let window = match cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+                cx.new(|_| gpui::Empty)
+            }) {
+                Ok(window) => window,
+                Err(window_error) => {
+                    eprintln!("{MESSAGE}: failed to open the error window: {window_error}");
+                    cx.quit();
+                    return;
+                }
+            };
+            if let Err(window_error) = window.update(cx, move |_, window, cx| {
+                let response = window.prompt(
+                    gpui::PromptLevel::Critical,
+                    MESSAGE,
+                    Some(&details),
+                    &["Exit"],
                     cx,
                 );
-            });
-        }) {
-            Ok(()) => return,
-            Err(error) => {
-                log::error!("Failed to show legacy Zed migration notice: {error:#}");
+                cx.spawn_in(window, async move |_, cx| {
+                    response.await?;
+                    cx.update(|_, cx| cx.quit())
+                })
+                .detach_and_log_err(cx);
+            }) {
+                eprintln!("{MESSAGE}: failed to render the error window: {window_error}");
+                cx.quit();
             }
-        }
-    }
-
-    log::warn!("Could not show legacy Zed migration notice because no workspace window exists");
+        });
 }
 
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
@@ -318,6 +332,32 @@ fn main() {
         }
     }
 
+    let version = option_env!("ORION_STUDIO_BUILD_ID").or(option_env!("ZED_BUILD_ID"));
+    let app_commit_sha = option_env!("ORION_STUDIO_COMMIT_SHA")
+        .or(option_env!("ZED_COMMIT_SHA"))
+        .map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
+    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), version, app_commit_sha.clone());
+
+    if args.system_specs {
+        let system_specs = system_specs::SystemSpecs::new_stateless(
+            app_version,
+            app_commit_sha,
+            *release_channel::RELEASE_CHANNEL,
+            client::telemetry::os_name(),
+            client::telemetry::os_version(),
+        );
+        println!("Orion Studio System Specs (from CLI):\n{}", system_specs);
+        return;
+    }
+
+    let legacy_migration_outcome = match paths::migrate_legacy_user_data() {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            legacy_migration_failed_on_launch(&error);
+            return;
+        }
+    };
+
     let file_errors = init_paths();
     if !file_errors.is_empty() {
         files_not_created_on_launch(file_errors);
@@ -337,22 +377,18 @@ fn main() {
     }
     ztracing::init();
 
-    let version = option_env!("ORION_STUDIO_BUILD_ID").or(option_env!("ZED_BUILD_ID"));
-    let app_commit_sha = option_env!("ORION_STUDIO_COMMIT_SHA")
-        .or(option_env!("ZED_COMMIT_SHA"))
-        .map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
-    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), version, app_commit_sha.clone());
-
-    if args.system_specs {
-        let system_specs = system_specs::SystemSpecs::new_stateless(
-            app_version,
-            app_commit_sha,
-            *release_channel::RELEASE_CHANNEL,
-            client::telemetry::os_name(),
-            client::telemetry::os_version(),
+    if matches!(
+        &legacy_migration_outcome.config,
+        Some(paths::MigrationState::Migrated)
+    ) || matches!(
+        &legacy_migration_outcome.data,
+        Some(paths::MigrationState::Migrated)
+    ) {
+        log::info!(
+            "Legacy editor data migration completed before persistence initialization: {legacy_migration_outcome:?}"
         );
-        println!("Orion Studio System Specs (from CLI):\n{}", system_specs);
-        return;
+    } else {
+        log::debug!("Legacy editor data migration required no copy: {legacy_migration_outcome:?}");
     }
 
     rayon::ThreadPoolBuilder::new()
@@ -802,9 +838,11 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
-        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        collab_ui::init(&app_state, cx);
+        if release_channel::hosted_services_available(cx) {
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            collab_ui::init(&app_state, cx);
+        }
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
@@ -992,69 +1030,6 @@ fn main() {
                 }
             }
         });
-
-        let (first_frame_sender, first_frame_receiver) = oneshot::channel::<()>();
-        let first_frame_sender = Rc::new(RefCell::new(Some(first_frame_sender)));
-        let migration_window_subscription =
-            cx.observe_new::<MultiWorkspace>(move |_, window, _| {
-                let Some(window) = window else {
-                    return;
-                };
-                let first_frame_sender = first_frame_sender.clone();
-                window.on_next_frame(move |_, _| {
-                    if let Some(sender) = first_frame_sender.borrow_mut().take()
-                        && sender.send(()).is_err()
-                    {
-                        log::debug!("First rendered frame receiver was dropped");
-                    }
-                });
-            });
-
-        cx.spawn(async move |cx| {
-            let _migration_window_subscription = migration_window_subscription;
-            if let Err(error) = first_frame_receiver.await {
-                log::warn!(
-                    "Legacy Zed migration was skipped because no workspace frame was rendered: {error}"
-                );
-                return;
-            }
-
-            let result = cx
-                .background_spawn(async { paths::migrate_legacy_user_data() })
-                .await;
-            match result {
-                Ok(outcome)
-                    if matches!(
-                        &outcome.config,
-                        Some(paths::MigrationState::Migrated)
-                    ) || matches!(&outcome.data, Some(paths::MigrationState::Migrated)) =>
-                {
-                    log::info!("Legacy Zed data migration completed: {outcome:?}");
-                    cx.update(|cx| {
-                        show_legacy_migration_notice(
-                            "Legacy Zed data was imported in the background. Restart Orion Studio to load all imported state."
-                                .to_owned(),
-                            cx,
-                        );
-                    });
-                }
-                Ok(outcome) => {
-                    log::debug!("Legacy Zed data migration required no copy: {outcome:?}");
-                }
-                Err(error) => {
-                    log::error!("Failed to migrate legacy Zed data: {error}");
-                    cx.update(|cx| {
-                        show_legacy_migration_notice(
-                            format!(
-                                "Legacy Zed data could not be imported. Orion Studio will keep running, and the original Zed data was left unchanged. Details: {error}"
-                            ),
-                            cx,
-                        );
-                    });
-                }
-            }
-        })
-        .detach();
 
         let restore_finished = cx.background_spawn(restore_task).shared();
 
@@ -1408,6 +1383,22 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 if let Some(task) = task {
                     task.await?;
                 }
+                if !cx.update(|cx| release_channel::hosted_services_available(cx)) {
+                    let multi_workspace =
+                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
+                    multi_workspace.update(cx, |multi_workspace, _, cx| {
+                        multi_workspace.workspace().update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<()>(),
+                                    "Channels and shared notes are unavailable in Orion Studio Preview.",
+                                ),
+                                cx,
+                            );
+                        });
+                    })?;
+                    return anyhow::Ok(());
+                }
                 let client = app_state.client.clone();
                 // we continue even if connection fails as join_channel/ open channel notes will
                 // show a visible error message.
@@ -1466,6 +1457,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
+    let hosted_services_available = cx.update(|cx| release_channel::hosted_services_available(cx));
+    if !hosted_services_available {
+        return Ok(());
+    }
+
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
             client.sign_in_with_optional_connect(false, cx).await?;
@@ -1800,8 +1796,7 @@ struct Args {
     /// Use `path:line:row` syntax to open a file at a specific location.
     /// Non-existing paths and directories will ignore `:line:row` suffix.
     ///
-    /// URLs can use the `file://`, canonical `orion://`, or legacy `zed://` scheme,
-    /// or be relative to <https://orion.dev>.
+    /// URLs can use the `file://`, canonical `orion://`, or legacy `zed://` scheme.
     paths_or_urls: Vec<String>,
 
     /// Pairs of file paths to diff. Can be specified multiple times.
@@ -1812,9 +1807,9 @@ struct Args {
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     ///
     /// This overrides the default platform-specific data directory location.
-    /// On macOS, the default is `~/Library/Application Support/Zed`.
-    /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
-    /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
+    /// On macOS, the default is `~/Library/Application Support/Orion Studio`.
+    /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/orion-studio`.
+    /// On Windows, the default is `%LOCALAPPDATA%\Orion Studio`.
     #[arg(long, value_name = "DIR", verbatim_doc_comment)]
     user_data_dir: Option<String>,
 
@@ -1923,6 +1918,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> String {
             if arg.starts_with("file://")
                 || arg.starts_with("orion://")
                 || arg.starts_with("zed://")
+                || arg.starts_with("orion-cli://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
                 || parse_zed_link(arg, cx).is_some()

@@ -1,5 +1,37 @@
 # Orion Studio 重构续作计划 v2
 
+## 2026-08-27 Local Init Runtime Closure
+
+> **当前生效状态：** 本节覆盖下方与之冲突的历史阻塞描述。当前 Init 只要求完成
+> 用户可见品牌迁移、数据兼容和本机 Dev 可用性，不要求内部架构全量改名，也不进入
+> 正式发布。
+
+**Init v1/v2：`DONE`；本地 macOS Dev：`VERIFIED`；公开 Preview：`NO-GO`。**
+
+- 当前基线为
+  `release/orion-studio-v1.16.1-pre@5bf21d2707eb95d35ce16c10ba864838a3963c9a`；
+  本轮没有 commit、push、tag、PR 或 Release。
+- System Events 的 0 窗口结果是 inaccessible GPUI 应用的探测假阴性。CoreGraphics
+  在首次启动和重启后均确认 1 个 layer 0、alpha 1、onscreen 的 1482×879 窗口，
+  现有恢复和兜底路径有效；没有为此修改启动或核心编辑器源码。
+- 除收尾文档外，唯一改动是为 6 条迁移测试夹具补充精确品牌 allowlist；品牌门禁
+  6,066/6,066 approved，0 unapproved、0 stale、0 ambiguous、0 errors，品牌脚本
+  3/3 通过。
+- `CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 cargo +stable test -p paths` 64/64 通过。
+  旧数据目录保留，两处 marker 权限均为 600，无迁移临时目录；Orion LMDB 在首次
+  启动和重启后都成功打开，日志无 panic、fatal、迁移冲突或锁冲突。
+- 主 App Release 构建 88m24s，remote server 22m06s。App 1.16.1、arm64、400 MiB，
+  ad-hoc 签名验证通过，嵌入当前 HEAD，已安装到
+  `/Applications/Orion Studio Dev.app`；DMG 校验通过。
+- 正常启动、打开项目、打开 `README.md`、菜单退出和重启恢复均通过。应用保持运行，
+  当前只用于本机；llama.cpp 502 不阻断窗口、项目或数据库。
+- 构建期 rustc 采样峰值约 4.6 GB RSS，无内存 throttling。`cargo clean` 删除
+  58,667 个文件、24.5 GiB，未触碰已安装 App、源码或用户数据。
+- Developer ID、Apple 公证、干净机器验收和 GitHub 公开发布仍为 Init 外事项。
+
+根因 path:line、验证命令、哈希和资源明细见
+`docs/plan/evidence/INIT-V2-V09-REGRESSION-GATE.md` 的 2026-08-27 记录。
+
 ## 2026-08-15 Finalization Update
 
 > **当前生效状态：** 本节是截至 2026-08-15 的最终本地验收结论，覆盖下方与之冲突的旧结论。下方旧状态、旧命令结果和旧阻塞记录仅作为历史证据保留，不得再将其中的 `PARTIAL`、`PENDING` 或 Metal/WebRTC 阻塞描述当作当前状态。

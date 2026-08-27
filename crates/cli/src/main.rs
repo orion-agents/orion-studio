@@ -38,6 +38,74 @@ const URL_PREFIX: [&'static str; 6] = [
     "orion://", "zed://", "http://", "https://", "file://", "ssh://",
 ];
 
+const ORION_CLI_URL_PREFIX: &str = "orion-cli://";
+
+#[cfg(any(test, target_os = "linux", target_os = "freebsd"))]
+const LEGACY_ZED_CLI_URL_PREFIX: &str = "zed-cli://";
+
+fn canonical_cli_ipc_url(server_name: &str) -> String {
+    format!("{ORION_CLI_URL_PREFIX}{server_name}")
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "freebsd"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CliSocketEndpoint {
+    Canonical,
+    Legacy,
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "freebsd"))]
+impl CliSocketEndpoint {
+    fn socket_path(self, data_dir: &Path, release_channel: &str) -> PathBuf {
+        match self {
+            Self::Canonical => data_dir.join(format!("orion-studio-{release_channel}.sock")),
+            Self::Legacy => data_dir.join(format!("zed-{release_channel}.sock")),
+        }
+    }
+
+    fn ipc_url(self, server_name: &str) -> String {
+        match self {
+            Self::Canonical => canonical_cli_ipc_url(server_name),
+            Self::Legacy => format!("{LEGACY_ZED_CLI_URL_PREFIX}{server_name}"),
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "freebsd"))]
+fn send_to_running_unix_instance(
+    data_dir: &Path,
+    release_channel: &str,
+    server_name: &str,
+    mut send: impl FnMut(&Path, &str) -> io::Result<()>,
+) -> Result<bool> {
+    for endpoint in [CliSocketEndpoint::Canonical, CliSocketEndpoint::Legacy] {
+        let socket_path = endpoint.socket_path(data_dir, release_channel);
+        let ipc_url = endpoint.ipc_url(server_name);
+        match send(&socket_path, &ipc_url) {
+            Ok(()) => return Ok(true),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                // A legacy socket is consulted only when no compatible process is
+                // reachable through Orion Studio's canonical socket.
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "communicating with the Orion Studio socket at {}",
+                        socket_path.display()
+                    )
+                });
+            }
+        }
+    }
+
+    Ok(false)
+}
+
 struct Detect;
 
 trait InstalledApp {
@@ -338,6 +406,90 @@ mod tests {
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
 
+    #[test]
+    fn canonical_cli_ipc_url_uses_orion_scheme() {
+        let url = canonical_cli_ipc_url("server-name");
+        assert_eq!(url, "orion-cli://server-name");
+        assert!(!url.contains("zed-cli"));
+    }
+
+    #[test]
+    fn unix_cli_socket_falls_back_to_legacy_after_canonical() {
+        let data_dir = Path::new("/tmp/orion-studio-test");
+        let mut attempts = Vec::new();
+
+        let sent = send_to_running_unix_instance(
+            data_dir,
+            "preview",
+            "server-name",
+            |socket_path, ipc_url| {
+                attempts.push((socket_path.to_path_buf(), ipc_url.to_string()));
+                if attempts.len() == 1 {
+                    Err(io::Error::from(io::ErrorKind::NotFound))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap();
+
+        assert!(sent);
+        assert_eq!(
+            attempts,
+            vec![
+                (
+                    data_dir.join("orion-studio-preview.sock"),
+                    "orion-cli://server-name".to_string(),
+                ),
+                (
+                    data_dir.join("zed-preview.sock"),
+                    "zed-cli://server-name".to_string(),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn unix_cli_socket_does_not_emit_legacy_url_when_canonical_is_available() {
+        let data_dir = Path::new("/tmp/orion-studio-test");
+        let mut attempts = Vec::new();
+
+        let sent = send_to_running_unix_instance(
+            data_dir,
+            "stable",
+            "server-name",
+            |socket_path, ipc_url| {
+                attempts.push((socket_path.to_path_buf(), ipc_url.to_string()));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(sent);
+        assert_eq!(
+            attempts,
+            vec![(
+                data_dir.join("orion-studio-stable.sock"),
+                "orion-cli://server-name".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn unix_cli_socket_propagates_non_compatibility_errors() {
+        let data_dir = Path::new("/tmp/orion-studio-test");
+        let mut attempts = 0;
+
+        let error = send_to_running_unix_instance(data_dir, "stable", "server-name", |_, _| {
+            attempts += 1;
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        })
+        .unwrap_err();
+
+        assert_eq!(attempts, 1);
+        assert!(format!("{error:#}").contains("Orion Studio socket"));
+    }
+
     fn with_cwd<T>(path: &Path, f: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
         let _lock = CWD_LOCK.lock();
         let old_cwd = cwd();
@@ -622,7 +774,7 @@ fn run() -> Result<()> {
 
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("handshake before Orion Studio spawn")?;
-    let url = format!("zed-cli://{server_name}");
+    let url = canonical_cli_ipc_url(&server_name);
 
     let open_behavior = if args.new {
         cli::OpenBehavior::AlwaysNew
@@ -732,7 +884,7 @@ fn run() -> Result<()> {
 
     anyhow::ensure!(
         args.dev_server_token.is_none(),
-        "Dev servers were removed in v0.157.x; please upgrade to SSH remoting: https://orion.dev/docs/remote-development"
+        "Dev servers were removed in v0.157.x; please upgrade to SSH remoting: https://github.com/orion-agents/orion-studio/blob/main/docs/src/remote-development.md"
     );
 
     rayon::ThreadPoolBuilder::new()
@@ -938,7 +1090,7 @@ mod linux {
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
 
-    use crate::{Detect, InstalledApp};
+    use crate::{Detect, InstalledApp, ORION_CLI_URL_PREFIX, send_to_running_unix_instance};
 
     struct App(PathBuf);
 
@@ -997,15 +1149,22 @@ mod linux {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| paths::data_dir().clone());
 
-            let sock_path = data_dir.join(format!(
-                "zed-{}.sock",
-                *release_channel::RELEASE_CHANNEL_NAME
-            ));
-            let sock = UnixDatagram::unbound()?;
-            if sock.connect(&sock_path).is_err() {
+            let server_name = ipc_url
+                .strip_prefix(ORION_CLI_URL_PREFIX)
+                .context("invalid Orion Studio CLI IPC URL")?;
+            let sent = send_to_running_unix_instance(
+                &data_dir,
+                release_channel::RELEASE_CHANNEL_NAME.as_str(),
+                server_name,
+                |socket_path, url| {
+                    let socket = UnixDatagram::unbound()?;
+                    socket.connect(socket_path)?;
+                    socket.send(url.as_bytes())?;
+                    Ok(())
+                },
+            )?;
+            if !sent {
                 self.boot_background(ipc_url, user_data_dir)?;
-            } else {
-                sock.send(ipc_url.as_bytes())?;
             }
             Ok(())
         }
