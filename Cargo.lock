@@ -9243,6 +9243,7 @@ dependencies = [
  "dap",
  "extension",
  "feature_flags",
+ "fs",
  "gpui",
  "language",
  "parking_lot",
