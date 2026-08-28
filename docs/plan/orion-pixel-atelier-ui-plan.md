@@ -5,15 +5,15 @@
 | 项目 | 内容 |
 | --- | --- |
 | 计划名称 | Orion Pixel Atelier |
-| 状态 | In Progress，按第 14 节推荐默认决策实施 |
+| 状态 | Local candidate complete，UI-50/UI-52 为 GO-WITH-CONDITIONS |
 | 编制日期 | 2026-08-28 |
 | 实施基线 | 从执行时最新的 fork `main` 创建独立 UI 分支 |
 | fork main 基线 | `origin/main@d593fdd3534b4541ba62cf38d23d3bccb56b39a8` |
 | 已同步 upstream | `upstream/main@01acd0ee8e906dd0ec8b526fe08da94444a5e2af` |
-| 当前实现分支 | `ui/orion-pixel-atelier@e96fef3` |
+| 当前实现分支 | `ui/orion-pixel-atelier`；生产实现 `1fadd0ca`，runner 清理 `fd64ea8`，本文为最终 evidence handoff |
 | 产品范围 | 主题、视觉令牌、共享 GPUI 组件、图标、产品壳层和视觉验证 |
 | 核心原则 | 只换视觉皮肤，不改变编辑器、Workspace、Project、Agent、终端和协议行为 |
-| 本文性质 | 可执行计划，不代表任何 UI 已实现、编译或发布 |
+| 本文性质 | 已执行计划；本地实现、编译、安装和 smoke 已完成，不代表公开发布 |
 
 本计划把 Orion Studio 改造成一套精致像素工作台。现有窗口、Pane、Dock、
 编辑器、Project Panel、Terminal Panel 和 Agent Panel 的功能结构保持不变。
@@ -509,6 +509,20 @@ UI-10/UI-11 完成后：
 协调者必须为每个并行 Agent 指定：Task ID、允许路径、禁止路径、是否允许写文件、
 能否运行 Cargo、交付格式和停止条件。
 
+### 6.5 本轮协调者执行豁免
+
+本轮由主协调者直接执行，用户已明确要求使用并行 Agent 提高效率，并授权在同一条
+`ui/orion-pixel-atelier` 分支上完成整个目标。为避免为 30 个细粒度视觉任务创建大量
+临时分支和 PR，本轮对第 6.2 节的“一任务、一分支、一 PR”作一次性豁免：
+
+- 生产文件按互不重叠的写入集合分配给并行 Agent；主协调者负责逐项审阅和集成。
+- 同一文件中的连续任务必须串行执行；`thread_view.rs` 的 UI-41 至 UI-45 已按此处理。
+- Cargo、visual runner、bundle、安装和最终门禁只允许由主协调者单线执行。
+- 所有任务仍须保留独立 evidence，且 UI-50、UI-51、UI-52 的决策边界不变。
+- UI-51 仍需用户单独批准；未批准时必须记录为 `SKIPPED-BY-DECISION`，不得修改默认主题。
+
+该豁免不扩大生产代码范围，不允许跳过行为测试、视觉验证、资源记录或最终人工验收。
+
 ## 7. WorkBuddy 全局执行合同
 
 ### 7.1 每个任务开始前
@@ -586,7 +600,8 @@ du -sh target 2>/dev/null || true
 - 单任务 `target` 增长超过 30GiB 时停止，记录前后大小并报告。
 - 共享现有 `target`，不得为并行 Agent 建多个 target 目录。
 - 不自动执行 `cargo clean`；清理必须先报告精确目录、大小、影响和恢复成本。
-- visual runner 会保留临时 project 供 OS 后续清理，不能据此宣称“无临时文件”。
+- visual runner 必须在 executor drain 后显式关闭临时 project；成功和失败路径前后
+  fixture 计数都必须为 0，清理失败必须返回非零状态。
 - 任务结束记录 `df -h .` 和 `du -sh target`，不得只记录编译成功。
 
 ### 7.5 状态词
@@ -601,7 +616,8 @@ du -sh target 2>/dev/null || true
 质量门禁另使用：
 
 - `GO`：代码、视觉、行为、资源和文档门禁全部通过。
-- `GO-WITH-CONDITIONS`：只剩签名、公证或外部发布条件。
+- `GO-WITH-CONDITIONS`：本次限定交付可用，但仍有已记录、不会阻断该限定用途的验证或
+  外部发布条件；不得缩写或隐藏这些条件。
 - `NO-GO`：存在行为回归、视觉阻断、性能/资源异常或验证缺失。
 
 ## 8. 详细子任务
@@ -1241,7 +1257,8 @@ VISUAL_TEST_FILTER="project_panel"
 - CI 当前只 build visual runner binary，不执行 PNG comparison。
 - 仓库没有可直接等同于本计划的 `.snap` 自动快照门禁。
 - 因此 v1 PNG 是本地、可重复的人工交付证据，不是现成 CI PASS。
-- runner 会保留临时 project 让 OS 后续清理；运行前后要记录磁盘，不能并行启动。
+- runner 在后台任务 drain 完成前持有 `TempDir`，随后显式关闭并把清理失败作为失败
+  退出；运行前后必须验证 fixture 计数为 0，且不能并行启动。
 
 ### 9.5 Clippy 分层
 
@@ -1323,27 +1340,31 @@ bundle 完成不等于启动通过。必须验证当前产物 SHA 对应的 app�
 
 ## 12. 最终 Definition of Done
 
-- [ ] 本计划列出的所有 UI-00 至 UI-52 任务都有明确状态和 evidence。
-- [ ] UI-00V 能指定 bundled theme 和 visual test filter，失败时不静默 fallback。
-- [ ] Orion Pixel Atelier Night/Dawn 可选择、可切换、可恢复。
-- [ ] UI-51 的新安装默认行为已经获得用户批准；若不批准，明确记录跳过。
-- [ ] `Orion Studio (Default)` icon theme 名称和注册流程不变。
-- [ ] 共享 Button、Tab、List、Tree、Input、Toggle、Chip、Banner、Popover、Menu、Modal
+- [x] 本计划列出的所有 UI-00 至 UI-52 任务都有明确状态和 evidence。
+- [x] UI-00V 能指定 bundled theme 和 visual test filter，失败时不静默 fallback。
+- [x] Orion Pixel Atelier Night/Dawn 可选择、可预览、可取消恢复。
+- [x] UI-51 未获默认值变更批准，已明确记录为 `SKIPPED-BY-DECISION`。
+- [x] `Orion Studio (Default)` icon theme 名称和注册流程不变。
+- [x] 共享 Button、Tab、List、Tree、Input、Toggle、Chip、Banner、Popover、Menu、Modal
   状态完整。
-- [ ] Project、Title、Status、Terminal 和 Agent 壳层一致。
-- [ ] 编辑器、Pane、Dock、Project、Agent 和 Terminal 核心行为无变化。
-- [ ] 红色禁止路径无生产 diff。
-- [ ] 不存在主题名称业务分支。
-- [ ] Pixel Chrome 在其他颜色主题下不会破坏可读性或布局。
+- [x] Project、Title、Status、Terminal 和 Agent 壳层一致。
+- [x] 编辑器、Pane、Dock、Project、Agent 和 Terminal 核心行为无变化。
+- [x] 红色禁止路径无生产 diff。
+- [x] 不存在主题名称业务分支。
+- [x] Pixel Chrome 在 One/Ayu/Gruvbox 代表主题下未破坏可读性或布局。
 - [ ] 中文、英文、长文本和当前实际支持的 density 通过。
 - [ ] 键盘、ARIA、focus、reduced motion 和对比度通过。
-- [ ] 图标在 10/12/14/16px 下清晰。
-- [ ] 性能、内存和资产大小通过门禁。
-- [ ] format、聚焦测试、完整 `./script/clippy`、app check、bundle 和可见窗口 smoke 通过。
-- [ ] PNG 证据被正确描述为本地证据，没有误报为 CI visual gate。
-- [ ] 品牌、许可证和 attribution 检查通过。
-- [ ] 磁盘增长和构建产物已记录，没有未经授权清理。
-- [ ] 每个实现 PR 单一目标、可按依赖逆序回滚，未自动合并或发布。
+- [x] 图标在 10/12/14/16px 下清晰。
+- [x] 资产大小通过门禁。
+- [ ] 同配置前后性能、启动时间、帧时间和 RSS 基线通过门禁。
+- [x] format、聚焦测试、app check、bundle 和可见窗口 smoke 通过。
+- [ ] 精确 post-cleanup HEAD 的完整 workspace `./script/clippy` 通过；实现提交的完整
+  Clippy 与当前受影响 crate Clippy 已通过，两次补跑均在 lint 前因 `webrtc-sys`
+  外部下载 TLS `unexpected-eof` 中止。
+- [x] PNG 证据被正确描述为本地证据，没有误报为 CI visual gate。
+- [x] 品牌、许可证和 attribution 检查通过。
+- [x] 磁盘增长和构建产物已记录；授权清理回收 42.0 GiB。
+- [x] 单分支执行豁免已记录，提交可逆序回滚，未自动合并、push 或公开发布。
 
 ## 13. WorkBuddy 交接模板
 
@@ -1378,26 +1399,29 @@ RESOURCE CHECK: PASS | FAIL | NOT VERIFIED
 NEXT: UI-YY (not started)
 ```
 
-## 14. 当前待确认决策
+## 14. 本轮已解析决策
 
-开始 UI-02N 或 UI-10 前，用户需要确认：
+用户随后明确要求完成 Orion Pixel Atelier 目标，本轮据此采用 UI-01 的推荐 v1 合同：
 
-1. 主题最终显示名是否使用 Orion Pixel Atelier Night/Dawn。
-2. 本计划第 4.3、4.4 节色板是否作为第一版基线。
-3. 新原创主题的 author 字段。
-4. UI-03F 和 UI-03P 的精确图标文件 allowlist。
-5. 第一版是否接受“不默认打包像素字体”的建议。
-6. 是否接受 Pixel Chrome 是 Orion Studio 全局产品几何，选择 One/Ayu/Gruvbox 时也会生效。
-7. UI-51 是否把新主题设为所有新安装的默认颜色主题。
+1. 主题显示名使用 Orion Pixel Atelier Night/Dawn。
+2. 第 4.3、4.4 节色板作为 v1 基线，并只做 APCA 所需的可访问性纠正。
+3. 原创主题 author 使用 `Orion Studio`。
+4. UI-03F 使用 5 个文件图标 allowlist；UI-03P 使用 9 个产品图标 allowlist，未扩范围。
+5. v1 不打包或强制像素字体，编辑器、终端和 Agent 字体保持不变。
+6. Pixel Chrome 是 Orion Studio 全局产品几何；Classic/Pixel 运行时切换另立 v2。
+7. 用户没有单独批准更改新安装默认主题，因此 UI-51 记录为
+   `SKIPPED-BY-DECISION`，`assets/settings/default.json` 保持不变。
 
-推荐默认决策：
+## 15. 执行结果索引
 
-- 接受 Night/Dawn 名称和第 4 节色板作为 v1 基线。
-- author 使用项目/公司批准的统一署名，不使用临时模型名。
-- 文件图标首批只做 folder/folder_open/file/chevron，产品图标最多 16 个。
-- v1 不打包默认像素字体。
-- 接受全局 Pixel Chrome；运行时 Classic/Pixel 切换另立 v2 计划。
-- UI-50 通过后再决定是否默认启用，不提前改 default settings。
-
-决策未完成前可以执行 UI-00、UI-00V 和 UI-01 的设计准备；不得进入主题、图标、Chrome
-或产品源码实现。
+- 生产实现：`1fadd0ca63d78976ea02958c773a59e8eb6cadef`。
+- visual runner fixture 清理：`fd64ea82c48e4e08c0d79c2f6cd18b73ed009e36`。
+- 共享执行账本：`docs/plan/evidence/PIXEL-UI-EXECUTION-RECORD.md`。
+- UI-50：`GO-WITH-CONDITIONS`；自动化、APCA 和本地确定性视觉矩阵通过，完整人工矩阵与
+  同配置前后性能基线保持 `NOT VERIFIED`。
+- UI-51：`SKIPPED-BY-DECISION`；Night/Dawn 保持 opt-in。
+- UI-52：以 `/Applications/Orion Studio Dev.app` 的安装、签名、可见窗口、打开项目、
+  主题 selector、Component Preview、重启和磁盘清理证据完成本地交付，结论为
+  `GO-WITH-CONDITIONS`。
+- 当前实现不等同于公开发布：ad-hoc 签名不能替代 Developer ID、notarization 或正式
+  GitHub Release 制品。
