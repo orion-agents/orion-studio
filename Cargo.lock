@@ -6439,6 +6439,7 @@ name = "file_icons"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "settings_content",
  "theme",
  "util",
 ]
@@ -12582,7 +12583,6 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
- "theme_settings",
  "ui",
  "util",
  "workspace",
