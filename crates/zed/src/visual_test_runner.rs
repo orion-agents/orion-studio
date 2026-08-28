@@ -63,14 +63,12 @@ fn main() {
 
     let update_baseline = std::env::var_os("UPDATE_BASELINE").is_some();
 
-    // Create a temporary directory for test files
-    // Canonicalize the path to resolve symlinks (on macOS, /var -> /private/var)
-    // which prevents "path does not exist" errors during worktree scanning
-    // Use keep() to prevent auto-cleanup - background worktree tasks may still be running
-    // when tests complete, so we let the OS clean up temp directories on process exit
+    // Keep the TempDir alive through runner shutdown so its project remains available to
+    // background worktree tasks. `finish_visual_test_context` drains those tasks before this
+    // scope ends, after which TempDir can safely remove the fixture.
     let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
-    let temp_path = temp_dir.keep();
-    let canonical_temp = temp_path
+    let canonical_temp = temp_dir
+        .path()
         .canonicalize()
         .expect("Failed to canonicalize temp directory");
     let project_path = canonical_temp.join("project");
@@ -80,17 +78,20 @@ fn main() {
     create_test_files(&project_path);
 
     let test_result = std::panic::catch_unwind(|| run_visual_tests(project_path, update_baseline));
+    let cleanup_result = temp_dir.close();
 
-    // Note: We don't delete temp_path here because background worktree tasks may still
-    // be running. The directory will be cleaned up when the process exits or by the OS.
+    if let Err(error) = &cleanup_result {
+        eprintln!("Visual test temporary directory cleanup failed: {error}");
+    }
 
-    match test_result {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
+    match (test_result, cleanup_result) {
+        (Ok(Ok(())), Ok(())) => {}
+        (Ok(Ok(())), Err(_)) => std::process::exit(1),
+        (Ok(Err(e)), _) => {
             eprintln!("Visual tests failed: {}", e);
             std::process::exit(1);
         }
-        Err(_) => {
+        (Err(_), _) => {
             eprintln!("Visual tests panicked");
             std::process::exit(1);
         }
