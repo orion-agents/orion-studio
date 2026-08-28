@@ -1,10 +1,10 @@
 use component::{example_group, single_example};
 
-use gpui::{App, FocusHandle, Focusable, Hsla, Length};
+use gpui::{App, BoxShadow, FocusHandle, Focusable, Hsla, Length};
 use std::sync::Arc;
 
-use ui::Tooltip;
 use ui::prelude::*;
+use ui::{PixelChromeRadius, PixelChromeStroke, Tooltip};
 
 use crate::ErasedEditor;
 
@@ -163,6 +163,12 @@ impl Render for InputField {
 
         let has_error = self.error.is_some();
         let error_border = cx.theme().status().error_border;
+        let is_focused = editor.focus_handle(cx).contains_focused(window, cx);
+        let focus_ring_color = if has_error {
+            error_border
+        } else {
+            theme_color.border_focused
+        };
 
         let configured_handle = if let Some(tab_index) = self.tab_index {
             focus_handle.tab_index(tab_index).tab_stop(self.tab_stop)
@@ -189,14 +195,17 @@ impl Render for InputField {
                     .py_1p5()
                     .flex_grow_1()
                     .text_color(style.text_color)
-                    .rounded_md()
+                    .rounded(PixelChromeRadius::Control.pixels())
                     .bg(style.background_color)
-                    .border_1()
+                    .border(PixelChromeStroke::Border.width())
                     .border_color(style.border_color)
-                    .when(
-                        editor.focus_handle(cx).contains_focused(window, cx),
-                        |this| this.border_color(theme_color.border_focused),
-                    )
+                    .when(is_focused, |this| {
+                        this.border_color(focus_ring_color).shadow(vec![
+                            BoxShadow::new(px(0.), px(0.), focus_ring_color)
+                                .spread_radius(PixelChromeStroke::FocusRing.width())
+                                .inset(),
+                        ])
+                    })
                     .when(has_error, |this| this.border_color(error_border))
                     .when_some(self.start_icon, |this, icon| {
                         this.gap_1()

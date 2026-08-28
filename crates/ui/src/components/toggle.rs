@@ -5,7 +5,7 @@ use gpui::{
 use std::{rc::Rc, sync::Arc};
 
 use crate::utils::is_light;
-use crate::{Color, Icon, IconName, ToggleState, Tooltip};
+use crate::{Color, Icon, IconName, PixelChromeRadius, PixelChromeStroke, ToggleState, Tooltip};
 use crate::{ElevationIndex, KeyBinding, prelude::*};
 
 // TODO: Checkbox, CheckboxWithLabel, and Switch could all be
@@ -229,9 +229,9 @@ impl RenderOnce for Checkbox {
                     .items_center()
                     .m_1()
                     .size_4()
-                    .rounded_xs()
+                    .rounded(PixelChromeRadius::Control.pixels())
                     .bg(bg_color)
-                    .border_1()
+                    .border(PixelChromeStroke::Border.width())
                     .border_color(border_color)
                     .when(self.disabled, |this| this.cursor_not_allowed())
                     .when(self.disabled, |this| {
@@ -495,9 +495,9 @@ impl RenderOnce for Switch {
                 ToggleState::Unselected => Toggled::False,
             })
             .p(px(1.0))
-            .border_2()
+            .border(PixelChromeStroke::FocusRing.width())
             .border_color(cx.theme().colors().border_transparent)
-            .rounded_full()
+            .rounded(PixelChromeRadius::Control.pixels())
             .when_some(
                 self.tab_index.filter(|_| !self.disabled),
                 |this, tab_index| {
@@ -523,18 +523,18 @@ impl RenderOnce for Switch {
                             .when(is_on, |on| on.justify_end())
                             .when(!is_on, |off| off.justify_start())
                             .size_full()
-                            .rounded_full()
+                            .rounded(PixelChromeRadius::Control.pixels())
                             .px(DynamicSpacing::Base02.px(cx))
                             .bg(bg_color)
                             .when(!self.disabled, |this| {
                                 this.group_hover(group_id.clone(), |el| el.bg(bg_hover_color))
                             })
-                            .border_1()
+                            .border(PixelChromeStroke::Border.width())
                             .border_color(border_color)
                             .child(
                                 div()
                                     .size(DynamicSpacing::Base12.rems(cx))
-                                    .rounded_full()
+                                    .rounded(PixelChromeRadius::Control.pixels())
                                     .bg(thumb_color)
                                     .opacity(thumb_opacity),
                             ),

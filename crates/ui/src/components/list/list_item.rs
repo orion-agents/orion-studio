@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, Role, px};
+use gpui::{
+    AnyElement, AnyView, BoxShadow, ClickEvent, MouseButton, MouseDownEvent, Pixels, Role, px,
+};
 use smallvec::SmallVec;
 
-use crate::{Disclosure, prelude::*};
+use crate::{Disclosure, PixelChromeRadius, PixelChromeStroke, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -297,38 +299,56 @@ impl ParentElement for ListItem {
 
 impl RenderOnce for ListItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let selected_outline = vec![
+            BoxShadow::new(px(0.), px(0.), cx.theme().colors().border)
+                .spread_radius(PixelChromeStroke::Border.width())
+                .inset(),
+        ];
+        let focus_ring = vec![
+            BoxShadow::new(px(0.), px(0.), cx.theme().colors().border_focused)
+                .spread_radius(PixelChromeStroke::FocusRing.width())
+                .inset(),
+        ];
+
         h_flex()
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
             .when_some(self.height, |this, height| this.h(height))
             .relative()
+            .when(self.selectable || self.rounded, |this| {
+                this.rounded(PixelChromeRadius::Control.pixels())
+            })
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
                     .px(DynamicSpacing::Base04.rems(cx))
             })
             .when(!self.inset, |this| {
-                this.when_some(self.focused, |this, focused| {
-                    this.border_1()
+                this.when(self.selectable && !self.disabled, |this| {
+                    this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                        .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                        .when(self.outlined, |this| {
+                            this.rounded(PixelChromeRadius::Control.pixels())
+                        })
+                        .when(self.selected, |this| {
+                            this.bg(cx.theme().colors().ghost_element_selected)
+                                .shadow(selected_outline.clone())
+                        })
+                })
+                .when_some(self.focused, |this, focused| {
+                    this.border(PixelChromeStroke::Border.width())
+                        .border_color(cx.theme().colors().border.opacity(0.))
                         .when_some(self.dock, |this, dock| match dock {
                             DockSide::Left => this.border_l_2(),
                             DockSide::Right => this.border_r_2(),
                         })
                         .when(focused && !self.disabled, |this| {
                             this.border_color(cx.theme().colors().border_focused)
-                        })
-                })
-                .when(self.selectable && !self.disabled, |this| {
-                    this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                        .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                        .when(self.outlined, |this| this.rounded_sm())
-                        .when(self.selected, |this| {
-                            this.bg(cx.theme().colors().ghost_element_selected)
+                                .shadow(focus_ring.clone())
                         })
                 })
             })
-            .when(self.rounded, |this| this.rounded_sm())
             .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
             .child(
                 h_flex()
@@ -360,6 +380,7 @@ impl RenderOnce for ListItem {
                     .group("list_item")
                     .w_full()
                     .relative()
+                    .rounded(PixelChromeRadius::Control.pixels())
                     .gap_1()
                     .px(DynamicSpacing::Base06.rems(cx))
                     .map(|this| match self.spacing {
@@ -368,19 +389,20 @@ impl RenderOnce for ListItem {
                         ListItemSpacing::Sparse => this.py_1(),
                     })
                     .when(self.inset, |this| {
-                        this.when_some(self.focused, |this, focused| {
-                            if focused && !self.disabled {
-                                this.border_1()
-                                    .border_color(cx.theme().colors().border_focused)
-                            } else {
-                                this.border_1()
-                            }
-                        })
-                        .when(self.selectable && !self.disabled, |this| {
+                        this.when(self.selectable && !self.disabled, |this| {
                             this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                                 .active(|style| style.bg(cx.theme().colors().ghost_element_active))
                                 .when(self.selected, |this| {
                                     this.bg(cx.theme().colors().ghost_element_selected)
+                                        .shadow(selected_outline.clone())
+                                })
+                        })
+                        .when_some(self.focused, |this, focused| {
+                            this.border(PixelChromeStroke::Border.width())
+                                .border_color(cx.theme().colors().border.opacity(0.))
+                                .when(focused && !self.disabled, |this| {
+                                    this.border_color(cx.theme().colors().border_focused)
+                                        .shadow(focus_ring.clone())
                                 })
                         })
                     })
@@ -389,9 +411,9 @@ impl RenderOnce for ListItem {
                         |this, on_click| this.cursor_pointer().on_click(on_click),
                     )
                     .when(self.outlined, |this| {
-                        this.border_1()
+                        this.border(PixelChromeStroke::Border.width())
                             .border_color(cx.theme().colors().border)
-                            .rounded_sm()
+                            .rounded(PixelChromeRadius::Control.pixels())
                             .overflow_hidden()
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
@@ -402,7 +424,7 @@ impl RenderOnce for ListItem {
                     .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
                     .map(|this| {
                         if self.inset {
-                            this.rounded_sm()
+                            this.rounded(PixelChromeRadius::Control.pixels())
                         } else {
                             // When an item is not inset draw the indent spacing inside of the item
                             this.ml(self.indent_level as f32 * self.indent_step_size)

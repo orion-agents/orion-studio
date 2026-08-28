@@ -9,10 +9,10 @@ use editor::{
     ui_scrollbar_settings_from_raw,
 };
 use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
-    WeakEntity, actions, anchored, deferred, div,
+    Action, AnyElement, App, BoxShadow, ClipboardEntry, DismissEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription,
+    Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
 use persistence::TerminalDb;
@@ -43,7 +43,8 @@ use terminal_panel::TerminalPanel;
 use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
 use ui::{
-    ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
+    ContextMenu, Divider, PixelChromeRadius, PixelChromeStroke, ScrollAxes, Scrollbars, Tooltip,
+    WithScrollbar,
     prelude::*,
     scrollbars::{self, ScrollbarVisibility},
 };
@@ -1399,6 +1400,9 @@ impl Render for TerminalView {
                 div()
                     .id("terminal-view-container")
                     .size_full()
+                    .relative()
+                    .overflow_hidden()
+                    .rounded(PixelChromeRadius::Surface.pixels())
                     .bg(cx.theme().colors().editor_background)
                     .child(TerminalElement::new(
                         terminal_handle,
@@ -1410,6 +1414,14 @@ impl Render for TerminalView {
                         self.block_below_cursor.clone(),
                         self.mode.clone(),
                     ))
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(PixelChromeRadius::Surface.pixels())
+                            .border(PixelChromeStroke::Border.width())
+                            .border_color(cx.theme().colors().border_variant),
+                    )
                     .when(self.content_mode(window, cx).is_scrollable(), |div| {
                         let colors = cx.theme().colors();
                         div.custom_scrollbars(
@@ -1544,6 +1556,17 @@ impl Item for TerminalView {
                                 .top_0()
                                 .left_0()
                                 .size_full()
+                                .rounded(PixelChromeRadius::Control.pixels())
+                                .shadow(vec![
+                                    BoxShadow::new(
+                                        px(0.),
+                                        px(0.),
+                                        cx.theme().colors().border_focused,
+                                    )
+                                    .spread_radius(PixelChromeStroke::FocusRing.width())
+                                    .inset(),
+                                ])
+                                .bg(cx.theme().colors().editor_background)
                                 .child(editor)
                                 .on_action(move |_: &menu::Confirm, window, cx| {
                                     self_handle

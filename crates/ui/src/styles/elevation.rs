@@ -1,7 +1,9 @@
 use std::fmt::{self, Display, Formatter};
 
-use gpui::{App, BoxShadow, Hsla, hsla, px};
+use gpui::{App, BoxShadow, Hsla, hsla};
 use theme::{ActiveTheme, Appearance};
+
+use super::{PixelChromeRadius, PixelChromeShadow};
 
 /// Today, elevation is primarily used to add shadows to elements, and set the correct background for elements like buttons.
 ///
@@ -38,45 +40,33 @@ impl Display for ElevationIndex {
 }
 
 impl ElevationIndex {
+    pub(crate) fn chrome_radius(self) -> PixelChromeRadius {
+        match self {
+            Self::ModalSurface => PixelChromeRadius::Modal,
+            Self::Background | Self::Surface | Self::EditorSurface | Self::ElevatedSurface => {
+                PixelChromeRadius::Surface
+            }
+        }
+    }
+
     /// Returns an appropriate shadow for the given elevation index.
     pub fn shadow(self, cx: &App) -> Vec<BoxShadow> {
         let is_light = cx.theme().appearance() == Appearance::Light;
 
         match self {
-            ElevationIndex::Surface => vec![],
-            ElevationIndex::EditorSurface => vec![],
-
-            ElevationIndex::ElevatedSurface => vec![
-                BoxShadow::new(px(0.), px(2.), hsla(0., 0., 0., 0.12)).blur_radius(px(3.)),
-                BoxShadow::new(
-                    px(0.),
-                    px(1.),
-                    hsla(0., 0., 0., if is_light { 0.03 } else { 0.06 }),
-                ),
-            ],
-
-            ElevationIndex::ModalSurface => vec![
-                BoxShadow::new(
-                    px(0.),
-                    px(2.),
-                    hsla(0., 0., 0., if is_light { 0.06 } else { 0.12 }),
-                )
-                .blur_radius(px(3.)),
-                BoxShadow::new(
-                    px(0.),
-                    px(3.),
-                    hsla(0., 0., 0., if is_light { 0.06 } else { 0.08 }),
-                )
-                .blur_radius(px(6.)),
-                BoxShadow::new(px(0.), px(6.), hsla(0., 0., 0., 0.04)).blur_radius(px(12.)),
-                BoxShadow::new(
-                    px(0.),
-                    px(1.),
-                    hsla(0., 0., 0., if is_light { 0.04 } else { 0.12 }),
-                ),
-            ],
-
-            _ => vec![],
+            Self::ElevatedSurface => PixelChromeShadow::Elevated.shadows(hsla(
+                0.,
+                0.,
+                0.,
+                if is_light { 0.15 } else { 0.18 },
+            )),
+            Self::ModalSurface => PixelChromeShadow::Modal.shadows(hsla(
+                0.,
+                0.,
+                0.,
+                if is_light { 0.18 } else { 0.32 },
+            )),
+            Self::Background | Self::Surface | Self::EditorSurface => Vec::new(),
         }
     }
 

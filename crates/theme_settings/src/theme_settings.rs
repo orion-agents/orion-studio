@@ -445,3 +445,110 @@ pub fn increase_buffer_font_size(cx: &mut App) {
 pub fn decrease_buffer_font_size(cx: &mut App) {
     adjust_buffer_font_size(cx, |size| size - px(1.0));
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashSet, fs, path::Path};
+
+    use anyhow::Context as _;
+
+    use super::*;
+
+    const ORION_PIXEL_ATELIER: &[u8] =
+        include_bytes!("../../../assets/themes/orion-pixel-atelier/orion-pixel-atelier.json");
+
+    #[test]
+    fn orion_pixel_atelier_fixture_parses_refines_and_registers_uniquely() -> Result<()> {
+        let raw: serde_json::Value = serde_json::from_slice(ORION_PIXEL_ATELIER)?;
+        assert_valid_hex_colors(&raw, "$".to_string())?;
+
+        let content = deserialize_user_theme(ORION_PIXEL_ATELIER)?;
+        assert_eq!(content.name, "Orion Pixel Atelier");
+        assert_eq!(content.author, "Orion Studio");
+        assert_eq!(content.themes.len(), 2);
+
+        let names = content
+            .themes
+            .iter()
+            .map(|theme| theme.name.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(names.len(), content.themes.len());
+        assert!(names.contains("Orion Pixel Atelier Night"));
+        assert!(names.contains("Orion Pixel Atelier Dawn"));
+
+        let family = refine_theme_family(content);
+        let registry = ThemeRegistry::new(Box::new(()));
+        registry.insert_theme_families([family]);
+
+        let night = registry.get("Orion Pixel Atelier Night")?;
+        let dawn = registry.get("Orion Pixel Atelier Dawn")?;
+        assert_eq!(night.appearance(), Appearance::Dark);
+        assert_eq!(dawn.appearance(), Appearance::Light);
+
+        Ok(())
+    }
+
+    #[test]
+    fn bundled_theme_names_are_globally_unique() -> Result<()> {
+        let themes_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/themes");
+        let mut names = HashSet::new();
+
+        for family_directory in fs::read_dir(&themes_root)
+            .with_context(|| format!("failed to read {}", themes_root.display()))?
+        {
+            let family_directory = family_directory?;
+            if !family_directory.file_type()?.is_dir() {
+                continue;
+            }
+
+            for path in fs::read_dir(family_directory.path())?
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| {
+                    path.extension()
+                        .is_some_and(|extension| extension == "json")
+                })
+            {
+                let bytes = fs::read(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?;
+                let family: ThemeFamilyContent = serde_json::from_slice(&bytes)
+                    .with_context(|| format!("failed to parse bundled theme {}", path.display()))?;
+
+                for theme in family.themes {
+                    anyhow::ensure!(
+                        names.insert(theme.name.clone()),
+                        "duplicate bundled theme name {:?} in {}",
+                        theme.name,
+                        path.display()
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn assert_valid_hex_colors(value: &serde_json::Value, path: String) -> Result<()> {
+        match value {
+            serde_json::Value::Object(entries) => {
+                for (key, value) in entries {
+                    assert_valid_hex_colors(value, format!("{path}.{key}"))?;
+                }
+            }
+            serde_json::Value::Array(entries) => {
+                for (index, value) in entries.iter().enumerate() {
+                    assert_valid_hex_colors(value, format!("{path}[{index}]"))?;
+                }
+            }
+            serde_json::Value::String(color) if color.starts_with('#') => {
+                anyhow::ensure!(
+                    matches!(color.len(), 7 | 9)
+                        && color[1..].bytes().all(|byte| byte.is_ascii_hexdigit()),
+                    "invalid color {color:?} at {path}"
+                );
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+}

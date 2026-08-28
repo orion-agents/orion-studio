@@ -1,9 +1,9 @@
 use std::cmp::Ordering;
 
-use gpui::{AnyElement, IntoElement, Stateful};
+use gpui::{AnyElement, BoxShadow, IntoElement, Stateful};
 use smallvec::SmallVec;
 
-use crate::prelude::*;
+use crate::{PixelChromeRadius, PixelChromeStroke, prelude::*};
 
 const START_TAB_SLOT_SIZE: Pixels = px(12.);
 const END_TAB_SLOT_SIZE: Pixels = px(14.);
@@ -109,7 +109,7 @@ impl ParentElement for Tab {
 impl RenderOnce for Tab {
     #[allow(refining_impl_trait)]
     fn render(self, _: &mut Window, cx: &mut App) -> Stateful<Div> {
-        let (text_color, tab_bg, _tab_hover_bg, _tab_active_bg) = match self.selected {
+        let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match self.selected {
             false => (
                 cx.theme().colors().text_muted,
                 cx.theme().colors().tab_inactive_background,
@@ -123,6 +123,10 @@ impl RenderOnce for Tab {
                 cx.theme().colors().element_active,
             ),
         };
+
+        let selected_outline = BoxShadow::new(px(0.), px(0.), cx.theme().colors().border)
+            .spread_radius(PixelChromeStroke::Border.width())
+            .inset();
 
         let (start_slot, end_slot) = {
             let start_slot = h_flex()
@@ -144,6 +148,7 @@ impl RenderOnce for Tab {
         self.div
             .h(Tab::container_height(cx))
             .bg(tab_bg)
+            .rounded(PixelChromeRadius::Control.pixels())
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {
                 TabPosition::First => {
@@ -165,6 +170,9 @@ impl RenderOnce for Tab {
                 TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
             })
             .cursor_pointer()
+            .hover(move |style| style.bg(tab_hover_bg))
+            .active(move |style| style.bg(tab_active_bg))
+            .when(self.selected, |this| this.shadow(vec![selected_outline]))
             .child(
                 h_flex()
                     .group("")

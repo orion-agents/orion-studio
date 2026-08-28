@@ -1,4 +1,4 @@
-use crate::{IconButtonShape, prelude::*};
+use crate::{IconButtonShape, PixelChromeRadius, PixelChromeStroke, prelude::*};
 
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
@@ -67,6 +67,12 @@ impl RenderOnce for Modal {
             .id(self.id.clone())
             .size_full()
             .flex_1()
+            .rounded(PixelChromeRadius::Modal.pixels())
+            .shadow(vec![
+                BoxShadow::new(px(0.), px(0.), cx.theme().colors().border_variant)
+                    .spread_radius(PixelChromeStroke::Border.width())
+                    .inset(),
+            ])
             .overflow_hidden()
             .child(self.header)
             .child(
@@ -243,7 +249,11 @@ impl ParentElement for ModalRow {
 
 impl RenderOnce for ModalRow {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        h_flex().w_full().py_1().children(self.children)
+        h_flex()
+            .w_full()
+            .py_1()
+            .rounded(PixelChromeRadius::Control.pixels())
+            .children(self.children)
     }
 }
 
@@ -286,7 +296,7 @@ impl RenderOnce for ModalFooter {
             .flex_none()
             .justify_between()
             .gap_1()
-            .border_t_1()
+            .border_t(PixelChromeStroke::Border.width())
             .border_color(cx.theme().colors().border_variant)
             .child(div().when_some(self.start_slot, |this, start_slot| this.child(start_slot)))
             .child(div().when_some(self.end_slot, |this, end_slot| this.child(end_slot)))
@@ -367,8 +377,8 @@ impl RenderOnce for Section {
                 .child(
                     v_flex()
                         .w_full()
-                        .rounded_sm()
-                        .border_1()
+                        .rounded(PixelChromeRadius::Surface.pixels())
+                        .border(PixelChromeStroke::Border.width())
                         .border_color(cx.theme().colors().border)
                         .bg(section_bg)
                         .child(

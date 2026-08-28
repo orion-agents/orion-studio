@@ -18,15 +18,15 @@ use git;
 use git::status::GitSummary;
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
-    ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalDragPayload, ExternalPaths, FileDragPaths, FocusHandle, Focusable, FontWeight, Hsla,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, ParentElement,
-    PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
-    uniform_list,
+    Action, AnyElement, App, AsyncWindowContext, Bounds, BoxShadow,
+    ClipboardEntry as GpuiClipboardEntry, ClipboardItem, Context, CursorStyle, DismissEvent, Div,
+    DragMoveEvent, Entity, EventEmitter, ExternalDragPayload, ExternalPaths, FileDragPaths,
+    FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
+    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
+    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
@@ -61,8 +61,9 @@ use std::{
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind, IndentGuideColors,
-    IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing, ProjectEmptyState,
-    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
+    IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing, PixelChromeRadius,
+    PixelChromeStroke, ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
@@ -5880,11 +5881,21 @@ impl ProjectPanel {
             .relative()
             .group(GROUP_NAME)
             .cursor_pointer()
-            .rounded_none()
+            .rounded(PixelChromeRadius::Control.pixels())
             .bg(bg_color)
-            .border_1()
+            .border(PixelChromeStroke::Border.width())
             .border_r_2()
             .border_color(border_color)
+            .when(
+                !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx),
+                |this| {
+                    this.shadow(vec![
+                        BoxShadow::new(px(0.), px(0.), border_color)
+                            .spread_radius(PixelChromeStroke::FocusRing.width())
+                            .inset(),
+                    ])
+                },
+            )
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .when(is_sticky, |this| this.block_mouse_except_scroll())
             .when(!is_sticky, |this| {
@@ -6384,7 +6395,17 @@ impl ProjectPanel {
                         }
                     })
                     .child(if show_editor {
-                        h_flex().h_6().w_full().child(self.filename_editor.clone())
+                        h_flex()
+                            .h_6()
+                            .w_full()
+                            .rounded(PixelChromeRadius::Control.pixels())
+                            .shadow(vec![
+                                BoxShadow::new(px(0.), px(0.), border_color)
+                                    .spread_radius(PixelChromeStroke::FocusRing.width())
+                                    .inset(),
+                            ])
+                            .bg(cx.theme().colors().editor_background)
+                            .child(self.filename_editor.clone())
                     } else {
                         h_flex()
                             .h_6()
@@ -6446,7 +6467,8 @@ impl ProjectPanel {
                         .right(px(-0.5))
                         .py_1()
                         .px_2()
-                        .border_1()
+                        .rounded(PixelChromeRadius::Surface.pixels())
+                        .border(PixelChromeStroke::Border.width())
                         .border_color(color)
                         .bg(cx.theme().colors().background)
                         .child(
