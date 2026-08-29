@@ -106,10 +106,20 @@ async fn registry_refresh_does_not_block_sequentially_on_hung_icon_downloads(
 
     registry_store.update(cx, |store, _| {
         assert!(!store.is_fetching());
-        assert_eq!(store.agents().len(), 3);
-        assert_eq!(store.agents()[0].id().as_ref(), "slow-icon-a");
-        assert_eq!(store.agents()[1].id().as_ref(), "slow-icon-b");
-        assert_eq!(store.agents()[2].id().as_ref(), "slow-icon-c");
+        let slow_icon_agent_ids = store
+            .agents()
+            .iter()
+            .filter(|agent| agent.id().as_ref().starts_with("slow-icon-"))
+            .map(|agent| agent.id().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            slow_icon_agent_ids,
+            vec![
+                "slow-icon-a".to_string(),
+                "slow-icon-b".to_string(),
+                "slow-icon-c".to_string(),
+            ]
+        );
         assert_eq!(store.fetch_error(), None);
     });
 }

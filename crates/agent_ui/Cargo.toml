@@ -93,6 +93,7 @@ rope.workspace = true
 sandbox.workspace = true
 schemars.workspace = true
 search.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
@@ -139,7 +140,6 @@ remote = { workspace = true, features = ["test-support"] }
 remote_connection = { workspace = true, features = ["test-support"] }
 
 search = { workspace = true, features = ["test-support"] }
-semver.workspace = true
 shlex.workspace = true
 reqwest_client.workspace = true
 tempfile.workspace = true

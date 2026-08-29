@@ -6,9 +6,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, Focusable, KeyContext, ParentElement, Render,
-    RenderOnce, SharedString, Styled, TextStyle, UniformListScrollHandle, Window, point,
+    RenderOnce, SharedString, Styled, TaskExt, TextStyle, UniformListScrollHandle, Window, point,
     uniform_list,
 };
+use project::agent_registry_store::ORION_CODE_AGENT_ID;
 use project::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
 use project::{AgentRegistryStore, RegistryAgent};
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -21,6 +22,8 @@ use workspace::{
     Workspace,
     item::{Item, ItemEvent},
 };
+
+use crate::{OrionCodeBootstrap, OrionCodeBootstrapPhase};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RegistryFilter {
@@ -395,6 +398,7 @@ impl AgentRegistryPage {
     ) -> AgentRegistryCard {
         let install_status = self.install_status(agent.id().as_ref());
         let supports_current_platform = agent.supports_current_platform();
+        let unavailable_reason = agent.unavailable_reason().cloned();
 
         let icon = match agent.icon_path() {
             Some(icon_path) => Icon::from_external_svg(icon_path.clone()),
@@ -453,14 +457,28 @@ impl AgentRegistryPage {
                             .gap_2()
                             .child(icon)
                             .child(Headline::new(agent.name().clone()).size(HeadlineSize::Small))
-                            .child(Label::new(format!("v{}", agent.version())).color(Color::Muted))
-                            .when(!supports_current_platform, |this| {
+                            .when(!agent.version().is_empty(), |this| {
                                 this.child(
-                                    Label::new("Not supported on this platform")
+                                    Label::new(format!("v{}", agent.version())).color(Color::Muted),
+                                )
+                            })
+                            .when_some(unavailable_reason, |this, reason| {
+                                this.child(
+                                    Label::new(reason)
                                         .size(LabelSize::Small)
                                         .color(Color::Warning),
                                 )
-                            }),
+                            })
+                            .when(
+                                !supports_current_platform && agent.unavailable_reason().is_none(),
+                                |this| {
+                                    this.child(
+                                        Label::new("Not supported on this platform")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                },
+                            ),
                     )
                     .child(install_button),
             )
@@ -515,6 +533,18 @@ impl AgentRegistryPage {
                             .color(Color::Muted),
                     )
                     .on_click(move |_, window, cx| {
+                        if agent_id == ORION_CODE_AGENT_ID {
+                            let Some(bootstrap) = OrionCodeBootstrap::try_global(cx) else {
+                                log::error!("Orion Code bootstrap is not initialized");
+                                return;
+                            };
+                            bootstrap
+                                .update(cx, |bootstrap, cx| {
+                                    bootstrap.accept_and_configure(fs.clone(), cx)
+                                })
+                                .detach_and_log_err(cx);
+                            return;
+                        }
                         update_settings_file(fs.clone(), cx, {
                             let agent_id = agent_id.clone();
                             move |settings, _| {
@@ -540,9 +570,54 @@ impl AgentRegistryPage {
             RegistryInstallStatus::InstalledRegistry => {
                 let fs = <dyn Fs>::global(cx);
                 let agent_id = agent.id().to_string();
+                let orion_code_needs_retry = agent_id == ORION_CODE_AGENT_ID
+                    && OrionCodeBootstrap::try_global(cx).is_some_and(|bootstrap| {
+                        let bootstrap = bootstrap.read(cx);
+                        bootstrap.phase() == OrionCodeBootstrapPhase::Failed
+                            || (bootstrap.phase() == OrionCodeBootstrapPhase::Ready
+                                && bootstrap.last_error().is_some())
+                    });
+                if orion_code_needs_retry {
+                    return Button::new(button_id, "Retry")
+                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .start_icon(
+                            Icon::new(IconName::RotateCw)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .on_click(move |_, _, cx| {
+                            let Some(bootstrap) = OrionCodeBootstrap::try_global(cx) else {
+                                log::error!("Orion Code bootstrap is not initialized");
+                                return;
+                            };
+                            bootstrap
+                                .update(cx, |bootstrap, cx| {
+                                    bootstrap.accept_and_configure(fs.clone(), cx)
+                                })
+                                .detach_and_log_err(cx);
+                        });
+                }
                 Button::new(button_id, "Remove")
                     .style(ButtonStyle::OutlinedGhost)
-                    .on_click(move |_, _, cx| {
+                    .on_click(move |_, window, cx| {
+                        if agent_id == ORION_CODE_AGENT_ID {
+                            let Some(bootstrap) = OrionCodeBootstrap::try_global(cx) else {
+                                log::error!("Orion Code bootstrap is not initialized");
+                                return;
+                            };
+                            bootstrap
+                                .update(cx, |bootstrap, cx| {
+                                    bootstrap.remove_and_disable(fs.clone(), cx)
+                                })
+                                .detach_and_log_err(cx);
+                            window.dispatch_action(
+                                Box::new(zed_actions::agent::SelectAgent {
+                                    agent: agent::ORION_AGENT_ID.to_string(),
+                                }),
+                                cx,
+                            );
+                            return;
+                        }
                         let agent_id = agent_id.clone();
                         update_settings_file(fs.clone(), cx, move |settings, _| {
                             let Some(agent_servers) = settings.agent_servers.as_mut() else {

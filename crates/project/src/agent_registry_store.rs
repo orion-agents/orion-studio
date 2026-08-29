@@ -18,6 +18,8 @@ use util::ResultExt;
 use crate::{AgentId, DisableAiSettings};
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
+pub const ORION_CODE_AGENT_ID: &str = "orion-code";
+const ORION_CODE_NPM_PACKAGE: &str = "@orion-agents/orion-code";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
 // Bound the full request lifecycle, including response body reads; the shared
 // HTTP client only has a connect timeout.
@@ -51,9 +53,16 @@ pub struct RegistryNpxAgent {
 }
 
 #[derive(Clone, Debug)]
+pub struct RegistryUnavailableAgent {
+    pub metadata: RegistryAgentMetadata,
+    pub reason: SharedString,
+}
+
+#[derive(Clone, Debug)]
 pub enum RegistryAgent {
     Binary(RegistryBinaryAgent),
     Npx(RegistryNpxAgent),
+    Unavailable(RegistryUnavailableAgent),
 }
 
 impl RegistryAgent {
@@ -61,6 +70,7 @@ impl RegistryAgent {
         match self {
             RegistryAgent::Binary(agent) => &agent.metadata,
             RegistryAgent::Npx(agent) => &agent.metadata,
+            RegistryAgent::Unavailable(agent) => &agent.metadata,
         }
     }
 
@@ -96,8 +106,217 @@ impl RegistryAgent {
         match self {
             RegistryAgent::Binary(agent) => agent.supports_current_platform,
             RegistryAgent::Npx(_) => true,
+            RegistryAgent::Unavailable(_) => false,
         }
     }
+
+    pub fn is_installable(&self) -> bool {
+        !matches!(self, RegistryAgent::Unavailable(_)) && self.supports_current_platform()
+    }
+
+    pub fn unavailable_reason(&self) -> Option<&SharedString> {
+        match self {
+            RegistryAgent::Unavailable(agent) => Some(&agent.reason),
+            RegistryAgent::Binary(_) | RegistryAgent::Npx(_) => None,
+        }
+    }
+}
+
+fn orion_code_registry_metadata(version: SharedString) -> RegistryAgentMetadata {
+    RegistryAgentMetadata {
+        id: AgentId::new(ORION_CODE_AGENT_ID),
+        name: "Orion Code".into(),
+        description: "Orion Studio's recommended local coding agent, connected over ACP.".into(),
+        version,
+        repository: None,
+        website: None,
+        icon_path: None,
+    }
+}
+
+fn first_party_registry_agents(version_floor: Option<&semver::Version>) -> Vec<RegistryAgent> {
+    match version_floor {
+        Some(version) => vec![verified_orion_code_registry_agent(version)],
+        None => vec![RegistryAgent::Unavailable(RegistryUnavailableAgent {
+            metadata: orion_code_registry_metadata(SharedString::default()),
+            reason: "Connect to the ACP Registry to fetch an Orion Code Preview, or continue with Orion Agent."
+                .into(),
+        })],
+    }
+}
+
+fn verified_orion_code_registry_agent(version: &semver::Version) -> RegistryAgent {
+    let version = version.to_string();
+    RegistryAgent::Npx(RegistryNpxAgent {
+        metadata: orion_code_registry_metadata(version.clone().into()),
+        package: format!("{ORION_CODE_NPM_PACKAGE}@{version}").into(),
+        args: Vec::new(),
+        env: HashMap::default(),
+    })
+}
+
+fn apply_orion_code_version_pin(
+    agents: &mut Vec<RegistryAgent>,
+    pinned_version: Option<&semver::Version>,
+) {
+    let Some(pinned_version) = pinned_version else {
+        return;
+    };
+    let pinned_agent = verified_orion_code_registry_agent(pinned_version);
+    if let Some(index) = agents
+        .iter()
+        .position(|agent| agent.id().as_ref() == ORION_CODE_AGENT_ID)
+    {
+        agents[index] = pinned_agent;
+    } else {
+        agents.push(pinned_agent);
+    }
+}
+
+fn validate_orion_code_npx_binding(
+    agent: &RegistryNpxAgent,
+) -> std::result::Result<(), SharedString> {
+    let package = agent.package.as_ref();
+    let metadata_version = agent.metadata.version.as_ref();
+    let package_version_prefix = format!("{ORION_CODE_NPM_PACKAGE}@");
+    let Some(package_version) = package.strip_prefix(&package_version_prefix) else {
+        let reason = if package == ORION_CODE_NPM_PACKAGE {
+            format!(
+                "Orion Code Registry package must include an exact semantic version: expected {ORION_CODE_NPM_PACKAGE}@{metadata_version}"
+            )
+        } else {
+            format!(
+                "Orion Code Registry entry must use the trusted package {ORION_CODE_NPM_PACKAGE}; received {package}"
+            )
+        };
+        return Err(reason.into());
+    };
+
+    if semver::Version::parse(metadata_version).is_err() {
+        return Err(format!(
+            "Orion Code Registry metadata version must be an exact semantic version; received {metadata_version}"
+        )
+        .into());
+    }
+
+    if semver::Version::parse(package_version).is_err() {
+        return Err(format!(
+            "Orion Code Registry package version must be an exact semantic version; received {package_version}"
+        )
+        .into());
+    }
+
+    if package_version != metadata_version {
+        return Err(format!(
+            "Orion Code Registry package version {package_version} must exactly match metadata version {metadata_version}"
+        )
+        .into());
+    }
+
+    if !agent.args.is_empty() {
+        return Err("Orion Code Registry package must not declare launcher arguments".into());
+    }
+    if !agent.env.is_empty() {
+        return Err(
+            "Orion Code Registry package must not declare distribution environment variables"
+                .into(),
+        );
+    }
+
+    Ok(())
+}
+
+fn enforce_orion_code_registry_binding(agent: RegistryAgent) -> RegistryAgent {
+    if agent.id().as_ref() != ORION_CODE_AGENT_ID {
+        return agent;
+    }
+
+    match agent {
+        RegistryAgent::Npx(mut agent) => match validate_orion_code_npx_binding(&agent) {
+            Ok(()) => {
+                agent.metadata = orion_code_registry_metadata(agent.metadata.version.clone());
+                RegistryAgent::Npx(agent)
+            }
+            Err(reason) => RegistryAgent::Unavailable(RegistryUnavailableAgent {
+                metadata: orion_code_registry_metadata(SharedString::default()),
+                reason,
+            }),
+        },
+        RegistryAgent::Binary(_) => RegistryAgent::Unavailable(RegistryUnavailableAgent {
+            metadata: orion_code_registry_metadata(SharedString::default()),
+            reason: "Orion Code Preview must use the trusted exact-version npx distribution".into(),
+        }),
+        RegistryAgent::Unavailable(agent) => RegistryAgent::Unavailable(agent),
+    }
+}
+
+fn should_replace_registry_agent(current: &RegistryAgent, candidate: &RegistryAgent) -> bool {
+    if matches!(current, RegistryAgent::Unavailable(_)) {
+        return !matches!(candidate, RegistryAgent::Unavailable(_));
+    }
+    if matches!(candidate, RegistryAgent::Unavailable(_)) {
+        return false;
+    }
+
+    match (
+        semver::Version::parse(current.version()),
+        semver::Version::parse(candidate.version()),
+    ) {
+        (Ok(current), Ok(candidate)) => candidate > current,
+        (Err(_), Ok(_)) => true,
+        (Ok(_), Err(_)) | (Err(_), Err(_)) => false,
+    }
+}
+
+fn merge_registry_agents(
+    first_party_agents: Vec<RegistryAgent>,
+    remote_agents: Vec<RegistryAgent>,
+) -> Vec<RegistryAgent> {
+    let mut merged = Vec::new();
+    for remote_agent in remote_agents
+        .into_iter()
+        .map(enforce_orion_code_registry_binding)
+    {
+        if let Some(index) = merged
+            .iter()
+            .position(|agent: &RegistryAgent| agent.id() == remote_agent.id())
+        {
+            if should_replace_registry_agent(&merged[index], &remote_agent) {
+                merged[index] = remote_agent;
+            }
+        } else {
+            merged.push(remote_agent);
+        }
+    }
+
+    let mut indices = merged
+        .iter()
+        .enumerate()
+        .map(|(index, agent)| (agent.id().clone(), index))
+        .collect::<HashMap<_, _>>();
+
+    for first_party_agent in first_party_agents {
+        if let Some(index) = indices.get(first_party_agent.id()).copied() {
+            let remote_agent = &merged[index];
+            let first_party_is_preferred = match (
+                semver::Version::parse(remote_agent.version()),
+                semver::Version::parse(first_party_agent.version()),
+            ) {
+                (_, _) if matches!(&first_party_agent, RegistryAgent::Unavailable(_)) => false,
+                (Ok(remote), Ok(first_party)) => first_party >= remote,
+                (Err(_), Ok(_)) => true,
+                (Ok(_), Err(_)) | (Err(_), Err(_)) => false,
+            };
+            if first_party_is_preferred {
+                merged[index] = first_party_agent;
+            }
+        } else {
+            indices.insert(first_party_agent.id().clone(), merged.len());
+            merged.push(first_party_agent);
+        }
+    }
+
+    merged
 }
 
 #[derive(Clone, Debug)]
@@ -121,6 +340,8 @@ pub struct AgentRegistryStore {
     fetch_error: Option<SharedString>,
     pending_refresh: Option<Task<()>>,
     last_refresh: Option<Instant>,
+    orion_code_version_floor: Option<semver::Version>,
+    orion_code_version_pin: Option<semver::Version>,
 }
 
 impl AgentRegistryStore {
@@ -142,11 +363,7 @@ impl AgentRegistryStore {
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
 
-        store.update(cx, |store, cx| {
-            if store.agents.is_empty() {
-                store.refresh(cx);
-            }
-        });
+        store.update(cx, |store, cx| store.refresh(cx));
 
         store
     }
@@ -171,6 +388,8 @@ impl AgentRegistryStore {
             fetch_error: None,
             pending_refresh: None,
             last_refresh: None,
+            orion_code_version_floor: None,
+            orion_code_version_pin: None,
         });
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
         store
@@ -184,6 +403,52 @@ impl AgentRegistryStore {
 
     pub fn agents(&self) -> &[RegistryAgent] {
         &self.agents
+    }
+
+    pub fn set_orion_code_version_floor(
+        &mut self,
+        version: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let version = semver::Version::parse(version)
+            .with_context(|| format!("invalid Orion Code verified version {version}"))?;
+        if self
+            .orion_code_version_floor
+            .as_ref()
+            .is_some_and(|floor| floor >= &version)
+        {
+            return Ok(());
+        }
+
+        self.orion_code_version_floor = Some(version);
+        self.agents = merge_registry_agents(
+            first_party_registry_agents(self.orion_code_version_floor.as_ref()),
+            std::mem::take(&mut self.agents),
+        );
+        apply_orion_code_version_pin(&mut self.agents, self.orion_code_version_pin.as_ref());
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn pin_orion_code_to_verified_version(
+        &mut self,
+        version: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let version = semver::Version::parse(version)
+            .with_context(|| format!("invalid Orion Code rollback version {version}"))?;
+        self.orion_code_version_pin = Some(version);
+        apply_orion_code_version_pin(&mut self.agents, self.orion_code_version_pin.as_ref());
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn clear_orion_code_version_pin_and_refresh(&mut self, cx: &mut Context<Self>) {
+        if self.orion_code_version_pin.take().is_none() {
+            return;
+        }
+        cx.notify();
+        self.refresh(cx);
     }
 
     pub fn agent(&self, id: &AgentId) -> Option<&RegistryAgent> {
@@ -243,7 +508,14 @@ impl AgentRegistryStore {
                 this.is_fetching = false;
                 match result {
                     Ok(agents) => {
-                        this.agents = agents;
+                        this.agents = merge_registry_agents(
+                            first_party_registry_agents(this.orion_code_version_floor.as_ref()),
+                            agents,
+                        );
+                        apply_orion_code_version_pin(
+                            &mut this.agents,
+                            this.orion_code_version_pin.as_ref(),
+                        );
                         this.fetch_error = None;
                     }
                     Err(error) => {
@@ -276,11 +548,13 @@ impl AgentRegistryStore {
         let mut store = Self {
             fs: fs.clone(),
             http_client,
-            agents: Vec::new(),
+            agents: first_party_registry_agents(None),
             is_fetching: false,
             fetch_error: None,
             pending_refresh: None,
             last_refresh: None,
+            orion_code_version_floor: None,
+            orion_code_version_pin: None,
         };
 
         store.load_cached_registry(fs, store.http_client.clone(), cx);
@@ -316,7 +590,14 @@ impl AgentRegistryStore {
                 build_registry_agents(fs, http_client, index, bytes, false, &executor).await?;
 
             this.update(cx, |this, cx| {
-                this.agents = agents;
+                this.agents = merge_registry_agents(
+                    first_party_registry_agents(this.orion_code_version_floor.as_ref()),
+                    agents,
+                );
+                apply_orion_code_version_pin(
+                    &mut this.agents,
+                    this.orion_code_version_pin.as_ref(),
+                );
                 cx.notify();
             })?;
 
@@ -674,4 +955,366 @@ struct RegistryNpxDistribution {
     args: Vec<String>,
     #[serde(default)]
     env: HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn npx_agent(id: &str, version: &str, package: &str) -> RegistryAgent {
+        npx_agent_with_args(id, version, package, &[])
+    }
+
+    fn npx_agent_with_args(id: &str, version: &str, package: &str, args: &[&str]) -> RegistryAgent {
+        RegistryAgent::Npx(RegistryNpxAgent {
+            metadata: RegistryAgentMetadata {
+                id: AgentId::new(id.to_string()),
+                name: id.to_string().into(),
+                description: SharedString::default(),
+                version: version.to_string().into(),
+                repository: None,
+                website: None,
+                icon_path: None,
+            },
+            package: package.to_string().into(),
+            args: args.iter().map(|argument| argument.to_string()).collect(),
+            env: HashMap::default(),
+        })
+    }
+
+    fn merge_remote_orion_code(agent: RegistryAgent) -> RegistryAgent {
+        merge_registry_agents(first_party_registry_agents(None), vec![agent])
+            .into_iter()
+            .find(|agent| agent.id().as_ref() == ORION_CODE_AGENT_ID)
+            .expect("merged Registry should contain Orion Code")
+    }
+
+    #[test]
+    fn first_party_orion_code_descriptor_is_available_without_remote_registry() {
+        let merged = merge_registry_agents(first_party_registry_agents(None), Vec::new());
+        let orion_code = merged
+            .iter()
+            .find(|agent| agent.id().as_ref() == ORION_CODE_AGENT_ID)
+            .expect("first-party Orion Code descriptor should exist");
+
+        assert_eq!(orion_code.name().as_ref(), "Orion Code");
+        assert!(!orion_code.is_installable());
+        assert!(
+            orion_code
+                .unavailable_reason()
+                .is_some_and(|reason| reason.contains("ACP Registry"))
+        );
+    }
+
+    #[test]
+    fn remote_orion_code_npx_distribution_replaces_unavailable_descriptor_once() {
+        let merged = merge_registry_agents(
+            first_party_registry_agents(None),
+            vec![npx_agent(
+                ORION_CODE_AGENT_ID,
+                "0.3.2",
+                "@orion-agents/orion-code@0.3.2",
+            )],
+        );
+        let matching = merged
+            .iter()
+            .filter(|agent| agent.id().as_ref() == ORION_CODE_AGENT_ID)
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching.len(), 1, "descriptor merge must not duplicate IDs");
+        let RegistryAgent::Npx(orion_code) = matching[0] else {
+            panic!("remote npx distribution should replace the unavailable descriptor");
+        };
+        assert_eq!(
+            orion_code.package.as_ref(),
+            "@orion-agents/orion-code@0.3.2"
+        );
+        assert_eq!(orion_code.metadata.name.as_ref(), "Orion Code");
+        assert!(orion_code.metadata.repository.is_none());
+        assert!(orion_code.metadata.website.is_none());
+        assert!(orion_code.metadata.icon_path.is_none());
+        assert!(
+            orion_code.args.is_empty(),
+            "the dedicated orion-code bin requires Registry npx args=[]"
+        );
+    }
+
+    #[test]
+    fn remote_orion_code_accepts_exact_stable_and_prerelease_packages() {
+        for version in ["1.2.3", "1.2.3-rc.1", "1.2.3-rc.1+build.5"] {
+            let package = format!("{ORION_CODE_NPM_PACKAGE}@{version}");
+            let agent =
+                merge_remote_orion_code(npx_agent(ORION_CODE_AGENT_ID, version, package.as_str()));
+
+            let RegistryAgent::Npx(agent) = agent else {
+                panic!("exact Orion Code package {package} should remain installable");
+            };
+            assert_eq!(agent.package.as_ref(), package.as_str());
+            assert!(agent.args.is_empty());
+        }
+    }
+
+    #[test]
+    fn remote_orion_code_rejects_untrusted_or_inexact_npx_descriptors() {
+        let cases = [
+            (
+                "wrong package name",
+                "1.2.3",
+                "@attacker/orion-code@1.2.3",
+                Vec::new(),
+                "trusted package",
+            ),
+            (
+                "missing package version",
+                "1.2.3",
+                ORION_CODE_NPM_PACKAGE,
+                Vec::new(),
+                "include an exact semantic version",
+            ),
+            (
+                "latest tag",
+                "1.2.3",
+                "@orion-agents/orion-code@latest",
+                Vec::new(),
+                "package version must be an exact semantic version",
+            ),
+            (
+                "semver range",
+                "1.2.3",
+                "@orion-agents/orion-code@^1.2.3",
+                Vec::new(),
+                "package version must be an exact semantic version",
+            ),
+            (
+                "git spec",
+                "1.2.3",
+                "git+https://example.invalid/orion-code.git",
+                Vec::new(),
+                "trusted package",
+            ),
+            (
+                "file spec",
+                "1.2.3",
+                "file:../orion-code",
+                Vec::new(),
+                "trusted package",
+            ),
+            (
+                "URL spec",
+                "1.2.3",
+                "https://example.invalid/orion-code.tgz",
+                Vec::new(),
+                "trusted package",
+            ),
+            (
+                "metadata and package version mismatch",
+                "1.2.3",
+                "@orion-agents/orion-code@1.2.4",
+                Vec::new(),
+                "must exactly match metadata version",
+            ),
+            (
+                "launcher arguments",
+                "1.2.3",
+                "@orion-agents/orion-code@1.2.3",
+                vec!["--unsafe"],
+                "must not declare launcher arguments",
+            ),
+        ];
+
+        for (case, metadata_version, package, args, expected_reason) in cases {
+            let agent = merge_remote_orion_code(npx_agent_with_args(
+                ORION_CODE_AGENT_ID,
+                metadata_version,
+                package,
+                args.as_slice(),
+            ));
+
+            let RegistryAgent::Unavailable(agent) = agent else {
+                panic!("{case} must make Orion Code unavailable");
+            };
+            assert!(
+                agent.reason.contains(expected_reason),
+                "{case} should expose a useful reason, received: {}",
+                agent.reason
+            );
+        }
+    }
+
+    #[test]
+    fn remote_orion_code_rejects_non_semver_metadata_version() {
+        let agent = merge_remote_orion_code(npx_agent(
+            ORION_CODE_AGENT_ID,
+            "latest",
+            "@orion-agents/orion-code@1.2.3",
+        ));
+
+        let RegistryAgent::Unavailable(agent) = agent else {
+            panic!("non-semver Orion Code metadata must be unavailable");
+        };
+        assert!(
+            agent
+                .reason
+                .contains("metadata version must be an exact semantic version")
+        );
+    }
+
+    #[test]
+    fn remote_orion_code_rejects_distribution_environment_overrides() {
+        let mut remote_agent = npx_agent(
+            ORION_CODE_AGENT_ID,
+            "1.2.3",
+            "@orion-agents/orion-code@1.2.3",
+        );
+        let RegistryAgent::Npx(agent) = &mut remote_agent else {
+            unreachable!("test fixture is an npx agent");
+        };
+        agent.env.insert(
+            "NODE_OPTIONS".to_string(),
+            "--require attacker.js".to_string(),
+        );
+
+        let RegistryAgent::Unavailable(agent) = merge_remote_orion_code(remote_agent) else {
+            panic!("distribution environment must make Orion Code unavailable");
+        };
+        assert!(agent.reason.contains("environment variables"));
+        assert_eq!(agent.metadata.name.as_ref(), "Orion Code");
+        assert!(agent.metadata.version.is_empty());
+    }
+
+    #[test]
+    fn remote_orion_code_rejects_binary_distribution_for_the_reserved_id() {
+        let agent = merge_remote_orion_code(RegistryAgent::Binary(RegistryBinaryAgent {
+            metadata: RegistryAgentMetadata {
+                id: AgentId::new(ORION_CODE_AGENT_ID),
+                name: "Untrusted Orion Code".into(),
+                description: SharedString::default(),
+                version: "9.9.9".into(),
+                repository: None,
+                website: None,
+                icon_path: None,
+            },
+            targets: HashMap::default(),
+            supports_current_platform: true,
+        }));
+
+        let RegistryAgent::Unavailable(agent) = agent else {
+            panic!("remote binary distribution must not claim the reserved Orion Code ID");
+        };
+        assert!(agent.reason.contains("trusted exact-version npx"));
+    }
+
+    #[test]
+    fn package_binding_does_not_change_other_remote_agents() {
+        let merged = merge_registry_agents(
+            first_party_registry_agents(None),
+            vec![npx_agent("third-party-agent", "1.2.3", "agent@latest")],
+        );
+        let third_party = merged
+            .iter()
+            .find(|agent| agent.id().as_ref() == "third-party-agent")
+            .expect("third-party agent should remain in the Registry");
+
+        let RegistryAgent::Npx(third_party) = third_party else {
+            panic!("Orion Code package binding must not apply to other agents");
+        };
+        assert_eq!(third_party.package.as_ref(), "agent@latest");
+    }
+
+    #[test]
+    fn first_party_distribution_wins_equal_or_older_remote_versions() {
+        let first_party = npx_agent(
+            ORION_CODE_AGENT_ID,
+            "1.2.0",
+            "@orion-agents/orion-code@1.2.0",
+        );
+        let merged = merge_registry_agents(
+            vec![first_party],
+            vec![
+                npx_agent(
+                    ORION_CODE_AGENT_ID,
+                    "1.2.0",
+                    "unexpected-equal-version-package",
+                ),
+                npx_agent(ORION_CODE_AGENT_ID, "1.1.9", "unexpected-older-package"),
+            ],
+        );
+
+        let RegistryAgent::Npx(orion_code) = &merged[0] else {
+            panic!("first-party npx descriptor should remain selected");
+        };
+        assert_eq!(
+            orion_code.package.as_ref(),
+            "@orion-agents/orion-code@1.2.0"
+        );
+    }
+
+    #[test]
+    fn newer_remote_distribution_replaces_first_party_version() {
+        let merged = merge_registry_agents(
+            vec![npx_agent(
+                ORION_CODE_AGENT_ID,
+                "1.2.0",
+                "@orion-agents/orion-code@1.2.0",
+            )],
+            vec![npx_agent(
+                ORION_CODE_AGENT_ID,
+                "1.3.0",
+                "@orion-agents/orion-code@1.3.0",
+            )],
+        );
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].version().as_ref(), "1.3.0");
+    }
+
+    #[test]
+    fn orion_code_verified_version_floor_rejects_remote_downgrade_but_allows_upgrade() {
+        let floor = semver::Version::parse("2.0.0").expect("valid version floor");
+        let downgraded = merge_registry_agents(
+            first_party_registry_agents(Some(&floor)),
+            vec![npx_agent(
+                ORION_CODE_AGENT_ID,
+                "1.9.9",
+                "@orion-agents/orion-code@1.9.9",
+            )],
+        );
+        assert_eq!(downgraded[0].version().as_ref(), "2.0.0");
+        let RegistryAgent::Npx(downgraded) = &downgraded[0] else {
+            panic!("verified floor should remain an exact npx distribution");
+        };
+        assert_eq!(
+            downgraded.package.as_ref(),
+            "@orion-agents/orion-code@2.0.0"
+        );
+
+        let upgraded = merge_registry_agents(
+            first_party_registry_agents(Some(&floor)),
+            vec![npx_agent(
+                ORION_CODE_AGENT_ID,
+                "2.1.0",
+                "@orion-agents/orion-code@2.1.0",
+            )],
+        );
+        assert_eq!(upgraded[0].version().as_ref(), "2.1.0");
+    }
+
+    #[test]
+    fn orion_code_rollback_pin_restores_the_verified_version_over_a_newer_candidate() {
+        let mut agents = vec![npx_agent(
+            ORION_CODE_AGENT_ID,
+            "2.1.0",
+            "@orion-agents/orion-code@2.1.0",
+        )];
+        let verified = semver::Version::parse("2.0.0").expect("valid verified version");
+
+        apply_orion_code_version_pin(&mut agents, Some(&verified));
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].version().as_ref(), "2.0.0");
+        let RegistryAgent::Npx(agent) = &agents[0] else {
+            panic!("rollback pin should use the trusted npx descriptor");
+        };
+        assert_eq!(agent.package.as_ref(), "@orion-agents/orion-code@2.0.0");
+    }
 }

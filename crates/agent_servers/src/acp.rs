@@ -27,7 +27,11 @@ use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::{any::Any, cell::RefCell, collections::VecDeque};
+use std::{
+    any::Any,
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+};
 use task::{Shell, ShellBuilder, SpawnInTerminal};
 use thiserror::Error;
 use util::ResultExt as _;
@@ -393,10 +397,18 @@ fn enqueue_notification<Notif>(
     }
 }
 
+#[derive(Clone)]
+pub struct AcpInitializeSnapshot {
+    pub protocol_version: ProtocolVersion,
+    pub agent_info: Option<acp::Implementation>,
+    pub agent_capabilities: acp::AgentCapabilities,
+}
+
 pub struct AcpConnection {
     id: AgentId,
     telemetry_id: SharedString,
     agent_version: Option<SharedString>,
+    initialize_snapshot: AcpInitializeSnapshot,
     connection: ConnectionTo<Agent>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_sessions: Rc<RefCell<HashMap<acp::SessionId, PendingAcpSession>>>,
@@ -405,7 +417,9 @@ pub struct AcpConnection {
     agent_capabilities: acp::AgentCapabilities,
     request_elicitations: Entity<ElicitationStore>,
     defaults: AcpConnectionDefaults,
-    child: Option<Child>,
+    child: RefCell<Option<Child>>,
+    shutdown_requested: Rc<Cell<bool>>,
+    shutdown_task: RefCell<Option<Shared<Task<Result<(), SharedString>>>>>,
     session_list: Option<Rc<AcpSessionList>>,
     debug_log: AcpDebugLog,
     _settings_subscription: Subscription,
@@ -413,6 +427,34 @@ pub struct AcpConnection {
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
+}
+
+struct PendingAcpChild(Option<Child>);
+
+impl PendingAcpChild {
+    fn new(child: Child) -> Self {
+        Self(Some(child))
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        self.0
+            .as_mut()
+            .expect("pending ACP child should exist until the connection is established")
+    }
+
+    fn into_child(mut self) -> Child {
+        self.0
+            .take()
+            .expect("pending ACP child should exist until the connection is established")
+    }
+}
+
+impl Drop for PendingAcpChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            child.kill().log_err();
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -859,13 +901,26 @@ impl AcpConnection {
         }) {
             child.current_dir(cwd);
         }
-        let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
+        let child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
+        let mut pending_child = PendingAcpChild::new(child);
 
-        let stdout = child.stdout.take().context("Failed to take stdout")?;
-        let stdin = child.stdin.take().context("Failed to take stdin")?;
-        let stderr = child.stderr.take().context("Failed to take stderr")?;
+        let stdout = pending_child
+            .child_mut()
+            .stdout
+            .take()
+            .context("Failed to take stdout")?;
+        let stdin = pending_child
+            .child_mut()
+            .stdin
+            .take()
+            .context("Failed to take stdin")?;
+        let stderr = pending_child
+            .child_mut()
+            .stderr
+            .take()
+            .context("Failed to take stderr")?;
         log::debug!("Spawning external agent server: {:?}, {:?}", path, args);
-        log::trace!("Spawned (pid: {})", child.id());
+        log::trace!("Spawned (pid: {})", pending_child.child_mut().id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
         let debug_log = AcpDebugLog::default();
@@ -959,7 +1014,8 @@ impl AcpConnection {
                 .context("Failed to receive ACP connection handle")
         }
         .boxed_local();
-        let status_fut = child
+        let status_fut = pending_child
+            .child_mut()
             .status()
             .map({
                 let debug_log = debug_log.clone();
@@ -1029,15 +1085,24 @@ impl AcpConnection {
             return Err(UnsupportedVersion.into());
         }
 
+        let shutdown_requested = Rc::new(Cell::new(false));
         let wait_task = cx.spawn({
             let sessions = sessions.clone();
+            let shutdown_requested = shutdown_requested.clone();
             async move |cx| {
                 let load_error = status_fut.await?;
-                emit_load_error_to_all_sessions(&sessions, load_error, cx);
+                if !shutdown_requested.get() {
+                    emit_load_error_to_all_sessions(&sessions, load_error, cx);
+                }
                 anyhow::Ok(())
             }
         });
 
+        let initialize_snapshot = AcpInitializeSnapshot {
+            protocol_version: response.protocol_version,
+            agent_info: response.agent_info.clone(),
+            agent_capabilities: response.agent_capabilities.clone(),
+        };
         let agent_info = response.agent_info;
         let telemetry_id = agent_info
             .as_ref()
@@ -1102,6 +1167,7 @@ impl AcpConnection {
             connection,
             telemetry_id,
             agent_version,
+            initialize_snapshot,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
@@ -1114,12 +1180,18 @@ impl AcpConnection {
             _dispatch_task: dispatch_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
-            child: Some(child),
+            child: RefCell::new(Some(pending_child.into_child())),
+            shutdown_requested,
+            shutdown_task: RefCell::new(None),
         })
     }
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
+    }
+
+    pub fn initialize_snapshot(&self) -> &AcpInitializeSnapshot {
+        &self.initialize_snapshot
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1141,6 +1213,11 @@ impl AcpConnection {
             id: agent_id,
             telemetry_id: "test".into(),
             agent_version: None,
+            initialize_snapshot: AcpInitializeSnapshot {
+                protocol_version: ProtocolVersion::V1,
+                agent_info: None,
+                agent_capabilities: agent_capabilities.clone(),
+            },
             connection,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
@@ -1149,7 +1226,9 @@ impl AcpConnection {
             agent_capabilities,
             request_elicitations,
             defaults,
-            child: None,
+            child: RefCell::new(None),
+            shutdown_requested: Rc::new(Cell::new(false)),
+            shutdown_task: RefCell::new(None),
             session_list: None,
             debug_log: AcpDebugLog::default(),
             _settings_subscription: settings_subscription,
@@ -1158,6 +1237,60 @@ impl AcpConnection {
             _wait_task: Task::ready(Ok(())),
             _stderr_task: Task::ready(Ok(())),
         }
+    }
+
+    /// Terminates the ACP subprocess even while views still retain this connection.
+    ///
+    /// All callers share the same shutdown operation. The task resolves only after the direct
+    /// child exits, and active sessions are notified as soon as shutdown begins.
+    pub fn shutdown(self: &Rc<Self>, cx: &mut App) -> Task<Result<()>> {
+        let existing_shutdown_task = self.shutdown_task.borrow().clone();
+        let shutdown_task = if let Some(shutdown_task) = existing_shutdown_task {
+            shutdown_task
+        } else {
+            self.shutdown_requested.set(true);
+            let this = self.clone();
+            let shutdown_task = cx
+                .spawn(async move |cx| {
+                    emit_load_error_to_all_sessions(
+                        &this.sessions,
+                        LoadError::Other("Agent connection was shut down.".into()),
+                        cx,
+                    );
+
+                    let status_future = {
+                        let mut child = this.child.borrow_mut();
+                        let Some(child) = child.as_mut() else {
+                            return Ok(());
+                        };
+                        let status_future = child.status().boxed_local();
+                        child
+                            .kill()
+                            .map_err(|error| SharedString::from(error.to_string()))?;
+                        status_future
+                    };
+
+                    status_future
+                        .await
+                        .map_err(|error| SharedString::from(error.to_string()))?;
+                    this.child.borrow_mut().take();
+                    Ok(())
+                })
+                .shared();
+            *self.shutdown_task.borrow_mut() = Some(shutdown_task.clone());
+            shutdown_task
+        };
+
+        cx.spawn(async move |_cx| {
+            shutdown_task
+                .await
+                .map_err(|error| anyhow!(error.to_string()))
+        })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shutdown_requested_for_test(&self) -> bool {
+        self.shutdown_requested.get()
     }
 
     fn session_directories_from_work_dirs(
@@ -1532,7 +1665,7 @@ fn emit_load_error_to_all_sessions(
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        if let Some(ref mut child) = self.child {
+        if let Some(child) = self.child.get_mut().as_mut() {
             child.kill().log_err();
         }
     }
@@ -3828,6 +3961,91 @@ mod tests {
             }
             error => panic!("expected exited load error, got: {error:?}"),
         };
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn cancelling_startup_terminates_the_spawned_process_group(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().expect("temporary directory should be created");
+        let pid_file = temp_dir.path().join("agent.pid");
+        let project = project::Project::example([temp_dir.path()], &mut cx.to_async()).await;
+        let agent_server_store =
+            project.read_with(cx, |project, _| project.agent_server_store().downgrade());
+        let command = AgentServerCommand {
+            path: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "echo $$ > \"$ORION_TEST_PID_FILE\"; sleep 30".into(),
+            ],
+            env: Some(HashMap::from_iter([(
+                "ORION_TEST_PID_FILE".to_string(),
+                pid_file.to_string_lossy().into_owned(),
+            )])),
+        };
+
+        let mut async_cx = cx.to_async();
+        let startup = AcpConnection::stdio(
+            AgentId::new("test-agent"),
+            project,
+            command,
+            agent_server_store,
+            None,
+            HashMap::default(),
+            &mut async_cx,
+        )
+        .boxed_local();
+        let executor = cx.background_executor.clone();
+        let wait_for_pid = async move {
+            for _ in 0..500 {
+                if let Ok(pid) = std::fs::read_to_string(&pid_file) {
+                    return pid.trim().to_string();
+                }
+                executor.timer(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("timed out waiting for ACP child pid file")
+        }
+        .boxed_local();
+
+        let pid = match futures::future::select(startup, wait_for_pid).await {
+            futures::future::Either::Left((Ok(_connection), _wait_for_pid)) => {
+                panic!("ACP startup unexpectedly connected")
+            }
+            futures::future::Either::Left((Err(error), _wait_for_pid)) => {
+                panic!("ACP startup failed before cancellation: {error:#}")
+            }
+            futures::future::Either::Right((pid, startup)) => {
+                drop(startup);
+                pid
+            }
+        };
+
+        let mut process_exited = false;
+        for _ in 0..100 {
+            let status = smol::process::Command::new("/bin/kill")
+                .args(["-0", pid.as_str()])
+                .status()
+                .await
+                .expect("kill -0 should execute");
+            if !status.success() {
+                process_exited = true;
+                break;
+            }
+            cx.background_executor
+                .timer(std::time::Duration::from_millis(10))
+                .await;
+        }
+        assert!(
+            process_exited,
+            "dropping an in-flight ACP startup must terminate child pid {pid}"
+        );
     }
 
     async fn connect_fake_agent(

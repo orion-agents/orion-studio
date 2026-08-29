@@ -23,6 +23,7 @@ mod message_editor;
 mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
+pub mod orion_code_bootstrap;
 mod profile_selector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
@@ -85,6 +86,11 @@ pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
+pub use orion_code_bootstrap::{
+    EnsureOrionCodeRegistrySettings, OrionCodeBootstrap, OrionCodeBootstrapChoice,
+    OrionCodeBootstrapErrorKind, OrionCodeBootstrapPhase, OrionCodeBootstrapRecord,
+    OrionCodeInstallSource,
+};
 pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
@@ -617,6 +623,7 @@ pub fn init(
     context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);
+    OrionCodeBootstrap::init_global(is_new_install, cx);
 
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);

@@ -13,13 +13,14 @@ use std::{
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema::v1 as acp;
-use agent_servers::AgentServer;
+use agent_servers::{AcpConnection, AgentServer};
 use agent_settings::UserAgentsMd;
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
+use project::agent_registry_store::ORION_CODE_AGENT_ID;
 use project::agent_server_store::AllAgentServersSettings;
-use project::{AgentId, ProjectItem};
+use project::{AgentId, AgentRegistryStore, ProjectItem};
 use serde::{Deserialize, Serialize};
 
 use zed_actions::{
@@ -39,6 +40,10 @@ use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
 use crate::completion_provider::{AgentContextSelection, AgentContextSource};
+use crate::orion_code_bootstrap::{
+    OrionCodeBootstrap, OrionCodeBootstrapChoice, OrionCodeBootstrapErrorKind,
+    validate_orion_code_initialize,
+};
 use crate::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore, compose_terminal_thread_title,
     terminal_title_without_prefix,
@@ -211,19 +216,76 @@ struct SourcePanelInitialization {
 /// Reads the most recently used agent across all workspaces. Used as a fallback
 /// when opening a workspace that has no per-workspace agent preference yet.
 fn read_global_last_used_agent(kvp: &KeyValueStore) -> Option<Agent> {
-    kvp.read_kvp(LAST_USED_AGENT_KEY)
-        .log_err()
-        .flatten()
-        .and_then(|json| serde_json::from_str::<LastUsedAgent>(&json).log_err())
-        .map(|entry| entry.agent)
+    read_global_last_used_agent_checked(kvp).log_err().flatten()
+}
+
+fn read_global_last_used_agent_checked(kvp: &KeyValueStore) -> Result<Option<Agent>> {
+    let Some(json) = kvp.read_kvp(LAST_USED_AGENT_KEY)? else {
+        return Ok(None);
+    };
+    let entry = serde_json::from_str::<LastUsedAgent>(&json)
+        .context("parsing the global last-used Agent preference")?;
+    Ok(Some(entry.agent))
+}
+
+async fn write_global_last_used_agent_checked(kvp: KeyValueStore, agent: Agent) -> Result<()> {
+    let json = serde_json::to_string(&LastUsedAgent { agent })?;
+    kvp.write_kvp(LAST_USED_AGENT_KEY.to_string(), json).await?;
+    Ok(())
 }
 
 async fn write_global_last_used_agent(kvp: KeyValueStore, agent: Agent) {
-    if let Some(json) = serde_json::to_string(&LastUsedAgent { agent }).log_err() {
-        kvp.write_kvp(LAST_USED_AGENT_KEY.to_string(), json)
-            .await
-            .log_err();
+    write_global_last_used_agent_checked(kvp, agent)
+        .await
+        .log_err();
+}
+
+fn should_offer_orion_code_product_default(
+    has_saved_panel: bool,
+    has_global_agent: bool,
+    has_restored_terminal: bool,
+    has_restored_thread: bool,
+    is_new_install: bool,
+    is_via_collab: bool,
+) -> bool {
+    is_new_install
+        && !is_via_collab
+        && !has_saved_panel
+        && !has_global_agent
+        && !has_restored_terminal
+        && !has_restored_thread
+}
+
+fn can_apply_orion_code_product_default(
+    eligible: bool,
+    selected_agent: &Agent,
+    is_via_collab: bool,
+    destination_has_meaningful_state: bool,
+) -> bool {
+    eligible && selected_agent.is_native() && !is_via_collab && !destination_has_meaningful_state
+}
+
+async fn record_orion_code_bootstrap_failure(
+    bootstrap: Entity<OrionCodeBootstrap>,
+    attempt_id: u64,
+    expected_version: SharedString,
+    kind: OrionCodeBootstrapErrorKind,
+    message: SharedString,
+    cx: &mut AsyncWindowContext,
+) -> Result<()> {
+    let persistence = bootstrap.update(cx, |bootstrap, cx| {
+        bootstrap.mark_verification_failed_if_current(
+            attempt_id,
+            expected_version.as_ref(),
+            kind,
+            message,
+            cx,
+        )
+    });
+    if let Some(persistence) = persistence {
+        persistence.await?;
     }
+    Ok(())
 }
 
 fn read_global_last_created_entry_kind(kvp: &KeyValueStore) -> Option<AgentPanelEntryKind> {
@@ -1173,12 +1235,20 @@ pub struct AgentPanel {
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     _extension_subscription: Option<Subscription>,
     _project_subscription: Subscription,
+    _orion_code_bootstrap_subscription: Option<Subscription>,
+    _orion_code_agent_server_subscription: Subscription,
+    _orion_code_connection_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     persist_selected_agent_task: Task<()>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
     new_user_onboarding_upsell_dismissed: AtomicBool,
     selected_agent: Agent,
+    orion_code_product_default_eligible: bool,
+    orion_code_product_default_generation: u64,
+    orion_code_product_default_application_in_flight: bool,
+    orion_code_product_default_application_task: Task<Result<()>>,
+    orion_code_verification_task: Task<Result<()>>,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
     _base_view_observation: Option<Subscription>,
@@ -1418,8 +1488,24 @@ impl AgentPanel {
                             agent
                         }
                     };
+                    let has_global_agent = global_last_used_agent.is_some();
                     let global_fallback =
                         global_last_used_agent.filter(|agent| !is_via_collab || agent.is_native());
+                    let orion_code_bootstrap = OrionCodeBootstrap::try_global(cx);
+                    panel.orion_code_product_default_generation = orion_code_bootstrap
+                        .as_ref()
+                        .map(|bootstrap| bootstrap.read(cx).agent_selection_generation())
+                        .unwrap_or_default();
+                    panel.orion_code_product_default_eligible =
+                        should_offer_orion_code_product_default(
+                            serialized_panel.is_some(),
+                            has_global_agent,
+                            terminal_to_restore.is_some(),
+                            thread_to_restore.is_some(),
+                            orion_code_bootstrap
+                                .is_some_and(|bootstrap| bootstrap.read(cx).is_new_install()),
+                            is_via_collab,
+                        );
 
                     if let Some(serialized_panel) = &serialized_panel {
                         panel.last_created_entry_kind = serialized_panel.last_created_entry_kind;
@@ -1483,6 +1569,8 @@ impl AgentPanel {
                     {
                         panel.restore_new_draft(new_draft_thread_id, window, cx);
                     }
+                    panel.maybe_start_orion_code_verification(window, cx);
+                    panel.maybe_apply_orion_code_product_default(window, cx);
                     cx.notify();
                 });
 
@@ -1493,7 +1581,7 @@ impl AgentPanel {
         })
     }
 
-    pub(crate) fn new(workspace: &Workspace, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
@@ -1536,8 +1624,31 @@ impl AgentPanel {
         });
 
         let connection_store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
-        let _project_subscription =
-            cx.subscribe(&project, |this, _project, event, cx| match event {
+        let orion_code_bootstrap_subscription =
+            OrionCodeBootstrap::try_global(cx).map(|bootstrap| {
+                cx.observe_in(&bootstrap, window, |this, _bootstrap, window, cx| {
+                    this.maybe_start_orion_code_verification(window, cx);
+                    this.maybe_apply_orion_code_product_default(window, cx);
+                })
+            });
+        let orion_code_connection_subscription =
+            cx.observe_in(&connection_store, window, |this, _store, window, cx| {
+                this.maybe_start_orion_code_verification(window, cx);
+                this.maybe_apply_orion_code_product_default(window, cx);
+            });
+        let agent_server_store = project.read(cx).agent_server_store().clone();
+        let orion_code_agent_server_subscription = cx.subscribe_in(
+            &agent_server_store,
+            window,
+            |this, _store, _event, window, cx| {
+                this.maybe_start_orion_code_verification(window, cx);
+                this.maybe_apply_orion_code_product_default(window, cx);
+            },
+        );
+        let _project_subscription = cx.subscribe_in(
+            &project,
+            window,
+            |this, _project, event, window, cx| match event {
                 project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeRemoved(_)
                 | project::Event::WorktreeOrderChanged
@@ -1545,10 +1656,13 @@ impl AgentPanel {
                     this.ensure_native_agent_connection(cx);
                     this.update_thread_work_dirs(cx);
                     this.persist_all_terminal_metadata(cx);
+                    this.maybe_start_orion_code_verification(window, cx);
+                    this.maybe_apply_orion_code_product_default(window, cx);
                     cx.notify();
                 }
                 _ => {}
-            });
+            },
+        );
 
         let _thread_metadata_store_subscription = cx.subscribe(
             &ThreadMetadataStore::global(cx),
@@ -1560,8 +1674,14 @@ impl AgentPanel {
             },
         );
 
-        cx.on_release(|this, cx| {
+        let orion_code_verification_owner = cx.entity_id().as_u64();
+        cx.on_release(move |this, cx| {
             this.dismiss_all_terminal_notifications(cx);
+            if let Some(bootstrap) = OrionCodeBootstrap::try_global(cx) {
+                bootstrap.update(cx, |bootstrap, cx| {
+                    bootstrap.cancel_verification_for_owner(orion_code_verification_owner, cx);
+                });
+            }
         })
         .detach();
 
@@ -1587,11 +1707,19 @@ impl AgentPanel {
 
             _extension_subscription: extension_subscription,
             _project_subscription,
+            _orion_code_bootstrap_subscription: orion_code_bootstrap_subscription,
+            _orion_code_agent_server_subscription: orion_code_agent_server_subscription,
+            _orion_code_connection_subscription: orion_code_connection_subscription,
             zoomed: false,
             pending_serialization: None,
             new_user_onboarding: onboarding,
             thread_store,
             selected_agent: Agent::default(),
+            orion_code_product_default_eligible: false,
+            orion_code_product_default_generation: 0,
+            orion_code_product_default_application_in_flight: false,
+            orion_code_product_default_application_task: Task::ready(Ok(())),
+            orion_code_verification_task: Task::ready(Ok(())),
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
@@ -1667,10 +1795,377 @@ impl AgentPanel {
         }
     }
 
+    fn orion_code_registry_version(&self, cx: &App) -> Option<SharedString> {
+        let agent_id = AgentId::new(ORION_CODE_AGENT_ID);
+        if !matches!(
+            AllAgentServersSettings::get_global(cx).get(ORION_CODE_AGENT_ID),
+            Some(project::agent_server_store::CustomAgentServerSettings::Registry { .. })
+        ) {
+            return None;
+        }
+        let agent_is_registered = self
+            .project
+            .read(cx)
+            .agent_server_store()
+            .read(cx)
+            .external_agents
+            .contains_key(&agent_id);
+        if !agent_is_registered {
+            return None;
+        }
+
+        let registry = AgentRegistryStore::try_global(cx)?;
+        registry
+            .read(cx)
+            .agents()
+            .iter()
+            .find(|agent| agent.id() == &agent_id && agent.is_installable())
+            .map(|agent| agent.version().clone())
+            .filter(|version| !version.is_empty())
+    }
+
+    fn maybe_apply_orion_code_product_default(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.orion_code_product_default_eligible
+            || self.orion_code_product_default_application_in_flight
+        {
+            return;
+        }
+
+        let Some(bootstrap) = OrionCodeBootstrap::try_global(cx) else {
+            self.orion_code_product_default_eligible = false;
+            return;
+        };
+        let Some(expected_version) = self.orion_code_registry_version(cx) else {
+            return;
+        };
+        if !bootstrap
+            .read(cx)
+            .is_ready_at_version(expected_version.as_ref())
+        {
+            return;
+        }
+        let selection_generation = self.orion_code_product_default_generation;
+        if bootstrap.read(cx).agent_selection_generation() != selection_generation
+            || !can_apply_orion_code_product_default(
+                self.orion_code_product_default_eligible,
+                &self.selected_agent,
+                self.project.read(cx).is_via_collab(),
+                self.destination_has_meaningful_state(cx),
+            )
+        {
+            self.orion_code_product_default_eligible = false;
+            return;
+        }
+
+        let preference_write_lock = bootstrap.read(cx).agent_preference_write_lock();
+        let product_default = Agent::Custom {
+            id: AgentId::new(ORION_CODE_AGENT_ID),
+        };
+        self.orion_code_product_default_application_in_flight = true;
+        self.orion_code_product_default_application_task =
+            cx.spawn_in(window, async move |this, cx| {
+                let application_result: Result<bool> = async {
+                    let _preference_write_guard = preference_write_lock.lock().await;
+                    let bootstrap_is_current = bootstrap.read_with(cx, |bootstrap, _cx| {
+                        bootstrap.agent_selection_generation() == selection_generation
+                            && bootstrap.is_ready_at_version(expected_version.as_ref())
+                    });
+                    if !bootstrap_is_current {
+                        return Ok(false);
+                    }
+
+                    let panel_is_current = this.update_in(cx, |this, _window, cx| {
+                        this.orion_code_registry_version(cx).as_ref() == Some(&expected_version)
+                            && can_apply_orion_code_product_default(
+                                this.orion_code_product_default_eligible,
+                                &this.selected_agent,
+                                this.project.read(cx).is_via_collab(),
+                                this.destination_has_meaningful_state(cx),
+                            )
+                    })?;
+                    if !panel_is_current {
+                        return Ok(false);
+                    }
+
+                    let key_value_store =
+                        cx.update(|_window, cx| KeyValueStore::global(cx))?;
+                    match read_global_last_used_agent_checked(&key_value_store)? {
+                        Some(current) if current != product_default => return Ok(false),
+                        Some(_) => {}
+                        None => {
+                            write_global_last_used_agent_checked(
+                                key_value_store,
+                                product_default.clone(),
+                            )
+                            .await?;
+                        }
+                    }
+
+                    this.update_in(cx, |this, window, cx| {
+                        let bootstrap_is_current = bootstrap.read(cx)
+                            .agent_selection_generation()
+                            == selection_generation
+                            && bootstrap
+                                .read(cx)
+                                .is_ready_at_version(expected_version.as_ref());
+                        let panel_is_current =
+                            this.orion_code_registry_version(cx).as_ref()
+                                == Some(&expected_version)
+                                && can_apply_orion_code_product_default(
+                                    this.orion_code_product_default_eligible,
+                                    &this.selected_agent,
+                                    this.project.read(cx).is_via_collab(),
+                                    this.destination_has_meaningful_state(cx),
+                                );
+                        if !bootstrap_is_current || !panel_is_current {
+                            return false;
+                        }
+
+                        this.orion_code_product_default_eligible = false;
+                        this.selected_agent = product_default;
+                        let showing_empty_draft = matches!(
+                            (&this.base_view, &this.draft_thread),
+                            (BaseView::AgentThread { conversation_view }, Some(draft))
+                                if conversation_view.entity_id() == draft.entity_id()
+                        );
+                        if showing_empty_draft {
+                            this.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+                        }
+                        cx.notify();
+                        true
+                    })
+                }
+                .await;
+
+                match application_result {
+                    Ok(applied) => {
+                        this.update_in(cx, |this, _window, cx| {
+                            this.orion_code_product_default_application_in_flight = false;
+                            if !applied {
+                                this.orion_code_product_default_eligible = false;
+                            }
+                            cx.notify();
+                        })?;
+                    }
+                    Err(error) => {
+                        let attempt_is_current = bootstrap
+                            .read_with(cx, |bootstrap, _cx| {
+                                bootstrap.agent_selection_generation() == selection_generation
+                                    && bootstrap.is_ready_at_version(expected_version.as_ref())
+                            });
+                        if attempt_is_current {
+                            let persistence = bootstrap.update(cx, |bootstrap, cx| {
+                                bootstrap.mark_failed(
+                                    OrionCodeBootstrapErrorKind::Persistence,
+                                    SharedString::from(format!(
+                                        "Failed to persist Orion Code as the product default: {error:#}"
+                                    )),
+                                    cx,
+                                )
+                            });
+                            if let Err(persistence_error) = persistence.await {
+                                log::error!(
+                                    "failed to persist Orion Code product-default failure: {persistence_error:#}"
+                                );
+                            }
+                        }
+                        this.update_in(cx, |this, _window, cx| {
+                            this.orion_code_product_default_application_in_flight = false;
+                            this.orion_code_product_default_eligible = false;
+                            cx.notify();
+                        })?;
+                    }
+                }
+                Ok(())
+            });
+    }
+
+    fn maybe_start_orion_code_verification(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.project.read(cx).is_via_collab() || !self.has_open_project(cx) {
+            return;
+        }
+
+        let Some(bootstrap) = OrionCodeBootstrap::try_global(cx) else {
+            return;
+        };
+        let Some(expected_version) = self.orion_code_registry_version(cx) else {
+            return;
+        };
+        if !bootstrap
+            .read(cx)
+            .can_start_verification(expected_version.as_ref())
+        {
+            return;
+        }
+
+        let verification_owner = cx.entity_id().as_u64();
+        let (attempt_id, begin_verification) = bootstrap.update(cx, |bootstrap, cx| {
+            bootstrap.begin_verification(verification_owner, expected_version.to_string(), cx)
+        });
+        let product_agent = Agent::Custom {
+            id: AgentId::new(ORION_CODE_AGENT_ID),
+        };
+        let connection_store = self.connection_store.clone();
+        let server = product_agent.server(self.fs.clone(), self.thread_store.clone());
+
+        self.orion_code_verification_task = cx.spawn_in(window, async move |this, cx| {
+            begin_verification.await?;
+
+            let (connection_entry, connect_task) = this.update_in(cx, |_this, _window, cx| {
+                let entry = connection_store.update(cx, |store, cx| {
+                    store.request_connection_for_version(
+                        product_agent.clone(),
+                        server,
+                        expected_version.clone(),
+                        cx,
+                    )
+                });
+                let connect_task = entry.read(cx).wait_for_connection();
+                (entry, connect_task)
+            })?;
+
+            let connect_timeout = cx
+                .background_executor()
+                .timer(Duration::from_secs(30))
+                .boxed_local();
+            let connected = match futures::future::select(connect_task, connect_timeout).await {
+                futures::future::Either::Left((Ok(connected), _)) => connected,
+                futures::future::Either::Left((Err(error), _)) => {
+                    record_orion_code_bootstrap_failure(
+                        bootstrap.clone(),
+                        attempt_id,
+                        expected_version.clone(),
+                        OrionCodeBootstrapErrorKind::Initialize,
+                        SharedString::from(format!(
+                            "Orion Code failed to start or initialize: {error}"
+                        )),
+                        cx,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                futures::future::Either::Right(((), _)) => {
+                    let shutdown_task = this.update_in(cx, |_this, _window, cx| {
+                        connection_store.update(cx, |store, cx| {
+                            store.invalidate_connection_attempt(
+                                &product_agent,
+                                &connection_entry,
+                                cx,
+                            )
+                        })
+                    })?;
+                    if let Some(shutdown_task) = shutdown_task {
+                        if let Err(error) = shutdown_task.await {
+                            log::error!(
+                                "failed to stop timed-out Orion Code connection: {error:#}"
+                            );
+                        }
+                    }
+                    record_orion_code_bootstrap_failure(
+                        bootstrap.clone(),
+                        attempt_id,
+                        expected_version.clone(),
+                        OrionCodeBootstrapErrorKind::Initialize,
+                        "Orion Code initialize timed out after 30 seconds.".into(),
+                        cx,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
+
+            let health_result = connected
+                .connection
+                .clone()
+                .downcast::<AcpConnection>()
+                .context("Orion Code did not establish an ACP connection")
+                .and_then(|connection| {
+                    validate_orion_code_initialize(
+                        connection.initialize_snapshot(),
+                        expected_version.as_ref(),
+                    )
+                });
+            let verified_version = match health_result {
+                Ok(version) => version,
+                Err(error) => {
+                    let shutdown_task = this.update_in(cx, |_this, _window, cx| {
+                        connection_store.update(cx, |store, cx| {
+                            store.invalidate_connection_attempt(
+                                &product_agent,
+                                &connection_entry,
+                                cx,
+                            )
+                        })
+                    })?;
+                    if let Some(shutdown_task) = shutdown_task {
+                        if let Err(error) = shutdown_task.await {
+                            log::error!(
+                                "failed to stop incompatible Orion Code connection: {error:#}"
+                            );
+                        }
+                    }
+                    record_orion_code_bootstrap_failure(
+                        bootstrap.clone(),
+                        attempt_id,
+                        expected_version.clone(),
+                        OrionCodeBootstrapErrorKind::Initialize,
+                        SharedString::from(format!(
+                            "Orion Code failed compatibility verification: {error:#}"
+                        )),
+                        cx,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
+
+            let verification_is_current = this.update_in(cx, |this, _window, cx| {
+                bootstrap
+                    .read(cx)
+                    .verification_is_current(attempt_id, expected_version.as_ref())
+                    && this.orion_code_registry_version(cx).as_ref() == Some(&expected_version)
+                    && connection_store.read(cx).entry(&product_agent) == Some(&connection_entry)
+            })?;
+            if !verification_is_current {
+                bootstrap.update(cx, |bootstrap, cx| {
+                    bootstrap.cancel_verification_for_owner(verification_owner, cx);
+                });
+                return Ok(());
+            }
+
+            let mark_ready = bootstrap.update(cx, |bootstrap, cx| {
+                bootstrap.mark_ready_if_current(attempt_id, verified_version, cx)
+            });
+            let Some(mark_ready) = mark_ready else {
+                return Ok(());
+            };
+            mark_ready.await?;
+            this.update_in(cx, |this, window, cx| {
+                this.maybe_apply_orion_code_product_default(window, cx);
+            })?;
+            Ok(())
+        });
+    }
+
     fn should_restore_agent(&self, agent: &Agent, cx: &App) -> bool {
         let Agent::Custom { id } = agent else {
             return true;
         };
+
+        if id.0.as_ref() == ORION_CODE_AGENT_ID
+            && OrionCodeBootstrap::try_global(cx).is_some_and(|bootstrap| {
+                matches!(
+                    bootstrap.read(cx).record().choice,
+                    OrionCodeBootstrapChoice::Declined | OrionCodeBootstrapChoice::Removed
+                )
+            })
+        {
+            return false;
+        }
 
         // Local settings do not list remote agents, and the remote list may not have loaded yet.
         self.project.read(cx).is_via_remote_server()
@@ -1954,8 +2449,18 @@ impl AgentPanel {
             return;
         }
 
+        self.note_orion_code_agent_selection(cx);
         self.selected_agent = action.agent.clone().into();
         self.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
+    }
+
+    fn note_orion_code_agent_selection(&mut self, cx: &mut Context<Self>) {
+        self.orion_code_product_default_eligible = false;
+        if let Some(bootstrap) = OrionCodeBootstrap::try_global(cx) {
+            bootstrap.update(cx, |bootstrap, _cx| {
+                bootstrap.note_agent_selection();
+            });
+        }
     }
 
     fn set_selected_agent_and_persist(&mut self, agent: Agent, cx: &mut Context<Self>) {
@@ -1964,10 +2469,17 @@ impl AgentPanel {
             self.serialize(cx);
         }
 
+        let preference_write_lock = OrionCodeBootstrap::try_global(cx)
+            .map(|bootstrap| bootstrap.read(cx).agent_preference_write_lock());
         self.persist_selected_agent_task = cx.background_spawn({
             let kvp = KeyValueStore::global(cx);
             async move {
-                write_global_last_used_agent(kvp, agent).await;
+                if let Some(preference_write_lock) = preference_write_lock {
+                    let _preference_write_guard = preference_write_lock.lock().await;
+                    write_global_last_used_agent(kvp, agent).await;
+                } else {
+                    write_global_last_used_agent(kvp, agent).await;
+                }
             }
         });
     }
@@ -1981,17 +2493,19 @@ impl AgentPanel {
             return;
         }
 
+        self.note_orion_code_agent_selection(cx);
+
         let showing_new_draft = matches!(
             (&self.base_view, &self.draft_thread),
             (BaseView::AgentThread { conversation_view }, Some(draft))
                 if conversation_view.entity_id() == draft.entity_id()
         );
 
+        self.set_selected_agent_and_persist(agent, cx);
         if matches!(self.base_view, BaseView::AgentThread { .. }) && showing_new_draft {
-            self.set_selected_agent_and_persist(agent, cx);
             self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
-            cx.notify();
         }
+        cx.notify();
     }
 
     pub fn new_terminal(
@@ -5298,6 +5812,8 @@ impl AgentPanel {
             return false;
         };
 
+        self.orion_code_product_default_eligible = false;
+
         let mut initialized = false;
         if self.selected_agent != initialization.agent {
             self.selected_agent = initialization.agent.clone();
@@ -5882,6 +6398,7 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
+                                                        panel.note_orion_code_agent_selection(cx);
                                                         panel.selected_agent = Agent::NativeAgent;
                                                         panel.activate_new_thread(
                                                             true,
@@ -6892,6 +7409,67 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::time::Instant;
+
+    #[test]
+    fn orion_code_product_default_only_fills_an_unclaimed_new_install() {
+        assert!(should_offer_orion_code_product_default(
+            false, false, false, false, true, false
+        ));
+        assert!(!should_offer_orion_code_product_default(
+            false, false, false, false, false, false
+        ));
+        assert!(!should_offer_orion_code_product_default(
+            true, false, false, false, true, false
+        ));
+        assert!(!should_offer_orion_code_product_default(
+            false, true, false, false, true, false
+        ));
+        assert!(!should_offer_orion_code_product_default(
+            false, false, true, false, true, false
+        ));
+        assert!(!should_offer_orion_code_product_default(
+            false, false, false, true, true, false
+        ));
+        assert!(!should_offer_orion_code_product_default(
+            false, false, false, false, true, true
+        ));
+    }
+
+    #[test]
+    fn orion_code_product_default_never_overrides_user_or_thread_state() {
+        assert!(can_apply_orion_code_product_default(
+            true,
+            &Agent::NativeAgent,
+            false,
+            false
+        ));
+        assert!(!can_apply_orion_code_product_default(
+            false,
+            &Agent::NativeAgent,
+            false,
+            false
+        ));
+        assert!(!can_apply_orion_code_product_default(
+            true,
+            &Agent::Custom {
+                id: AgentId::new("user-selected-agent")
+            },
+            false,
+            false
+        ));
+        assert!(!can_apply_orion_code_product_default(
+            true,
+            &Agent::NativeAgent,
+            true,
+            false
+        ));
+        assert!(!can_apply_orion_code_product_default(
+            true,
+            &Agent::NativeAgent,
+            false,
+            true
+        ));
+    }
 
     fn install_custom_agent(id: &str, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
@@ -11959,6 +12537,51 @@ mod tests {
             read_global_last_used_agent(&kvp),
             Some(expected_agent),
             "the selection should be persisted as the global last-used agent"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_select_agent_action_persists_without_a_visible_draft(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .expect("test workspace");
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.dispatch_action(SelectAgent {
+            agent: "my-background-agent".to_string(),
+        });
+        cx.run_until_parked();
+
+        let expected_agent = Agent::Custom {
+            id: "my-background-agent".into(),
+        };
+        assert_eq!(
+            panel.read_with(cx, |panel, _cx| panel.selected_agent.clone()),
+            expected_agent
+        );
+        let key_value_store = cx.update(|_, cx| KeyValueStore::global(cx));
+        assert_eq!(
+            read_global_last_used_agent(&key_value_store),
+            Some(expected_agent)
         );
     }
 
