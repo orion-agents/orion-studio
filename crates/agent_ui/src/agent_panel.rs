@@ -240,6 +240,43 @@ async fn write_global_last_used_agent(kvp: KeyValueStore, agent: Agent) {
         .log_err();
 }
 
+pub(crate) fn select_native_agent_after_orion_code_revocation(cx: &mut App) -> Task<Result<()>> {
+    let workspaces: Vec<_> = workspace::AppState::try_global(cx)
+        .map(|app_state| {
+            app_state
+                .workspace_store
+                .read(cx)
+                .workspaces()
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    for workspace in workspaces {
+        workspace
+            .update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel.set_selected_agent_and_persist(Agent::NativeAgent, cx);
+                        cx.notify();
+                    });
+                }
+            })
+            .log_err();
+    }
+
+    let preference_write_lock = OrionCodeBootstrap::try_global(cx)
+        .map(|bootstrap| bootstrap.read(cx).agent_preference_write_lock());
+    let key_value_store = KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        if let Some(preference_write_lock) = preference_write_lock {
+            let _preference_write_guard = preference_write_lock.lock().await;
+            write_global_last_used_agent_checked(key_value_store, Agent::NativeAgent).await
+        } else {
+            write_global_last_used_agent_checked(key_value_store, Agent::NativeAgent).await
+        }
+    })
+}
+
 fn should_offer_orion_code_product_default(
     has_saved_panel: bool,
     has_global_agent: bool,

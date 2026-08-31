@@ -15,7 +15,18 @@ use project::agent_registry_store::ORION_CODE_AGENT_ID;
 use project::{AgentRegistryStore, AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
-use crate::Agent;
+use crate::{
+    Agent, orion_code_update::current_orion_code_release_is_revoked,
+    orion_code_update_coordinator::OrionCodeUpdateCoordinator,
+};
+
+#[path = "orion_code_update_activity.rs"]
+pub mod orion_code_update_activity;
+
+pub use orion_code_update_activity::{
+    OrionCodeActivityError, OrionCodeActivityKind, OrionCodeActivityLease, OrionCodeActivityOwner,
+    OrionCodeActivitySnapshot, OrionCodeUpdateActivity,
+};
 
 pub enum AgentConnectionEntry {
     Connecting {
@@ -162,6 +173,9 @@ impl AgentConnectionStore {
         server: Rc<dyn AgentServer>,
         cx: &mut Context<Self>,
     ) -> Entity<AgentConnectionEntry> {
+        if is_orion_code_agent(&key) && orion_code_new_connections_are_blocked(cx) {
+            return revoked_orion_code_connection_entry(cx);
+        }
         if let Some(entry) = self.entries.get(&key) {
             if matches!(entry.read(cx), AgentConnectionEntry::Connecting { .. }) {
                 return entry.clone();
@@ -198,6 +212,9 @@ impl AgentConnectionStore {
         server_version: Option<SharedString>,
         cx: &mut Context<Self>,
     ) -> Entity<AgentConnectionEntry> {
+        if is_orion_code_agent(&key) && orion_code_new_connections_are_blocked(cx) {
+            return revoked_orion_code_connection_entry(cx);
+        }
         let version_changed = server_version.as_ref().is_some_and(|server_version| {
             self.entries
                 .get(&key)
@@ -220,12 +237,20 @@ impl AgentConnectionStore {
         } else {
             None
         };
+        let startup_activity = is_orion_code_agent(&key)
+            .then(|| acquire_orion_code_activity(OrionCodeActivityKind::Startup, cx))
+            .flatten();
+        let version_switch_activity = (version_changed && is_orion_code_agent(&key))
+            .then(|| acquire_orion_code_activity(OrionCodeActivityKind::VersionSwitch, cx))
+            .flatten();
 
         let (cancel_connection_tx, cancel_connection_rx) = oneshot::channel();
         let (mut new_version_rx, mut loading_status_rx, connect_task) = self.start_connection(
             server,
             server_version.clone(),
             shutdown_previous,
+            startup_activity,
+            version_switch_activity,
             cancel_connection_rx,
             cx,
         );
@@ -431,8 +456,10 @@ impl AgentConnectionStore {
         shutdown_task: Task<Result<()>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        let shutdown_activity = acquire_orion_code_activity(OrionCodeActivityKind::Shutdown, cx);
         let shared_shutdown = cx
             .spawn(async move |_this, _cx| {
+                let _shutdown_activity = shutdown_activity;
                 shutdown_task
                     .await
                     .map_err(|error| SharedString::from(error.to_string()))
@@ -486,9 +513,11 @@ impl AgentConnectionStore {
                 .find(|agent| agent.id().as_ref() == ORION_CODE_AGENT_ID && agent.is_installable())
                 .map(|agent| agent.version().clone())
         });
-        let orion_connection_is_stale = self.entries.get(&orion_code).is_some_and(|entry| {
-            entry.read(cx).server_version() != orion_registry_version.as_ref()
-        });
+        let revoked_version_is_draining = orion_code_new_connections_are_blocked(cx);
+        let orion_connection_is_stale = !revoked_version_is_draining
+            && self.entries.get(&orion_code).is_some_and(|entry| {
+                entry.read(cx).server_version() != orion_registry_version.as_ref()
+            });
         if orion_connection_is_stale {
             if let Some(shutdown_task) = self.invalidate_current_entry(
                 &orion_code,
@@ -500,7 +529,10 @@ impl AgentConnectionStore {
         }
         self.entries.retain(|key, _| match key {
             Agent::NativeAgent => true,
-            Agent::Custom { id } => registered_agents.contains(id),
+            Agent::Custom { id } => {
+                (revoked_version_is_draining && is_orion_code_agent_id(id))
+                    || registered_agents.contains(id)
+            }
             #[cfg(any(test, feature = "test-support"))]
             Agent::Stub => true,
         });
@@ -512,6 +544,8 @@ impl AgentConnectionStore {
         server: Rc<dyn AgentServer>,
         server_version: Option<SharedString>,
         shutdown_previous: Option<Task<Result<()>>>,
+        startup_activity: Option<OrionCodeActivityLease>,
+        version_switch_activity: Option<OrionCodeActivityLease>,
         cancel_connection_rx: oneshot::Receiver<()>,
         cx: &mut Context<Self>,
     ) -> (
@@ -531,6 +565,8 @@ impl AgentConnectionStore {
 
         let project = self.project.clone();
         let connect_task = cx.spawn(async move |_this, cx| {
+            let _startup_activity = startup_activity;
+            let _version_switch_activity = version_switch_activity;
             let mut cancel_connection_rx = cancel_connection_rx.boxed_local();
             if let Some(shutdown_previous) = shutdown_previous {
                 match futures::future::select(shutdown_previous, cancel_connection_rx).await {
@@ -572,8 +608,43 @@ impl AgentConnectionStore {
     }
 }
 
-fn is_orion_code_agent(agent: &Agent) -> bool {
+pub(crate) fn is_orion_code_agent(agent: &Agent) -> bool {
     matches!(agent, Agent::Custom { id } if id.as_ref() == ORION_CODE_AGENT_ID)
+}
+
+pub(crate) fn is_orion_code_agent_id(agent_id: &project::AgentId) -> bool {
+    agent_id.as_ref() == ORION_CODE_AGENT_ID
+}
+
+pub(crate) fn orion_code_new_connections_are_blocked(cx: &App) -> bool {
+    OrionCodeUpdateCoordinator::try_global(cx).is_some_and(|coordinator| {
+        current_orion_code_release_is_revoked(coordinator.read(cx).record())
+    })
+}
+
+fn revoked_orion_code_connection_entry(
+    cx: &mut Context<AgentConnectionStore>,
+) -> Entity<AgentConnectionEntry> {
+    cx.new(|_cx| AgentConnectionEntry::Error {
+        error: LoadError::Other(
+            "This Orion Code release was revoked. New sessions are blocked while Orion Studio switches to a safe runtime."
+                .into(),
+        ),
+    })
+}
+
+fn acquire_orion_code_activity(
+    kind: OrionCodeActivityKind,
+    cx: &mut App,
+) -> Option<OrionCodeActivityLease> {
+    let activity = OrionCodeUpdateActivity::init_global(cx);
+    match activity.read(cx).acquire(kind) {
+        Ok(activity) => Some(activity),
+        Err(error) => {
+            log::error!("Failed to acquire Orion Code {kind:?} activity: {error}");
+            None
+        }
+    }
 }
 
 async fn shutdown_connected_state(
@@ -591,23 +662,36 @@ async fn shutdown_connected_state(
 /// The task does not resolve until all in-flight attempts are cancelled and all connected ACP
 /// children have exited.
 pub fn shutdown_all_orion_code_connections(cx: &mut App) -> Task<Result<()>> {
+    let shutdown_activity = acquire_orion_code_activity(OrionCodeActivityKind::Shutdown, cx);
     let stores = cx
         .try_global::<OrionCodeConnectionRegistry>()
         .map(|registry| registry.stores.clone())
         .unwrap_or_default();
     let mut shutdown_tasks = Vec::new();
     for store in stores {
-        if let Ok(Some(shutdown_task)) = store.update(cx, |store, cx| store.shutdown_orion_code(cx))
-        {
+        let Some(store) = store.upgrade() else {
+            continue;
+        };
+        if let Some(shutdown_task) = store.update(cx, |store, cx| store.shutdown_orion_code(cx)) {
             shutdown_tasks.push(shutdown_task);
         }
     }
 
     cx.spawn(async move |_cx| {
+        let _shutdown_activity = shutdown_activity;
+        let mut first_error = None;
         for shutdown_task in shutdown_tasks {
-            shutdown_task.await?;
+            if let Err(error) = shutdown_task.await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
         }
-        Ok(())
+        if let Some(error) = first_error {
+            Err(error)
+        } else {
+            Ok(())
+        }
     })
 }
 
@@ -786,7 +870,19 @@ mod tests {
         });
         cx.run_until_parked();
 
-        cx.update(shutdown_all_orion_code_connections)
+        let activity = cx.update(|cx| OrionCodeUpdateActivity::global(cx));
+        assert_eq!(
+            activity.read_with(cx, |activity, _cx| activity.snapshot().startups),
+            2,
+            "both Orion Code connection attempts should hold startup activity"
+        );
+
+        let shutdown_task = cx.update(shutdown_all_orion_code_connections);
+        assert!(activity.read_with(cx, |activity, _cx| {
+            let snapshot = activity.snapshot();
+            snapshot.shutdowns > 0 && !snapshot.is_idle()
+        }));
+        shutdown_task
             .await
             .expect("all Orion Code attempts should shut down");
         cx.run_until_parked();
@@ -805,6 +901,7 @@ mod tests {
         );
         assert!(first_store.read_with(cx, |store, _cx| store.entry(&agent).is_none()));
         assert!(second_store.read_with(cx, |store, _cx| store.entry(&agent).is_none()));
+        assert!(activity.read_with(cx, |activity, _cx| activity.is_idle()));
     }
 
     #[gpui::test]

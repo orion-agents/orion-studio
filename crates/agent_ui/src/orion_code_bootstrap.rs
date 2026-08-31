@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+pub use crate::orion_code_update::OrionCodeInstallSource;
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_servers::AcpInitializeSnapshot;
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -78,13 +79,6 @@ pub enum OrionCodeBootstrapChoice {
     Accepted,
     Declined,
     Removed,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OrionCodeInstallSource {
-    Npx,
-    Archive,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

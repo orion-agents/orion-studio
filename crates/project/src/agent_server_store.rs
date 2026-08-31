@@ -10,8 +10,8 @@ use collections::HashMap;
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use gpui::{
-    AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    TaskExt,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, SharedString,
+    Subscription, Task, TaskExt,
 };
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
@@ -40,6 +40,93 @@ pub struct AgentServerCommand {
     #[serde(default)]
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrionCodeManagedArchiveRuntime {
+    version: Version,
+    target: String,
+    command: PathBuf,
+}
+
+#[derive(Default)]
+struct GlobalOrionCodeManagedArchiveRuntime(Option<OrionCodeManagedArchiveRuntime>);
+
+impl Global for GlobalOrionCodeManagedArchiveRuntime {}
+
+impl OrionCodeManagedArchiveRuntime {
+    pub fn new(version: &str, target: &str, command: &str) -> Result<Self> {
+        let parsed_version = Version::parse(version)
+            .with_context(|| format!("invalid managed Orion Code version {version:?}"))?;
+        anyhow::ensure!(
+            parsed_version.to_string() == version,
+            "managed Orion Code version must be canonical exact semver"
+        );
+        anyhow::ensure!(
+            !target.is_empty()
+                && target.len() <= 64
+                && target.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                }),
+            "invalid managed Orion Code target {target:?}"
+        );
+        let command = PathBuf::from(command);
+        anyhow::ensure!(
+            !command.as_os_str().is_empty()
+                && command
+                    .components()
+                    .all(|component| { matches!(component, std::path::Component::Normal(_)) }),
+            "managed Orion Code command must be a normalized relative path"
+        );
+        anyhow::ensure!(
+            !command.to_string_lossy().contains('\\')
+                && !command.to_string_lossy().contains(':')
+                && command.to_string_lossy().len() <= 512,
+            "managed Orion Code command contains an invalid path component"
+        );
+        Ok(Self {
+            version: parsed_version,
+            target: target.to_string(),
+            command,
+        })
+    }
+
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    pub fn relative_command(&self) -> &Path {
+        &self.command
+    }
+
+    pub fn install_root(&self) -> PathBuf {
+        paths::external_agents_dir()
+            .join("registry")
+            .join(ORION_CODE_AGENT_ID)
+            .join("versions")
+            .join(self.version.to_string())
+            .join(&self.target)
+    }
+
+    pub fn command_path(&self) -> PathBuf {
+        self.install_root().join(&self.command)
+    }
+}
+
+pub fn set_orion_code_managed_archive_runtime(
+    runtime: Option<OrionCodeManagedArchiveRuntime>,
+    cx: &mut App,
+) {
+    cx.set_global(GlobalOrionCodeManagedArchiveRuntime(runtime));
+}
+
+pub fn orion_code_managed_archive_runtime(cx: &App) -> Option<OrionCodeManagedArchiveRuntime> {
+    cx.try_global::<GlobalOrionCodeManagedArchiveRuntime>()
+        .and_then(|runtime| runtime.0.clone())
 }
 
 impl std::fmt::Debug for AgentServerCommand {
@@ -419,6 +506,28 @@ impl AgentServerStore {
                             );
                         }
                         RegistryAgent::Npx(agent) => {
+                            if name == ORION_CODE_AGENT_ID
+                                && let Some(runtime) = orion_code_managed_archive_runtime(cx)
+                            {
+                                self.external_agents.insert(
+                                    agent_name.clone(),
+                                    ExternalAgentEntry::new(
+                                        Box::new(LocalOrionCodeArchiveAgent {
+                                            fs: fs.clone(),
+                                            project_environment: project_environment.clone(),
+                                            version: runtime.version().to_string().into(),
+                                            runtime,
+                                            settings_env: env.clone(),
+                                            new_version_available_tx: None,
+                                        })
+                                            as Box<dyn ExternalAgentServer>,
+                                        ExternalAgentSource::Registry,
+                                        agent.metadata.icon_path.clone(),
+                                        Some(agent.metadata.name.clone()),
+                                    ),
+                                );
+                                continue;
+                            }
                             self.external_agents.insert(
                                 agent_name.clone(),
                                 ExternalAgentEntry::new(
@@ -1617,6 +1726,140 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
     }
 }
 
+struct LocalOrionCodeArchiveAgent {
+    fs: Arc<dyn Fs>,
+    project_environment: Entity<ProjectEnvironment>,
+    version: SharedString,
+    runtime: OrionCodeManagedArchiveRuntime,
+    settings_env: HashMap<String, String>,
+    new_version_available_tx: Option<watch::Sender<Option<String>>>,
+}
+
+impl ExternalAgentServer for LocalOrionCodeArchiveAgent {
+    fn version(&self) -> Option<&SharedString> {
+        Some(&self.version)
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
+    fn get_command(
+        &mut self,
+        extra_args: Vec<String>,
+        extra_env: HashMap<String, String>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<AgentServerCommand>> {
+        let fs = self.fs.clone();
+        let project_environment = self.project_environment.downgrade();
+        let runtime = self.runtime.clone();
+        let settings_env = self.settings_env.clone();
+
+        cx.spawn(async move |cx| {
+            let command_path =
+                validate_orion_code_managed_archive_command(fs.as_ref(), &runtime).await?;
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.default_environment(cx)
+                })?
+                .await
+                .unwrap_or_default();
+            env.extend(extra_env);
+            env.extend(settings_env);
+            enforce_orion_code_managed_environment(
+                ORION_CODE_AGENT_ID,
+                paths::data_dir(),
+                &mut env,
+            );
+            Ok(AgentServerCommand {
+                path: command_path,
+                args: extra_args,
+                env: Some(env),
+            })
+        })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+async fn validate_orion_code_managed_archive_command(
+    fs: &dyn Fs,
+    runtime: &OrionCodeManagedArchiveRuntime,
+) -> Result<PathBuf> {
+    let external_agents_directory = paths::external_agents_dir();
+    let command_path = runtime.command_path();
+    let relative_command = command_path
+        .strip_prefix(external_agents_directory)
+        .with_context(|| {
+            format!(
+                "managed Orion Code command {command_path:?} is not below {external_agents_directory:?}"
+            )
+        })?;
+    let root_metadata = fs
+        .metadata(external_agents_directory)
+        .await
+        .with_context(|| format!("reading managed Agent root {external_agents_directory:?}"))?
+        .with_context(|| format!("managed Agent root is missing: {external_agents_directory:?}"))?;
+    anyhow::ensure!(
+        root_metadata.is_dir && !root_metadata.is_symlink,
+        "managed Agent root must be a real directory"
+    );
+    let canonical_root = fs
+        .canonicalize(external_agents_directory)
+        .await
+        .with_context(|| {
+            format!("canonicalizing managed Agent root {external_agents_directory:?}")
+        })?;
+
+    let mut current = external_agents_directory.to_path_buf();
+    let component_count = relative_command.components().count();
+    for (index, component) in relative_command.components().enumerate() {
+        let std::path::Component::Normal(component) = component else {
+            bail!("invalid component in managed Orion Code command {command_path:?}");
+        };
+        current.push(component);
+        let metadata = fs
+            .metadata(&current)
+            .await
+            .with_context(|| format!("reading managed Orion Code path {current:?}"))?
+            .with_context(|| format!("managed Orion Code path is missing: {current:?}"))?;
+        anyhow::ensure!(
+            !metadata.is_symlink,
+            "managed Orion Code path must not contain symlinks: {current:?}"
+        );
+        if index + 1 == component_count {
+            anyhow::ensure!(
+                !metadata.is_dir && !metadata.is_fifo && metadata.is_executable,
+                "managed Orion Code command is not a regular executable file: {current:?}"
+            );
+        } else {
+            anyhow::ensure!(
+                metadata.is_dir,
+                "managed Orion Code parent is not a directory: {current:?}"
+            );
+        }
+    }
+    let canonical_command = fs
+        .canonicalize(&command_path)
+        .await
+        .with_context(|| format!("canonicalizing managed Orion Code command {command_path:?}"))?;
+    anyhow::ensure!(
+        canonical_command != canonical_root && canonical_command.starts_with(&canonical_root),
+        "managed Orion Code command escaped the managed Agent root"
+    );
+    Ok(canonical_command)
+}
+
 struct LocalRegistryNpxAgent {
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
@@ -2155,6 +2398,34 @@ mod tests {
             args: Vec::new(),
             env: HashMap::default(),
         })
+    }
+
+    #[test]
+    fn orion_code_managed_archive_runtime_uses_a_contained_exact_path() {
+        let runtime = OrionCodeManagedArchiveRuntime::new(
+            "0.4.0-beta.1",
+            "darwin-aarch64",
+            "OrionCodeSidecar.app/Contents/MacOS/orion-code-acp",
+        )
+        .expect("valid managed runtime");
+        assert_eq!(runtime.version(), &Version::parse("0.4.0-beta.1").unwrap());
+        assert!(
+            runtime
+                .command_path()
+                .starts_with(paths::external_agents_dir())
+        );
+        assert!(runtime.command_path().ends_with(
+            "registry/orion-code/versions/0.4.0-beta.1/darwin-aarch64/OrionCodeSidecar.app/Contents/MacOS/orion-code-acp"
+        ));
+
+        for (version, target, command) in [
+            ("latest", "darwin-aarch64", "bin/orion-code-acp"),
+            ("0.4.0", "../darwin-aarch64", "bin/orion-code-acp"),
+            ("0.4.0", "darwin-aarch64", "../bin/orion-code-acp"),
+            ("0.4.0", "darwin-aarch64", "/bin/orion-code-acp"),
+        ] {
+            assert!(OrionCodeManagedArchiveRuntime::new(version, target, command).is_err());
+        }
     }
 
     fn init_test_settings(cx: &mut TestAppContext) {

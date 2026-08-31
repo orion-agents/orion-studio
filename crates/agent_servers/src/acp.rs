@@ -15,7 +15,7 @@ use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::io::BufReader;
-use futures::{AsyncBufReadExt as _, Future, FutureExt as _, StreamExt as _};
+use futures::{AsyncBufReadExt as _, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _};
 use project::agent_server_store::{
     AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
 };
@@ -23,7 +23,7 @@ use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
 use settings::{AgentConfigOptionValue, SettingsStore};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -39,7 +39,10 @@ use util::path_list::PathList;
 use util::process::Child;
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
+use gpui::{
+    App, AppContext as _, AsyncApp, Entity, FutureExt as GpuiFutureExt, SharedString, Subscription,
+    Task, WeakEntity,
+};
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
@@ -397,11 +400,882 @@ fn enqueue_notification<Notif>(
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AcpInitializeSnapshot {
     pub protocol_version: ProtocolVersion,
     pub agent_info: Option<acp::Implementation>,
     pub agent_capabilities: acp::AgentCapabilities,
+}
+
+pub const ACP_PREFLIGHT_DEFAULT_STARTUP_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(10);
+pub const ACP_PREFLIGHT_DEFAULT_INITIALIZE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(20);
+pub const ACP_PREFLIGHT_DEFAULT_MAX_BODY_BYTES: usize = 1024 * 1024;
+pub const ACP_PREFLIGHT_DEFAULT_MAX_STDERR_BYTES: usize = 16 * 1024;
+
+const ACP_PREFLIGHT_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+const ACP_PREFLIGHT_MAX_STDERR_BYTES: usize = 1024 * 1024;
+const ACP_PREFLIGHT_MAX_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const ORION_CODE_CONFIG_DIRECTORY_ENVIRONMENT_VARIABLE: &str = "ORION_CODE_CONFIG_DIR";
+const ORION_CODE_DATA_DIRECTORY_ENVIRONMENT_VARIABLE: &str = "ORION_CODE_DATA_DIR";
+const ORION_CODE_DISABLE_ENV_FILES_ENVIRONMENT_VARIABLE: &str = "ORION_CODE_DISABLE_ENV_FILES";
+
+#[derive(Clone, Debug)]
+pub struct AcpPreflightLimits {
+    pub startup_timeout: std::time::Duration,
+    pub initialize_timeout: std::time::Duration,
+    pub max_body_bytes: usize,
+    pub max_stderr_bytes: usize,
+}
+
+impl Default for AcpPreflightLimits {
+    fn default() -> Self {
+        Self {
+            startup_timeout: ACP_PREFLIGHT_DEFAULT_STARTUP_TIMEOUT,
+            initialize_timeout: ACP_PREFLIGHT_DEFAULT_INITIALIZE_TIMEOUT,
+            max_body_bytes: ACP_PREFLIGHT_DEFAULT_MAX_BODY_BYTES,
+            max_stderr_bytes: ACP_PREFLIGHT_DEFAULT_MAX_STDERR_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AcpPreflightRequest {
+    pub command: PathBuf,
+    pub arguments: Vec<String>,
+    pub environment: HashMap<String, String>,
+    pub working_directory: PathBuf,
+    pub config_directory: PathBuf,
+    pub data_directory: PathBuf,
+    pub client_version: String,
+    pub limits: AcpPreflightLimits,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AcpPreflightFailureKind {
+    InvalidRequest,
+    PrepareDirectory,
+    Spawn,
+    StartupTimeout,
+    InitializeTimeout,
+    AgentExited,
+    UnsupportedProtocol,
+    Protocol,
+    Cleanup,
+    WorkerStopped,
+}
+
+#[derive(Debug, Error)]
+#[error("{message}")]
+pub struct AcpPreflightError {
+    kind: AcpPreflightFailureKind,
+    message: SharedString,
+    stderr: Option<SharedString>,
+    cleanup_error: Option<SharedString>,
+}
+
+impl AcpPreflightError {
+    pub fn kind(&self) -> AcpPreflightFailureKind {
+        self.kind.clone()
+    }
+
+    pub fn stderr(&self) -> Option<&str> {
+        self.stderr.as_deref()
+    }
+
+    pub fn cleanup_error(&self) -> Option<&str> {
+        self.cleanup_error.as_deref()
+    }
+
+    fn new(kind: AcpPreflightFailureKind, message: impl Into<SharedString>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            stderr: None,
+            cleanup_error: None,
+        }
+    }
+
+    fn with_stderr(mut self, stderr: Option<SharedString>) -> Self {
+        self.stderr = stderr;
+        self
+    }
+
+    fn with_cleanup_error(mut self, cleanup_error: impl Into<SharedString>) -> Self {
+        self.cleanup_error = Some(cleanup_error.into());
+        self
+    }
+}
+
+#[derive(Default)]
+struct AcpPreflightStderr {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+impl AcpPreflightStderr {
+    fn append(&mut self, bytes: &[u8], maximum_bytes: usize) {
+        let remaining = maximum_bytes.saturating_sub(self.bytes.len());
+        self.bytes
+            .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+        self.truncated |= bytes.len() > remaining;
+    }
+
+    fn snapshot(&self) -> Option<SharedString> {
+        if self.bytes.is_empty() && !self.truncated {
+            return None;
+        }
+
+        let mut stderr = String::from_utf8_lossy(&self.bytes).trim_end().to_string();
+        if self.truncated {
+            if !stderr.is_empty() {
+                stderr.push('\n');
+            }
+            stderr.push_str("[stderr truncated]");
+        }
+        Some(stderr.into())
+    }
+}
+
+struct PreparedAcpPreflightRequest {
+    command: PathBuf,
+    arguments: Vec<String>,
+    environment: HashMap<String, String>,
+    working_directory: PathBuf,
+    config_directory: PathBuf,
+    data_directory: PathBuf,
+    client_version: String,
+    limits: AcpPreflightLimits,
+}
+
+pub fn run_isolated_acp_preflight(
+    request: AcpPreflightRequest,
+    cx: &App,
+) -> Task<Result<AcpInitializeSnapshot, AcpPreflightError>> {
+    cx.background_executor()
+        .spawn(run_isolated_acp_preflight_with_executor(
+            request,
+            cx.background_executor().clone(),
+        ))
+}
+
+pub fn run_isolated_acp_preflight_with_executor(
+    request: AcpPreflightRequest,
+    executor: gpui::BackgroundExecutor,
+) -> futures::future::BoxFuture<'static, Result<AcpInitializeSnapshot, AcpPreflightError>> {
+    let (result_tx, result_rx) = futures::channel::oneshot::channel();
+
+    executor
+        .clone()
+        .spawn_dedicated(move |_local_executor| {
+            let executor = executor.clone();
+            async move {
+                let result = run_isolated_acp_preflight_inner(request, executor).await;
+                if result_tx.send(result).is_err() {
+                    log::debug!("ACP preflight completed after its caller stopped waiting");
+                }
+            }
+        })
+        .detach();
+
+    async move {
+        result_rx.await.unwrap_or_else(|_| {
+            Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::WorkerStopped,
+                "ACP preflight worker stopped before reporting a result",
+            ))
+        })
+    }
+    .boxed()
+}
+
+async fn run_isolated_acp_preflight_inner(
+    request: AcpPreflightRequest,
+    executor: gpui::BackgroundExecutor,
+) -> Result<AcpInitializeSnapshot, AcpPreflightError> {
+    let request = prepare_acp_preflight_request(request)?;
+    let mut command = std::process::Command::new(&request.command);
+    command
+        .args(&request.arguments)
+        .env_clear()
+        .envs(&request.environment)
+        .env(
+            ORION_CODE_CONFIG_DIRECTORY_ENVIRONMENT_VARIABLE,
+            &request.config_directory,
+        )
+        .env(
+            ORION_CODE_DATA_DIRECTORY_ENVIRONMENT_VARIABLE,
+            &request.data_directory,
+        )
+        .env(ORION_CODE_DISABLE_ENV_FILES_ENVIRONMENT_VARIABLE, "1")
+        .current_dir(&request.working_directory);
+
+    let child =
+        Child::spawn(command, Stdio::piped(), Stdio::piped(), Stdio::piped()).map_err(|error| {
+            AcpPreflightError::new(
+                AcpPreflightFailureKind::Spawn,
+                format!("failed to spawn isolated ACP preflight candidate: {error:#}"),
+            )
+        })?;
+    let mut child = PendingAcpPreflightChild::new(child);
+
+    let pipes = match (
+        child.child_mut().stdout.take(),
+        child.child_mut().stdin.take(),
+        child.child_mut().stderr.take(),
+    ) {
+        (Some(stdout), Some(stdin), Some(stderr)) => Ok((stdout, stdin, stderr)),
+        _ => Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::Spawn,
+            "isolated ACP preflight candidate did not expose all stdio pipes",
+        )),
+    };
+    let (stdout, stdin, stderr) = match pipes {
+        Ok(pipes) => pipes,
+        Err(error) => {
+            let cleanup_result =
+                terminate_and_wait_for_acp_preflight_child(child.child_mut()).await;
+            if cleanup_result.is_ok() {
+                child.mark_reaped();
+            }
+            return Err(match cleanup_result {
+                Ok(_) => error,
+                Err(cleanup_error) => error.with_cleanup_error(cleanup_error),
+            });
+        }
+    };
+
+    let stderr_capture = Arc::new(Mutex::new(AcpPreflightStderr::default()));
+    let stderr_task = executor.spawn({
+        let stderr_capture = stderr_capture.clone();
+        let maximum_bytes = request.limits.max_stderr_bytes;
+        async move { drain_acp_preflight_stderr(stderr, stderr_capture, maximum_bytes).await }
+    });
+
+    let protocol_result = run_acp_preflight_protocol(
+        stdin,
+        stdout,
+        &request.working_directory,
+        &request.client_version,
+        &request.limits,
+        &executor,
+    )
+    .await;
+
+    let (mut result, cleanup_result) = match protocol_result {
+        Ok(snapshot) => {
+            match wait_for_acp_preflight_child_exit(
+                child.child_mut(),
+                request.limits.startup_timeout,
+                &executor,
+            )
+            .await
+            {
+                Ok(status) => {
+                    child.mark_reaped();
+                    let process_group_cleanup =
+                        terminate_remaining_acp_preflight_process_group(child.child_mut());
+                    let result = if status.success() {
+                        Ok(snapshot)
+                    } else {
+                        Err(AcpPreflightError::new(
+                            AcpPreflightFailureKind::AgentExited,
+                            format!(
+                                "ACP preflight candidate exited after protocol shutdown with {status}"
+                            ),
+                        ))
+                    };
+                    (result, process_group_cleanup)
+                }
+                Err(error) => {
+                    let cleanup_result =
+                        terminate_and_wait_for_acp_preflight_child(child.child_mut()).await;
+                    if cleanup_result.is_ok() {
+                        child.mark_reaped();
+                    }
+                    (Err(error), cleanup_result.map(|_| ()))
+                }
+            }
+        }
+        Err(protocol_error) => {
+            let premature_status = child.child_mut().try_status().map_err(|error| {
+                AcpPreflightError::new(
+                    AcpPreflightFailureKind::Cleanup,
+                    format!("failed to inspect isolated ACP preflight candidate: {error}"),
+                )
+            });
+            match premature_status {
+                Ok(Some(status)) => {
+                    child.mark_reaped();
+                    let process_group_cleanup =
+                        terminate_remaining_acp_preflight_process_group(child.child_mut());
+                    (
+                        Err(AcpPreflightError::new(
+                            AcpPreflightFailureKind::AgentExited,
+                            format!("ACP preflight candidate exited with {status}"),
+                        )),
+                        process_group_cleanup,
+                    )
+                }
+                Ok(None) => {
+                    let cleanup_result =
+                        terminate_and_wait_for_acp_preflight_child(child.child_mut()).await;
+                    if cleanup_result.is_ok() {
+                        child.mark_reaped();
+                    }
+                    (Err(protocol_error), cleanup_result.map(|_| ()))
+                }
+                Err(inspect_error) => {
+                    let cleanup_result =
+                        terminate_and_wait_for_acp_preflight_child(child.child_mut()).await;
+                    if cleanup_result.is_ok() {
+                        child.mark_reaped();
+                    }
+                    (Err(inspect_error), cleanup_result.map(|_| ()))
+                }
+            }
+        }
+    };
+    let stderr_result = stderr_task.await;
+    let stderr = stderr_capture
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .snapshot();
+
+    if let Err(error) = stderr_result {
+        let message = format!("failed to drain bounded ACP preflight stderr: {error}");
+        result = match result {
+            Ok(_) => Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::Cleanup,
+                message,
+            )),
+            Err(error) => Err(error.with_cleanup_error(message)),
+        };
+    }
+
+    if let Err(error) = cleanup_result {
+        result = match result {
+            Ok(_) => Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::Cleanup,
+                error,
+            )),
+            Err(primary_error) => Err(primary_error.with_cleanup_error(error)),
+        };
+    }
+
+    result.map_err(|error| error.with_stderr(stderr))
+}
+
+fn prepare_acp_preflight_request(
+    request: AcpPreflightRequest,
+) -> Result<PreparedAcpPreflightRequest, AcpPreflightError> {
+    if !request.command.is_absolute() {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::InvalidRequest,
+            "ACP preflight command must be absolute",
+        ));
+    }
+    if request.client_version.trim().is_empty() {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::InvalidRequest,
+            "ACP preflight client version must not be empty",
+        ));
+    }
+    if request.limits.startup_timeout.is_zero()
+        || request.limits.initialize_timeout.is_zero()
+        || request.limits.startup_timeout > ACP_PREFLIGHT_MAX_TIMEOUT
+        || request.limits.initialize_timeout > ACP_PREFLIGHT_MAX_TIMEOUT
+    {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::InvalidRequest,
+            "ACP preflight timeouts must be greater than zero and at most 60 seconds",
+        ));
+    }
+    if request.limits.max_body_bytes == 0
+        || request.limits.max_body_bytes > ACP_PREFLIGHT_MAX_BODY_BYTES
+    {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::InvalidRequest,
+            format!(
+                "ACP preflight body bound must be between 1 and {ACP_PREFLIGHT_MAX_BODY_BYTES} bytes"
+            ),
+        ));
+    }
+    if request.limits.max_stderr_bytes == 0
+        || request.limits.max_stderr_bytes > ACP_PREFLIGHT_MAX_STDERR_BYTES
+    {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::InvalidRequest,
+            format!(
+                "ACP preflight stderr bound must be between 1 and {ACP_PREFLIGHT_MAX_STDERR_BYTES} bytes"
+            ),
+        ));
+    }
+
+    for reserved_key in [
+        ORION_CODE_CONFIG_DIRECTORY_ENVIRONMENT_VARIABLE,
+        ORION_CODE_DATA_DIRECTORY_ENVIRONMENT_VARIABLE,
+        ORION_CODE_DISABLE_ENV_FILES_ENVIRONMENT_VARIABLE,
+    ] {
+        if request.environment.contains_key(reserved_key) {
+            return Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::InvalidRequest,
+                format!(
+                    "ACP preflight environment must not override reserved variable {reserved_key}"
+                ),
+            ));
+        }
+    }
+
+    let working_directory = prepare_acp_preflight_directory("working", &request.working_directory)?;
+    let config_directory = prepare_acp_preflight_directory("config", &request.config_directory)?;
+    let data_directory = prepare_acp_preflight_directory("data", &request.data_directory)?;
+
+    if working_directory == config_directory
+        || working_directory == data_directory
+        || config_directory == data_directory
+    {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::InvalidRequest,
+            "ACP preflight working, config, and data directories must be distinct",
+        ));
+    }
+
+    Ok(PreparedAcpPreflightRequest {
+        command: request.command,
+        arguments: request.arguments,
+        environment: request.environment,
+        working_directory,
+        config_directory,
+        data_directory,
+        client_version: request.client_version,
+        limits: request.limits,
+    })
+}
+
+fn prepare_acp_preflight_directory(
+    directory_kind: &'static str,
+    path: &Path,
+) -> Result<PathBuf, AcpPreflightError> {
+    if !path.is_absolute() {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::InvalidRequest,
+            format!("ACP preflight {directory_kind} directory must be absolute"),
+        ));
+    }
+
+    std::fs::create_dir_all(path).map_err(|error| {
+        AcpPreflightError::new(
+            AcpPreflightFailureKind::PrepareDirectory,
+            format!(
+                "failed to create ACP preflight {directory_kind} directory {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    path.canonicalize().map_err(|error| {
+        AcpPreflightError::new(
+            AcpPreflightFailureKind::PrepareDirectory,
+            format!(
+                "failed to resolve ACP preflight {directory_kind} directory {}: {error}",
+                path.display()
+            ),
+        )
+    })
+}
+
+struct PendingAcpPreflightChild {
+    child: Child,
+    reaped: bool,
+}
+
+impl PendingAcpPreflightChild {
+    fn new(child: Child) -> Self {
+        Self {
+            child,
+            reaped: false,
+        }
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        &mut self.child
+    }
+
+    fn mark_reaped(&mut self) {
+        self.reaped = true;
+    }
+}
+
+impl Drop for PendingAcpPreflightChild {
+    fn drop(&mut self) {
+        if !self.reaped
+            && let Err(error) = self.child.kill()
+        {
+            log::error!("failed to terminate abandoned ACP preflight process group: {error:#}");
+        }
+    }
+}
+
+async fn run_acp_preflight_protocol(
+    stdin: impl futures::AsyncWrite + Unpin + Send + 'static,
+    stdout: impl futures::AsyncRead + Unpin + Send + 'static,
+    working_directory: &Path,
+    client_version: &str,
+    limits: &AcpPreflightLimits,
+    executor: &gpui::BackgroundExecutor,
+) -> Result<AcpInitializeSnapshot, AcpPreflightError> {
+    let incoming = bounded_acp_preflight_lines(stdout, limits.max_body_bytes);
+    let outgoing = bounded_acp_preflight_sink(stdin, limits.max_body_bytes);
+    let transport = Lines::new(outgoing, incoming);
+    let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+    let connection_future = Client
+        .builder()
+        .name("orion-studio-preflight")
+        .connect_with(
+            transport,
+            move |connection: ConnectionTo<Agent>| async move {
+                connection_tx.send(connection).map_err(|_| {
+                    acp::Error::internal_error()
+                        .data("ACP preflight startup receiver stopped before connection setup")
+                })?;
+                futures::future::pending::<Result<(), acp::Error>>().await
+            },
+        )
+        .boxed_local();
+
+    let startup = connection_rx
+        .with_timeout(limits.startup_timeout, executor)
+        .boxed_local();
+    let (connection, connection_future) =
+        match futures::future::select(startup, connection_future).await {
+            futures::future::Either::Left((Ok(Ok(connection)), connection_future)) => {
+                (connection, connection_future)
+            }
+            futures::future::Either::Left((Ok(Err(_)), _connection_future)) => {
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::Protocol,
+                    "ACP preflight connection closed during startup",
+                ));
+            }
+            futures::future::Either::Left((Err(_), _connection_future)) => {
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::StartupTimeout,
+                    format!(
+                        "ACP preflight startup exceeded {:?}",
+                        limits.startup_timeout
+                    ),
+                ));
+            }
+            futures::future::Either::Right((result, _startup)) => {
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::Protocol,
+                    format!("ACP preflight transport stopped during startup: {result:?}"),
+                ));
+            }
+        };
+
+    let initialize = connection
+        .send_request(
+            acp::InitializeRequest::new(ProtocolVersion::V1)
+                .client_capabilities(acp::ClientCapabilities::default())
+                .client_info(acp::Implementation::new(
+                    "orion-studio-preflight",
+                    client_version,
+                )),
+        )
+        .block_task()
+        .with_timeout(limits.initialize_timeout, executor)
+        .boxed_local();
+
+    let (response, connection_future) =
+        match futures::future::select(initialize, connection_future).await {
+            futures::future::Either::Left((Ok(Ok(response)), connection_future)) => {
+                (response, connection_future)
+            }
+            futures::future::Either::Left((Ok(Err(error)), _connection_future)) => {
+                log::warn!("ACP preflight initialize failed: {error}");
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::Protocol,
+                    "ACP preflight initialize failed",
+                ));
+            }
+            futures::future::Either::Left((Err(_), _connection_future)) => {
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::InitializeTimeout,
+                    format!(
+                        "ACP preflight initialize exceeded {:?}",
+                        limits.initialize_timeout
+                    ),
+                ));
+            }
+            futures::future::Either::Right((result, _initialize)) => {
+                log::warn!("ACP preflight transport stopped during initialize: {result:?}");
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::Protocol,
+                    "ACP preflight transport stopped during initialize",
+                ));
+            }
+        };
+
+    if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::UnsupportedProtocol,
+            format!(
+                "ACP preflight candidate negotiated unsupported protocol version {:?}",
+                response.protocol_version
+            ),
+        ));
+    }
+    if !response.agent_capabilities.load_session
+        || response
+            .agent_capabilities
+            .session_capabilities
+            .close
+            .is_none()
+    {
+        return Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::Protocol,
+            "ACP preflight candidate does not support session load and close",
+        ));
+    }
+
+    let snapshot = AcpInitializeSnapshot {
+        protocol_version: response.protocol_version,
+        agent_info: response.agent_info,
+        agent_capabilities: response.agent_capabilities,
+    };
+
+    let new_session = connection
+        .send_request(acp::NewSessionRequest::new(working_directory.to_path_buf()))
+        .block_task()
+        .with_timeout(limits.initialize_timeout, executor)
+        .boxed_local();
+    let (new_session_response, connection_future) =
+        match futures::future::select(new_session, connection_future).await {
+            futures::future::Either::Left((Ok(Ok(response)), connection_future)) => {
+                (response, connection_future)
+            }
+            futures::future::Either::Left((Ok(Err(error)), _connection_future)) => {
+                log::warn!("ACP preflight session/new failed: {error}");
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::Protocol,
+                    "ACP preflight session/new failed",
+                ));
+            }
+            futures::future::Either::Left((Err(_), _connection_future)) => {
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::Protocol,
+                    "ACP preflight session/new timed out",
+                ));
+            }
+            futures::future::Either::Right((result, _new_session)) => {
+                log::warn!("ACP preflight transport stopped during session/new: {result:?}");
+                return Err(AcpPreflightError::new(
+                    AcpPreflightFailureKind::Protocol,
+                    "ACP preflight transport stopped during session/new",
+                ));
+            }
+        };
+
+    let session_id = new_session_response.session_id;
+    let load_session = connection
+        .send_request(acp::LoadSessionRequest::new(
+            session_id.clone(),
+            working_directory.to_path_buf(),
+        ))
+        .block_task()
+        .with_timeout(limits.initialize_timeout, executor)
+        .boxed_local();
+    let connection_future = match futures::future::select(load_session, connection_future).await {
+        futures::future::Either::Left((Ok(Ok(_response)), connection_future)) => connection_future,
+        futures::future::Either::Left((Ok(Err(error)), _connection_future)) => {
+            log::warn!("ACP preflight session/load failed: {error}");
+            return Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::Protocol,
+                "ACP preflight session/load failed",
+            ));
+        }
+        futures::future::Either::Left((Err(_), _connection_future)) => {
+            return Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::Protocol,
+                "ACP preflight session/load timed out",
+            ));
+        }
+        futures::future::Either::Right((result, _load_session)) => {
+            log::warn!("ACP preflight transport stopped during session/load: {result:?}");
+            return Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::Protocol,
+                "ACP preflight transport stopped during session/load",
+            ));
+        }
+    };
+
+    let close_session = connection
+        .send_request(acp::CloseSessionRequest::new(session_id))
+        .block_task()
+        .with_timeout(limits.initialize_timeout, executor)
+        .boxed_local();
+    let connection_future = match futures::future::select(close_session, connection_future).await {
+        futures::future::Either::Left((Ok(Ok(_response)), connection_future)) => connection_future,
+        futures::future::Either::Left((Ok(Err(error)), _connection_future)) => {
+            log::warn!("ACP preflight session/close failed: {error}");
+            return Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::Protocol,
+                "ACP preflight session/close failed",
+            ));
+        }
+        futures::future::Either::Left((Err(_), _connection_future)) => {
+            return Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::Protocol,
+                "ACP preflight session/close timed out",
+            ));
+        }
+        futures::future::Either::Right((result, _close_session)) => {
+            log::warn!("ACP preflight transport stopped during session/close: {result:?}");
+            return Err(AcpPreflightError::new(
+                AcpPreflightFailureKind::Protocol,
+                "ACP preflight transport stopped during session/close",
+            ));
+        }
+    };
+
+    // ACP has no shutdown request. Dropping both connection handles closes the bounded stdio
+    // transport, which gives the candidate EOF and lets the caller verify a clean process exit.
+    drop(connection);
+    drop(connection_future);
+    Ok(snapshot)
+}
+
+fn bounded_acp_preflight_lines(
+    stdout: impl futures::AsyncRead + Unpin + Send + 'static,
+    maximum_body_bytes: usize,
+) -> impl futures::Stream<Item = std::io::Result<String>> {
+    futures::stream::try_unfold(BufReader::new(stdout), move |mut stdout| async move {
+        let mut bytes = Vec::new();
+        let read_limit = maximum_body_bytes.saturating_add(2) as u64;
+        let bytes_read = (&mut stdout)
+            .take(read_limit)
+            .read_until(b'\n', &mut bytes)
+            .await?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+
+        if bytes.last() == Some(&b'\n') {
+            bytes.pop();
+            if bytes.last() == Some(&b'\r') {
+                bytes.pop();
+            }
+        }
+        if bytes.len() > maximum_body_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ACP preflight response exceeded the {maximum_body_bytes}-byte body bound"),
+            ));
+        }
+
+        let line = String::from_utf8(bytes).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ACP preflight response was not UTF-8: {error}"),
+            )
+        })?;
+        Ok(Some((line, stdout)))
+    })
+}
+
+fn bounded_acp_preflight_sink(
+    stdin: impl futures::AsyncWrite + Unpin + Send + 'static,
+    maximum_body_bytes: usize,
+) -> impl futures::Sink<String, Error = std::io::Error> {
+    futures::sink::unfold(Box::pin(stdin), move |mut stdin, line: String| async move {
+        use futures::AsyncWriteExt as _;
+
+        if line.len() > maximum_body_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ACP preflight request exceeded the {maximum_body_bytes}-byte body bound"),
+            ));
+        }
+        let mut bytes = line.into_bytes();
+        bytes.push(b'\n');
+        stdin.write_all(&bytes).await?;
+        Ok(stdin)
+    })
+}
+
+async fn drain_acp_preflight_stderr(
+    mut stderr: impl futures::AsyncRead + Unpin + Send + 'static,
+    capture: Arc<Mutex<AcpPreflightStderr>>,
+    maximum_bytes: usize,
+) -> std::io::Result<()> {
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let bytes_read = stderr.read(&mut buffer).await?;
+        if bytes_read == 0 {
+            return Ok(());
+        }
+        capture
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .append(&buffer[..bytes_read], maximum_bytes);
+    }
+}
+
+async fn wait_for_acp_preflight_child_exit(
+    child: &mut Child,
+    timeout: std::time::Duration,
+    executor: &gpui::BackgroundExecutor,
+) -> Result<ExitStatus, AcpPreflightError> {
+    match child.status().with_timeout(timeout, executor).await {
+        Ok(Ok(status)) => Ok(status),
+        Ok(Err(error)) => Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::Cleanup,
+            format!("failed to wait for ACP preflight candidate shutdown: {error}"),
+        )),
+        Err(_) => Err(AcpPreflightError::new(
+            AcpPreflightFailureKind::Cleanup,
+            "ACP preflight candidate did not exit after protocol shutdown",
+        )),
+    }
+}
+
+#[cfg(not(windows))]
+fn terminate_remaining_acp_preflight_process_group(child: &mut Child) -> Result<(), SharedString> {
+    child.kill().map_err(|error| {
+        SharedString::from(format!(
+            "failed to terminate remaining ACP preflight process group: {error:#}"
+        ))
+    })
+}
+
+#[cfg(windows)]
+fn terminate_remaining_acp_preflight_process_group(_child: &mut Child) -> Result<(), SharedString> {
+    Ok(())
+}
+
+async fn terminate_and_wait_for_acp_preflight_child(
+    child: &mut Child,
+) -> Result<ExitStatus, SharedString> {
+    let kill_error = match child.try_status() {
+        Ok(Some(_)) => None,
+        Ok(None) => child.kill().err(),
+        Err(error) => Some(error.into()),
+    };
+    let status = child.status().await.map_err(|error| {
+        SharedString::from(format!(
+            "failed to wait for ACP preflight candidate: {error}"
+        ))
+    })?;
+
+    if let Some(kill_error) = kill_error {
+        return Err(format!(
+            "failed to terminate ACP preflight candidate before it exited with {status}: {kill_error}"
+        )
+        .into());
+    }
+    Ok(status)
 }
 
 pub struct AcpConnection {
@@ -2853,6 +3727,404 @@ mod tests {
             cx.set_global(settings_store);
             cx.update_flags(false, vec![]);
         });
+    }
+
+    #[cfg(not(windows))]
+    struct IsolatedPreflightProcessFiles {
+        candidate: PathBuf,
+        descendant: PathBuf,
+        trace: PathBuf,
+    }
+
+    #[cfg(not(windows))]
+    #[derive(Clone, Copy)]
+    enum IsolatedPreflightLifecycleBehavior {
+        Healthy,
+        LoadFailure,
+        CloseFailure,
+        CloseTimeout,
+    }
+
+    #[cfg(not(windows))]
+    fn isolated_preflight_lifecycle_script(behavior: IsolatedPreflightLifecycleBehavior) -> String {
+        let load_action = match behavior {
+            IsolatedPreflightLifecycleBehavior::LoadFailure => "respond_error; exec /bin/sleep 30",
+            _ => "respond_result '{}'",
+        };
+        let close_action = match behavior {
+            IsolatedPreflightLifecycleBehavior::CloseFailure => "respond_error; exec /bin/sleep 30",
+            IsolatedPreflightLifecycleBehavior::CloseTimeout => "exec /bin/sleep 30",
+            _ => "respond_result '{}'",
+        };
+
+        r#"
+set -eu
+printf '%s' "$$" > "$ORION_TEST_PID_FILE"
+/bin/sleep 30 &
+printf '%s' "$!" > "$ORION_TEST_DESCENDANT_PID_FILE"
+test "$(/bin/pwd -P)" = "$ORION_TEST_EXPECTED_WORKING"
+test "$ORION_CODE_CONFIG_DIR" = "$ORION_TEST_EXPECTED_CONFIG"
+test "$ORION_CODE_DATA_DIR" = "$ORION_TEST_EXPECTED_DATA"
+test "$ORION_CODE_DISABLE_ENV_FILES" = "1"
+test -z "${USER+x}"
+
+read_request() {
+    expected_method="$1"
+    IFS= read -r request
+    case "$request" in
+        *"\"method\":\"$expected_method\""*) ;;
+        *) exit 41 ;;
+    esac
+    request_id=$(printf '%s\n' "$request" | /usr/bin/sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+    test -n "$request_id"
+}
+
+respond_result() {
+    printf '{"jsonrpc":"2.0","id":"%s","result":%s}\n' "$request_id" "$1"
+}
+
+respond_error() {
+    printf '{"jsonrpc":"2.0","id":"%s","error":{"code":-32603,"message":"rejected"}}\n' "$request_id"
+}
+
+read_request initialize
+printf '%s\n' 'initialize' >> "$ORION_TEST_TRACE_FILE"
+respond_result '{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"fake-orion-code","version":"9.9.9"}}'
+
+read_request session/new
+printf '%s\n' 'session/new' >> "$ORION_TEST_TRACE_FILE"
+case "$request" in
+    *"$ORION_TEST_EXPECTED_WORKING"*) ;;
+    *) exit 42 ;;
+esac
+respond_result '{"sessionId":"preflight-session"}'
+
+read_request session/load
+printf '%s\n' 'session/load' >> "$ORION_TEST_TRACE_FILE"
+case "$request" in
+    *'"sessionId":"preflight-session"'*) ;;
+    *) exit 43 ;;
+esac
+case "$request" in
+    *"$ORION_TEST_EXPECTED_WORKING"*) ;;
+    *) exit 43 ;;
+esac
+__LOAD_ACTION__
+
+read_request session/close
+printf '%s\n' 'session/close' >> "$ORION_TEST_TRACE_FILE"
+case "$request" in
+    *'"sessionId":"preflight-session"'*) ;;
+    *) exit 44 ;;
+esac
+__CLOSE_ACTION__
+
+if IFS= read -r unexpected_request; then
+    exit 45
+fi
+exit 0
+"#
+        .replace("__LOAD_ACTION__", load_action)
+        .replace("__CLOSE_ACTION__", close_action)
+    }
+
+    #[cfg(not(windows))]
+    fn isolated_preflight_test_request(
+        temporary_directory: &tempfile::TempDir,
+        script: &str,
+        initialize_timeout: std::time::Duration,
+    ) -> (AcpPreflightRequest, IsolatedPreflightProcessFiles) {
+        let root = temporary_directory
+            .path()
+            .canonicalize()
+            .expect("temporary preflight root should resolve");
+        let working_directory = root.join("working");
+        let config_directory = root.join("config");
+        let data_directory = root.join("data");
+        let pid_file = root.join("candidate.pid");
+        let descendant_pid_file = root.join("descendant.pid");
+        let trace_file = root.join("protocol.trace");
+        let environment = HashMap::from_iter([
+            ("PATH".to_string(), "/usr/bin:/bin".to_string()),
+            (
+                "ORION_TEST_PID_FILE".to_string(),
+                pid_file.to_string_lossy().into_owned(),
+            ),
+            (
+                "ORION_TEST_DESCENDANT_PID_FILE".to_string(),
+                descendant_pid_file.to_string_lossy().into_owned(),
+            ),
+            (
+                "ORION_TEST_TRACE_FILE".to_string(),
+                trace_file.to_string_lossy().into_owned(),
+            ),
+            (
+                "ORION_TEST_EXPECTED_WORKING".to_string(),
+                working_directory.to_string_lossy().into_owned(),
+            ),
+            (
+                "ORION_TEST_EXPECTED_CONFIG".to_string(),
+                config_directory.to_string_lossy().into_owned(),
+            ),
+            (
+                "ORION_TEST_EXPECTED_DATA".to_string(),
+                data_directory.to_string_lossy().into_owned(),
+            ),
+        ]);
+
+        (
+            AcpPreflightRequest {
+                command: PathBuf::from("/bin/sh"),
+                arguments: vec!["-c".to_string(), script.to_string()],
+                environment,
+                working_directory,
+                config_directory,
+                data_directory,
+                client_version: "test-studio".to_string(),
+                limits: AcpPreflightLimits {
+                    startup_timeout: std::time::Duration::from_secs(5),
+                    initialize_timeout,
+                    max_body_bytes: 64 * 1024,
+                    max_stderr_bytes: 1024,
+                },
+            },
+            IsolatedPreflightProcessFiles {
+                candidate: pid_file,
+                descendant: descendant_pid_file,
+                trace: trace_file,
+            },
+        )
+    }
+
+    #[cfg(not(windows))]
+    async fn assert_isolated_preflight_process_was_reaped(
+        pid_file: &Path,
+        executor: &gpui::BackgroundExecutor,
+    ) {
+        let pid = std::fs::read_to_string(pid_file)
+            .expect("fake preflight candidate should write its pid");
+        for _attempt in 0..20 {
+            let status = smol::process::Command::new("/bin/kill")
+                .args(["-0", pid.trim()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await
+                .expect("kill -0 should execute");
+            if !status.success() {
+                return;
+            }
+            executor.timer(std::time::Duration::from_millis(10)).await;
+        }
+        panic!(
+            "isolated preflight must terminate and reap candidate pid {}",
+            pid.trim()
+        );
+    }
+
+    #[cfg(not(windows))]
+    async fn assert_isolated_preflight_process_group_was_reaped(
+        process_files: &IsolatedPreflightProcessFiles,
+        executor: &gpui::BackgroundExecutor,
+    ) {
+        assert_isolated_preflight_process_was_reaped(&process_files.candidate, executor).await;
+        assert_isolated_preflight_process_was_reaped(&process_files.descendant, executor).await;
+    }
+
+    #[cfg(not(windows))]
+    fn assert_isolated_preflight_protocol_trace(
+        process_files: &IsolatedPreflightProcessFiles,
+        expected: &str,
+    ) {
+        let trace = std::fs::read_to_string(&process_files.trace)
+            .expect("fake preflight candidate should write its protocol trace");
+        assert_eq!(trace, expected);
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn isolated_preflight_initializes_with_exact_environment_and_cleans_up(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let temporary_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let script =
+            isolated_preflight_lifecycle_script(IsolatedPreflightLifecycleBehavior::Healthy);
+        let (request, process_files) = isolated_preflight_test_request(
+            &temporary_directory,
+            &script,
+            std::time::Duration::from_secs(5),
+        );
+
+        let snapshot = cx
+            .update(|cx| run_isolated_acp_preflight(request, cx))
+            .await
+            .expect("healthy fake ACP candidate should initialize");
+
+        assert_eq!(snapshot.protocol_version, ProtocolVersion::V1);
+        let agent_info = snapshot
+            .agent_info
+            .expect("healthy fake candidate should report its identity");
+        assert_eq!(agent_info.name, "fake-orion-code");
+        assert_eq!(agent_info.version, "9.9.9");
+        assert_isolated_preflight_protocol_trace(
+            &process_files,
+            "initialize\nsession/new\nsession/load\nsession/close\n",
+        );
+        assert_isolated_preflight_process_group_was_reaped(&process_files, &cx.background_executor)
+            .await;
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn isolated_preflight_times_out_initialize_and_cleans_up(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        let temporary_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let script = r#"
+set -eu
+printf '%s' "$$" > "$ORION_TEST_PID_FILE"
+/bin/sleep 30 &
+printf '%s' "$!" > "$ORION_TEST_DESCENDANT_PID_FILE"
+exec /bin/sleep 30
+"#;
+        let (request, process_files) = isolated_preflight_test_request(
+            &temporary_directory,
+            script,
+            std::time::Duration::from_millis(50),
+        );
+
+        let error = cx
+            .update(|cx| run_isolated_acp_preflight(request, cx))
+            .await
+            .expect_err("silent fake ACP candidate should time out");
+
+        assert_eq!(error.kind(), AcpPreflightFailureKind::InitializeTimeout);
+        assert!(error.cleanup_error().is_none(), "cleanup failed: {error:?}");
+        assert_isolated_preflight_process_group_was_reaped(&process_files, &cx.background_executor)
+            .await;
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn isolated_preflight_reports_early_exit_with_bounded_stderr_and_cleans_up(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let temporary_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let script = r#"
+set -eu
+printf '%s' "$$" > "$ORION_TEST_PID_FILE"
+/bin/sleep 30 &
+printf '%s' "$!" > "$ORION_TEST_DESCENDANT_PID_FILE"
+printf '%s\n' 'deterministic fake exit' >&2
+exit 23
+"#;
+        let (request, process_files) = isolated_preflight_test_request(
+            &temporary_directory,
+            script,
+            std::time::Duration::from_secs(5),
+        );
+
+        let error = cx
+            .update(|cx| run_isolated_acp_preflight(request, cx))
+            .await
+            .expect_err("exited fake ACP candidate should fail preflight");
+
+        assert_eq!(error.kind(), AcpPreflightFailureKind::AgentExited);
+        assert_eq!(error.stderr(), Some("deterministic fake exit"));
+        assert!(error.cleanup_error().is_none(), "cleanup failed: {error:?}");
+        assert_isolated_preflight_process_group_was_reaped(&process_files, &cx.background_executor)
+            .await;
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn isolated_preflight_reports_load_failure_and_reaps_process_group(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let temporary_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let script =
+            isolated_preflight_lifecycle_script(IsolatedPreflightLifecycleBehavior::LoadFailure);
+        let (request, process_files) = isolated_preflight_test_request(
+            &temporary_directory,
+            &script,
+            std::time::Duration::from_secs(5),
+        );
+
+        let error = cx
+            .update(|cx| run_isolated_acp_preflight(request, cx))
+            .await
+            .expect_err("fake session/load rejection should fail preflight");
+
+        assert_eq!(error.kind(), AcpPreflightFailureKind::Protocol);
+        assert!(error.cleanup_error().is_none(), "cleanup failed: {error:?}");
+        assert_isolated_preflight_protocol_trace(
+            &process_files,
+            "initialize\nsession/new\nsession/load\n",
+        );
+        assert_isolated_preflight_process_group_was_reaped(&process_files, &cx.background_executor)
+            .await;
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn isolated_preflight_reports_close_failure_and_reaps_process_group(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let temporary_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let script =
+            isolated_preflight_lifecycle_script(IsolatedPreflightLifecycleBehavior::CloseFailure);
+        let (request, process_files) = isolated_preflight_test_request(
+            &temporary_directory,
+            &script,
+            std::time::Duration::from_secs(5),
+        );
+
+        let error = cx
+            .update(|cx| run_isolated_acp_preflight(request, cx))
+            .await
+            .expect_err("fake session/close rejection should fail preflight");
+
+        assert_eq!(error.kind(), AcpPreflightFailureKind::Protocol);
+        assert!(error.cleanup_error().is_none(), "cleanup failed: {error:?}");
+        assert_isolated_preflight_protocol_trace(
+            &process_files,
+            "initialize\nsession/new\nsession/load\nsession/close\n",
+        );
+        assert_isolated_preflight_process_group_was_reaped(&process_files, &cx.background_executor)
+            .await;
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn isolated_preflight_times_out_close_and_reaps_process_group(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let temporary_directory = tempfile::tempdir().expect("temporary directory should exist");
+        let script =
+            isolated_preflight_lifecycle_script(IsolatedPreflightLifecycleBehavior::CloseTimeout);
+        let (request, process_files) = isolated_preflight_test_request(
+            &temporary_directory,
+            &script,
+            std::time::Duration::from_millis(50),
+        );
+
+        let error = cx
+            .update(|cx| run_isolated_acp_preflight(request, cx))
+            .await
+            .expect_err("silent session/close should time out preflight");
+
+        assert_eq!(error.kind(), AcpPreflightFailureKind::Protocol);
+        assert!(error.cleanup_error().is_none(), "cleanup failed: {error:?}");
+        assert_isolated_preflight_protocol_trace(
+            &process_files,
+            "initialize\nsession/new\nsession/load\nsession/close\n",
+        );
+        assert_isolated_preflight_process_group_was_reaped(&process_files, &cx.background_executor)
+            .await;
     }
 
     #[gpui::test]
