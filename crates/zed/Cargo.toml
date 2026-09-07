@@ -2,7 +2,7 @@
 description = "Orion Studio — the fast, collaborative code editor."
 edition.workspace = true
 name = "orion-studio"
-version = "1.16.1"
+version = "1.16.2"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Orion Studio Contributors"]
