@@ -1,19 +1,19 @@
 use gpui::{App, Styled, hsla};
 
-use crate::ElevationIndex;
 use crate::prelude::*;
+use crate::{ElevationIndex, PixelChromeStroke};
 
 fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
-        .rounded_lg()
-        .border_1()
+        .rounded(index.chrome_radius().pixels())
+        .border(PixelChromeStroke::Border.width())
         .border_color(cx.theme().colors().border_variant)
         .shadow(index.shadow(cx))
 }
 
 fn elevated_borderless<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
-        .rounded_lg()
+        .rounded(index.chrome_radius().pixels())
         .shadow(index.shadow(cx))
 }
 
@@ -43,7 +43,7 @@ pub trait StyledExt: Styled + Sized {
 
     /// The [`Surface`](ElevationIndex::Surface) elevation level, located above the app background, is the standard level for all elements
     ///
-    /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
+    /// Sets `bg()`, `rounded()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Example Elements: Title Bar, Panel, Tab Bar, Editor
     fn elevation_1(self, cx: &App) -> Self {
@@ -59,7 +59,7 @@ pub trait StyledExt: Styled + Sized {
 
     /// Non-Modal Elevated Surfaces appear above the [`Surface`](ElevationIndex::Surface) layer and is used for things that should appear above most UI elements like an editor or panel, but not elements like popovers, context menus, modals, etc.
     ///
-    /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
+    /// Sets `bg()`, `rounded()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Notifications, Palettes, Detached/Floating Windows, Detached/Floating Panels
     fn elevation_2(self, cx: &App) -> Self {
@@ -79,7 +79,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// If the element does not have this behavior, it should be rendered at the [`Elevated Surface`](ElevationIndex::ElevatedSurface) layer.
     ///
-    /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
+    /// Sets `bg()`, `rounded()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
     fn elevation_3(self, cx: &App) -> Self {

@@ -3,13 +3,17 @@ use crate::{
     sidebar_side_context_menu,
 };
 use gpui::{
-    Anchor, AnyView, App, Context, Decorations, Entity, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Role, SharedString, Styled, Subscription, WeakEntity, Window,
+    Anchor, AnyView, App, BoxShadow, Context, Decorations, Entity, FocusHandle, Focusable,
+    IntoElement, ParentElement, Render, Role, SharedString, Styled, Subscription, WeakEntity,
+    Window,
 };
 use settings::{SettingsContent, update_settings_file};
 use std::{any::TypeId, sync::Arc};
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
-use ui::{ContextMenu, Divider, IconPosition, Indicator, Tooltip, prelude::*, right_click_menu};
+use ui::{
+    ContextMenu, Divider, IconPosition, Indicator, PixelChromeStroke, Tooltip, prelude::*,
+    right_click_menu,
+};
 
 /// Describes how a status-bar item can be hidden by the user.
 ///
@@ -152,6 +156,11 @@ impl Render for StatusBar {
             .gap(DynamicSpacing::Base08.rems(cx))
             .p(DynamicSpacing::Base04.rems(cx))
             .bg(cx.theme().colors().status_bar_background)
+            .shadow(vec![
+                BoxShadow::new(px(0.), px(0.), cx.theme().colors().border_variant)
+                    .spread_radius(PixelChromeStroke::Border.width())
+                    .inset(),
+            ])
             .map(|el| match window.window_decorations() {
                 Decorations::Server => el,
                 Decorations::Client { tiling, .. } => el

@@ -1,12 +1,12 @@
 use documented::Documented;
 use gpui::{
-    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, FocusHandle, Hsla, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, Role, StyleRefinement, Toggled, relative,
-    transparent_black,
+    AnyElement, AnyView, BoxShadow, ClickEvent, CursorStyle, DefiniteLength, FocusHandle, Hsla,
+    MouseButton, MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, Role, StyleRefinement,
+    Toggled, px, relative, transparent_black,
 };
 use smallvec::SmallVec;
 
-use crate::{DynamicSpacing, ElevationIndex, prelude::*};
+use crate::{DynamicSpacing, ElevationIndex, PixelChromeRadius, PixelChromeStroke, prelude::*};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Toggleable {
@@ -753,6 +753,7 @@ impl RenderOnce for ButtonLike {
             self.style,
             ButtonStyle::Outlined | ButtonStyle::OutlinedGhost | ButtonStyle::OutlinedCustom(_)
         );
+        let focus_ring_color = cx.theme().colors().border_focused;
 
         self.base
             .h_flex()
@@ -787,12 +788,15 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| {
                 this.w(width).justify_center().text_center()
             })
-            .when(is_outlined, |this| this.border_1())
+            .when(is_outlined, |this| {
+                this.border(PixelChromeStroke::Border.width())
+            })
             .when_some(self.rounding, |this, rounding| {
-                this.when(rounding.top_left, |this| this.rounded_tl_sm())
-                    .when(rounding.top_right, |this| this.rounded_tr_sm())
-                    .when(rounding.bottom_right, |this| this.rounded_br_sm())
-                    .when(rounding.bottom_left, |this| this.rounded_bl_sm())
+                let radius = PixelChromeRadius::Control.pixels();
+                this.when(rounding.top_left, |this| this.rounded_tl(radius))
+                    .when(rounding.top_right, |this| this.rounded_tr(radius))
+                    .when(rounding.bottom_right, |this| this.rounded_br(radius))
+                    .when(rounding.bottom_left, |this| this.rounded_bl(radius))
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
@@ -804,6 +808,13 @@ impl RenderOnce for ButtonLike {
             })
             .border_color(style.enabled(self.layer, cx).border_color)
             .bg(style.enabled(self.layer, cx).background)
+            .when(!is_outlined, |this| {
+                this.shadow(vec![
+                    BoxShadow::new(px(0.), px(0.), style.enabled(self.layer, cx).border_color)
+                        .spread_radius(PixelChromeStroke::Border.width())
+                        .inset(),
+                ])
+            })
             .when(self.disabled, |this| {
                 if self.cursor_style == CursorStyle::PointingHand {
                     this.cursor_not_allowed()
@@ -815,6 +826,13 @@ impl RenderOnce for ButtonLike {
                 let hovered_style = style.hovered(self.layer, cx);
                 let focus_color =
                     |refinement: StyleRefinement| refinement.bg(hovered_style.background);
+                let focus_ring = || {
+                    vec![
+                        BoxShadow::new(px(0.), px(0.), focus_ring_color)
+                            .spread_radius(PixelChromeStroke::FocusRing.width())
+                            .inset(),
+                    ]
+                };
 
                 this.cursor(self.cursor_style)
                     .hover(focus_color)
@@ -822,9 +840,10 @@ impl RenderOnce for ButtonLike {
                         if is_outlined {
                             this.focus_visible(|s| {
                                 s.border_color(cx.theme().colors().border_focused)
+                                    .shadow(focus_ring())
                             })
                         } else {
-                            this.focus_visible(focus_color)
+                            this.focus_visible(|s| focus_color(s).shadow(focus_ring()))
                         }
                     })
                     .active(|active| active.bg(style.active(cx).background))

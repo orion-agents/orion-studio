@@ -42,8 +42,8 @@ use language_model::{
 use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
-    ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
-    SplitButtonStyle, Tab, ToggleState,
+    ButtonLike, CalloutBorderPosition, Checkbox, PixelChromeRadius, PixelChromeStroke,
+    SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab, ToggleState,
 };
 use util::markdown::{source_position_from_fragment, split_local_url_fragment};
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
@@ -3880,8 +3880,8 @@ impl ThreadView {
             .child(
                 v_flex()
                     .w_full()
-                    .rounded_md()
-                    .border_1()
+                    .rounded(PixelChromeRadius::Surface.pixels())
+                    .border(PixelChromeStroke::Border.width())
                     .border_color(self.tool_card_border_color(cx))
                     .child(
                         h_flex()
@@ -3999,9 +3999,9 @@ impl ThreadView {
                     .pt_1p5()
                     .mb_1p5()
                     .gap_1p5()
-                    .border_1()
+                    .border(PixelChromeStroke::Border.width())
                     .border_color(gpui::transparent_black())
-                    .rounded_sm()
+                    .rounded(PixelChromeRadius::Surface.pixels())
                     .child(header)
                     .when_some(summary.filter(|_| is_expanded), |this, summary| {
                         this.border_color(self.tool_card_border_color(cx))
@@ -4359,7 +4359,7 @@ impl ThreadView {
             .map(|this| {
                 if has_messages {
                     this.on_action(cx.listener(Self::expand_message_editor))
-                        .border_t_1()
+                        .border_t(PixelChromeStroke::Border.width())
                         .border_color(cx.theme().colors().border)
                         .when(editor_expanded, |this| this.h(vh(0.8, window)))
                 } else {
@@ -7961,10 +7961,10 @@ impl ThreadView {
             .when(layout == ToolCallLayout::Standalone, |this| {
                 this.my_1p5()
                     .mx_5()
-                    .border_1()
+                    .border(PixelChromeStroke::Border.width())
                     .when(tool_failed || command_failed, |card| card.border_dashed())
                     .border_color(border_color)
-                    .rounded_md()
+                    .rounded(PixelChromeRadius::Surface.pixels())
             })
             .overflow_hidden()
             .child(header)
@@ -7976,7 +7976,8 @@ impl ThreadView {
                         .when(tool_failed || command_failed, |card| card.border_dashed())
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
-                        .rounded_b_md()
+                        .rounded_bl(PixelChromeRadius::Surface.pixels())
+                        .rounded_br(PixelChromeRadius::Surface.pixels())
                         .text_ui_sm(cx)
                         .h_full()
                         .children(terminal_view.map(|terminal_view| {
@@ -8287,7 +8288,7 @@ impl ThreadView {
                                             .pl_0p5()
                                             .gap_1()
                                             .justify_between()
-                                            .rounded_xs()
+                                            .rounded(PixelChromeRadius::Control.pixels())
                                             .hover(|s| s.bg(cx.theme().colors().element_hover))
                                             .child(input_output_header(input_header.into()))
                                             .child(
@@ -8471,7 +8472,8 @@ impl ThreadView {
                             .justify_between()
                             .when(use_card_layout, |this| {
                                 this.p_0p5()
-                                    .rounded_t(rems_from_px(5_f32))
+                                    .rounded_tl(PixelChromeRadius::Surface.pixels())
+                                    .rounded_tr(PixelChromeRadius::Surface.pixels())
                                     .bg(self.tool_card_header_bg(cx))
                             })
                             .child(self.render_tool_call_label(
@@ -8635,8 +8637,8 @@ impl ThreadView {
                     this
                 } else if use_card_layout {
                     this.my_1p5()
-                        .rounded_md()
-                        .border_1()
+                        .rounded(PixelChromeRadius::Surface.pixels())
+                        .border(PixelChromeStroke::Border.width())
                         .when(failed_or_canceled, |this| this.border_dashed())
                         .border_color(self.tool_card_border_color(cx))
                         .bg(cx.theme().colors().editor_background)
@@ -10677,8 +10679,8 @@ impl ThreadView {
 
         v_flex()
             .w_full()
-            .rounded_md()
-            .border_1()
+            .rounded(PixelChromeRadius::Surface.pixels())
+            .border(PixelChromeStroke::Border.width())
             .when(has_no_title_or_canceled, |this| this.border_dashed())
             .border_color(self.tool_card_border_color(cx))
             .overflow_hidden()
@@ -10700,7 +10702,7 @@ impl ThreadView {
                             .size_full()
                             .gap_2()
                             .justify_between()
-                            .rounded_sm()
+                            .rounded(PixelChromeRadius::Control.pixels())
                             .overflow_hidden()
                             .child(
                                 h_flex()

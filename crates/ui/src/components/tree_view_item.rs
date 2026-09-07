@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Role};
+use gpui::{AnyElement, AnyView, BoxShadow, ClickEvent, MouseButton, MouseDownEvent, Role};
 
-use crate::{Disclosure, prelude::*};
+use crate::{Disclosure, PixelChromeRadius, PixelChromeStroke, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct TreeViewItem {
@@ -132,11 +132,16 @@ impl Toggleable for TreeViewItem {
 
 impl RenderOnce for TreeViewItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let selected_bg = cx.theme().colors().element_active.opacity(0.5);
+        let selected_bg = cx.theme().colors().element_selected;
 
         let transparent_border = cx.theme().colors().border.opacity(0.);
-        let selected_border = cx.theme().colors().border.opacity(0.4);
+        let selected_border = cx.theme().colors().border;
         let focused_border = cx.theme().colors().border_focused;
+        let focus_ring = vec![
+            BoxShadow::new(px(0.), px(0.), focused_border)
+                .spread_radius(PixelChromeStroke::FocusRing.width())
+                .inset(),
+        ];
 
         let item_size = rems_from_px(28_f32);
         let indentation_line = h_flex()
@@ -155,6 +160,7 @@ impl RenderOnce for TreeViewItem {
         let root_item = self.root_item;
         let expanded = self.expanded;
         let selected = self.selected;
+        let disabled = self.disabled;
 
         h_flex()
             .id(self.id)
@@ -178,14 +184,27 @@ impl RenderOnce for TreeViewItem {
                     .pl_0p5()
                     .pr_1()
                     .gap_2()
-                    .rounded_sm()
-                    .border_1()
+                    .rounded(PixelChromeRadius::Control.pixels())
+                    .border(PixelChromeStroke::Border.width())
                     .border_color(transparent_border)
-                    .focus_visible(|s| s.border_color(focused_border))
                     .when(self.selected, |this| {
                         this.border_color(selected_border).bg(selected_bg)
                     })
                     .hover(|s| s.bg(cx.theme().colors().element_hover))
+                    .when(!disabled, |this| {
+                        this.active(|s| s.bg(cx.theme().colors().element_active))
+                    })
+                    .when(self.focused && !disabled, |this| {
+                        this.border_color(focused_border).shadow(focus_ring.clone())
+                    })
+                    .when(!disabled, |this| {
+                        this.focus_visible(move |style| {
+                            style.border_color(focused_border).shadow(focus_ring)
+                        })
+                    })
+                    .when(disabled, |this| {
+                        this.focus_visible(move |style| style.border_color(focused_border))
+                    })
                     .map(|this| {
                         let label = self.label;
 

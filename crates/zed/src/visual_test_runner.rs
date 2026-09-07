@@ -27,12 +27,17 @@
 //! Run the visual tests:
 //!   cargo run -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests
 //!
+//! Run one group with a bundled theme:
+//!   VISUAL_TEST_THEME="One Dark" VISUAL_TEST_FILTER="project_panel" cargo run -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests
+//!
 //! Update baseline images (when UI intentionally changes):
 //!   UPDATE_BASELINE=1 cargo run -p orion-studio --bin orion_studio_visual_test_runner --features visual-tests
 //!
 //! ## Environment Variables
 //!
-//!   UPDATE_BASELINE - Set to update baseline images instead of comparing
+//!   UPDATE_BASELINE - Presence updates baseline images instead of comparing
+//!   VISUAL_TEST_THEME - Exact bundled theme display name; unset retains legacy behavior
+//!   VISUAL_TEST_FILTER - Substring matched to one visual test group or capture
 //!   VISUAL_TEST_OUTPUT_DIR - Directory to save test output (default: target/visual_tests)
 
 // Stub main for non-macOS platforms
@@ -56,16 +61,14 @@ fn main() {
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    let update_baseline = std::env::var("UPDATE_BASELINE").is_ok();
+    let update_baseline = std::env::var_os("UPDATE_BASELINE").is_some();
 
-    // Create a temporary directory for test files
-    // Canonicalize the path to resolve symlinks (on macOS, /var -> /private/var)
-    // which prevents "path does not exist" errors during worktree scanning
-    // Use keep() to prevent auto-cleanup - background worktree tasks may still be running
-    // when tests complete, so we let the OS clean up temp directories on process exit
+    // Keep the TempDir alive through runner shutdown so its project remains available to
+    // background worktree tasks. `finish_visual_test_context` drains those tasks before this
+    // scope ends, after which TempDir can safely remove the fixture.
     let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
-    let temp_path = temp_dir.keep();
-    let canonical_temp = temp_path
+    let canonical_temp = temp_dir
+        .path()
         .canonicalize()
         .expect("Failed to canonicalize temp directory");
     let project_path = canonical_temp.join("project");
@@ -75,17 +78,20 @@ fn main() {
     create_test_files(&project_path);
 
     let test_result = std::panic::catch_unwind(|| run_visual_tests(project_path, update_baseline));
+    let cleanup_result = temp_dir.close();
 
-    // Note: We don't delete temp_path here because background worktree tasks may still
-    // be running. The directory will be cleaned up when the process exits or by the OS.
+    if let Err(error) = &cleanup_result {
+        eprintln!("Visual test temporary directory cleanup failed: {error}");
+    }
 
-    match test_result {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
+    match (test_result, cleanup_result) {
+        (Ok(Ok(())), Ok(())) => {}
+        (Ok(Ok(())), Err(_)) => std::process::exit(1),
+        (Ok(Err(e)), _) => {
             eprintln!("Visual tests failed: {}", e);
             std::process::exit(1);
         }
-        Err(_) => {
+        (Err(_), _) => {
             eprintln!("Visual tests panicked");
             std::process::exit(1);
         }
@@ -104,8 +110,8 @@ use {
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, VisualTestAppContext,
-        WindowBounds, WindowHandle, WindowOptions, point, px, size,
+        App, AppContext as _, AssetSource as _, Bounds, Entity, KeyBinding, Modifiers,
+        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
     project::{AgentId, Project},
@@ -116,7 +122,7 @@ use {
         any::Any,
         path::{Path, PathBuf},
         rc::Rc,
-        sync::Arc,
+        sync::{Arc, OnceLock},
         time::Duration,
     },
     util::ResultExt as _,
@@ -147,13 +153,309 @@ mod constants {
 use constants::*;
 
 #[cfg(target_os = "macos")]
+fn visual_test_filter() -> Result<Option<String>> {
+    match std::env::var("VISUAL_TEST_FILTER") {
+        Ok(filter) if filter.trim().is_empty() => Ok(None),
+        Ok(filter) => Ok(Some(filter.trim().to_string())),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(anyhow::anyhow!(
+            "VISUAL_TEST_FILTER must contain valid Unicode"
+        )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+static REQUESTED_VISUAL_TEST_THEME: OnceLock<Result<Option<String>, String>> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn visual_test_theme() -> Result<Option<String>> {
+    REQUESTED_VISUAL_TEST_THEME
+        .get_or_init(|| match std::env::var("VISUAL_TEST_THEME") {
+            Ok(theme_name) if theme_name.is_empty() => Err(
+                "VISUAL_TEST_THEME is set but empty; provide an exact bundled theme display name"
+                    .to_string(),
+            ),
+            Ok(theme_name) => Ok(Some(theme_name)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err("VISUAL_TEST_THEME must contain valid Unicode".to_string())
+            }
+        })
+        .clone()
+        .map_err(anyhow::Error::msg)
+}
+
+#[cfg(target_os = "macos")]
+fn visual_test_group_name(test_name: &str) -> &str {
+    match test_name {
+        name if name.starts_with("agent_thread_with_image_") => "agent_thread_with_image",
+        name if name.starts_with("breakpoint_hover_") => "breakpoint_hover",
+        name if name.starts_with("diff_review_") => "diff_review_button",
+        name if name.starts_with("multi_workspace_sidebar_") => "multi_workspace_sidebar",
+        name if name.starts_with("settings_ui_") => "settings_ui",
+        name if name.starts_with("sidebar_") => "sidebar_duplicate_names",
+        "tool_permissions_test_rules" => "tool_permissions_settings",
+        _ => test_name,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn visual_test_case_selected(test_name: &str, filter: Option<&str>) -> bool {
+    filter.is_none_or(|filter| {
+        test_name.contains(filter) || visual_test_group_name(test_name).contains(filter)
+    })
+}
+
+#[cfg(target_os = "macos")]
+struct LeakCheckedVisualTestContext {
+    context: VisualTestAppContext,
+    _entity_ref_counts: Box<dyn Any>,
+}
+
+#[cfg(target_os = "macos")]
+impl LeakCheckedVisualTestContext {
+    fn new(context: VisualTestAppContext) -> Self {
+        let entity_ref_counts = context.app.borrow().ref_counts_drop_handle();
+        Self {
+            context,
+            _entity_ref_counts: Box::new(entity_ref_counts),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl std::ops::Deref for LeakCheckedVisualTestContext {
+    type Target = VisualTestAppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.context
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl std::ops::DerefMut for LeakCheckedVisualTestContext {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.context
+    }
+}
+
+#[cfg(target_os = "macos")]
+const VISUAL_TEST_CASES: &[&str] = &[
+    "project_panel",
+    "workspace_with_editor",
+    "thread_item_branch_names",
+    "multi_workspace_sidebar_open",
+    "error_message_wrapping",
+    "agent_thread_with_image_collapsed",
+    "agent_thread_with_image_expanded",
+    "breakpoint_hover_none",
+    "breakpoint_hover_circle",
+    "breakpoint_hover_tooltip",
+    "diff_review_button_enabled",
+    "diff_review_button_disabled",
+    "diff_review_button_regular_editor",
+    "diff_review_overlay_shown",
+    "diff_review_overlay_with_text",
+    "diff_review_one_comment",
+    "diff_review_multiple_comments_expanded",
+    "diff_review_comments_collapsed",
+    "thread_item_icon_decorations",
+    "sidebar_two_projects_same_leaf_name",
+    "sidebar_three_projects_with_multi_worktree",
+    "tool_permissions_test_rules",
+    "settings_ui_no_auto_open",
+    "settings_ui_subpage_auto_open",
+];
+
+#[cfg(target_os = "macos")]
+fn visual_test_theme_loader(load_all_themes: bool) -> theme::LoadThemes {
+    if load_all_themes {
+        theme::LoadThemes::All(Box::new(Assets))
+    } else {
+        theme::LoadThemes::JustBase
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn validate_bundled_visual_test_theme(requested_theme_name: &str) -> Result<()> {
+    let assets = Assets;
+
+    for path in assets
+        .list("themes/")?
+        .into_iter()
+        .filter(|path| path.ends_with(".json"))
+    {
+        let bytes = assets
+            .load(&path)?
+            .with_context(|| format!("missing bundled theme asset {path}"))?;
+        let family: serde_json::Value = serde_json::from_slice(&bytes)
+            .with_context(|| format!("failed to parse bundled theme asset {path}"))?;
+        let contains_requested_theme = family
+            .get("themes")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|themes| {
+                themes.iter().any(|theme| {
+                    theme.get("name").and_then(serde_json::Value::as_str)
+                        == Some(requested_theme_name)
+                })
+            });
+        if contains_requested_theme {
+            return Ok(());
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "VISUAL_TEST_THEME {:?} was not found among bundled themes",
+        requested_theme_name
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn activate_visual_test_theme(cx: &mut App, requested_theme_name: &str) -> Result<String> {
+    let registry = theme::ThemeRegistry::global(cx);
+    let selected_theme = registry.get(&requested_theme_name).map_err(|_| {
+        anyhow::anyhow!(
+            "VISUAL_TEST_THEME {:?} was not found among bundled themes",
+            requested_theme_name
+        )
+    })?;
+
+    let selected_appearance = selected_theme.appearance();
+    *theme::SystemAppearance::global_mut(cx) = theme::SystemAppearance(selected_appearance);
+    theme::GlobalTheme::update_theme(cx, selected_theme);
+
+    let active_theme_name = {
+        let active_theme = theme::GlobalTheme::theme(cx);
+        anyhow::ensure!(
+            active_theme.name.as_ref() == requested_theme_name
+                && active_theme.appearance() == selected_appearance,
+            "VISUAL_TEST_THEME {:?} was not activated with {:?} appearance; active theme is {:?} ({:?})",
+            requested_theme_name,
+            selected_appearance,
+            active_theme.name,
+            active_theme.appearance()
+        );
+        active_theme.name.to_string()
+    };
+    cx.refresh_windows();
+
+    Ok(active_theme_name)
+}
+
+#[cfg(target_os = "macos")]
+fn configure_visual_test_theme(cx: &mut App, requested_theme_name: Option<&str>) -> Result<()> {
+    let Some(requested_theme_name) = requested_theme_name else {
+        println!(
+            "Visual test theme: {} (configured default)",
+            theme::GlobalTheme::theme(cx).name
+        );
+        return Ok(());
+    };
+
+    let active_theme_name = activate_visual_test_theme(cx, requested_theme_name)?;
+    println!("Visual test theme: {active_theme_name}");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn active_visual_test_theme_name(cx: &mut VisualTestAppContext) -> Result<String> {
+    let (active_theme_name, active_appearance, system_appearance) = cx.update(|cx| {
+        let active_theme = theme::GlobalTheme::theme(cx);
+        (
+            active_theme.name.to_string(),
+            active_theme.appearance(),
+            theme::SystemAppearance::global(cx).0,
+        )
+    });
+
+    if let Some(requested_theme_name) = visual_test_theme()? {
+        anyhow::ensure!(
+            active_theme_name == requested_theme_name && active_appearance == system_appearance,
+            "VISUAL_TEST_THEME {:?} was replaced or has mismatched appearance; active theme is {:?} ({:?}), runner appearance is {:?}",
+            requested_theme_name,
+            active_theme_name,
+            active_appearance,
+            system_appearance
+        );
+    }
+
+    Ok(active_theme_name)
+}
+
+#[cfg(target_os = "macos")]
+fn theme_namespace(theme_name: &str) -> String {
+    let mut namespace = String::with_capacity("theme-".len() + theme_name.len() * 2);
+    namespace.push_str("theme-");
+    for byte in theme_name.as_bytes() {
+        namespace.push_str(&format!("{byte:02x}"));
+    }
+    namespace
+}
+
+#[cfg(target_os = "macos")]
+fn selected_visual_test_group(filter: &str) -> Result<&'static str> {
+    let mut groups = Vec::new();
+    for test_name in VISUAL_TEST_CASES {
+        if visual_test_case_selected(test_name, Some(filter)) {
+            let group = visual_test_group_name(test_name);
+            if !groups.contains(&group) {
+                groups.push(group);
+            }
+        }
+    }
+
+    anyhow::ensure!(
+        !groups.is_empty(),
+        "VISUAL_TEST_FILTER {filter:?} did not match any visual test group or capture name"
+    );
+    anyhow::ensure!(
+        groups.len() == 1,
+        "VISUAL_TEST_FILTER {filter:?} is ambiguous; matched groups: {}",
+        groups.join(", ")
+    );
+    Ok(groups[0])
+}
+
+#[cfg(target_os = "macos")]
+fn finish_visual_test_context(cx: &mut LeakCheckedVisualTestContext) -> Result<()> {
+    cx.update(|cx| cx.shutdown());
+    cx.run_until_parked();
+
+    let cleanup_entity = gpui::AppContext::new(&mut cx.context, |cx| {
+        cx.clear_globals();
+    });
+    drop(cleanup_entity);
+    cx.background_executor
+        .dispatcher()
+        .as_test()
+        .context("Visual test executor did not use a TestDispatcher")?
+        .drain_tasks();
+    drop(gpui::AppContext::new(&mut cx.context, |_| ()));
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> {
+    let filter = visual_test_filter()?;
+    let filtered_group = filter
+        .as_deref()
+        .map(selected_visual_test_group)
+        .transpose()?;
+    if let Some(filter) = filter.as_deref() {
+        println!("Visual test filter: {filter}");
+    }
+
+    let requested_theme_name = visual_test_theme()?;
+    if let Some(requested_theme_name) = requested_theme_name.as_deref() {
+        validate_bundled_visual_test_theme(requested_theme_name)?;
+    }
+    let load_all_themes = requested_theme_name.is_some();
     // Create the visual test context with deterministic task scheduling
     // Use real Assets so that SVG icons render properly
-    let mut cx = VisualTestAppContext::with_asset_source(
+    let mut cx = LeakCheckedVisualTestContext::new(VisualTestAppContext::with_asset_source(
         gpui_platform::current_platform(false),
         Arc::new(Assets),
-    );
+    ));
 
     // Load embedded fonts (IBM Plex Sans, Lilex, etc.) so UI renders with correct fonts
     cx.update(|cx| {
@@ -167,7 +469,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     });
 
     // Create AppState using the test initialization
-    let app_state = cx.update(|cx| init_app_state(cx));
+    let app_state = cx.update(|cx| init_app_state(cx, load_all_themes));
 
     // Set the global app state so settings_ui and other subsystems can find it
     cx.update(|cx| {
@@ -177,7 +479,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Initialize all Orion Studio subsystems
     cx.update(|cx| {
         gpui_tokio::init(cx);
-        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(visual_test_theme_loader(load_all_themes), cx);
         client::init(&app_state.client, cx);
         audio::init(cx);
         workspace::init(app_state.clone(), cx);
@@ -245,6 +547,14 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         );
     });
 
+    let thread_store_reload = cx.update(|cx| agent::ThreadStore::global(cx).read(cx).reload_task());
+    cx.background_executor.allow_parking();
+    cx.foreground_executor.block_test(thread_store_reload);
+    cx.background_executor.forbid_parking();
+    cx.run_until_parked();
+
+    cx.update(|cx| configure_visual_test_theme(cx, requested_theme_name.as_deref()))?;
+
     // Run until all initialization tasks complete
     cx.run_until_parked();
 
@@ -294,7 +604,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     // Add the test project as a worktree
     let add_worktree_task = workspace_window
-        .update(&mut cx, |workspace, _window, cx| {
+        .update(&mut *cx, |workspace, _window, cx| {
             let project = workspace.project().clone();
             project.update(cx, |project, cx| {
                 project.find_or_create_worktree(&project_path, true, cx)
@@ -315,7 +625,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     // Create and add the project panel
     let (weak_workspace, async_window_cx) = workspace_window
-        .update(&mut cx, |workspace, window, cx| {
+        .update(&mut *cx, |workspace, window, cx| {
             (workspace.weak_handle(), window.to_async(cx))
         })
         .context("Failed to get workspace handle")?;
@@ -328,25 +638,25 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     cx.background_executor.forbid_parking();
 
     workspace_window
-        .update(&mut cx, |workspace, window, cx| {
+        .update(&mut *cx, |workspace, window, cx| {
             workspace.add_panel(panel, window, cx);
         })
-        .log_err();
+        .context("Failed to add ProjectPanel")?;
 
     cx.run_until_parked();
 
     // Open the project panel
     workspace_window
-        .update(&mut cx, |workspace, window, cx| {
+        .update(&mut *cx, |workspace, window, cx| {
             workspace.open_panel::<ProjectPanel>(window, cx);
         })
-        .log_err();
+        .context("Failed to open ProjectPanel")?;
 
     cx.run_until_parked();
 
     // Open main.rs in the editor
     let open_file_task = workspace_window
-        .update(&mut cx, |workspace, window, cx| {
+        .update(&mut *cx, |workspace, window, cx| {
             let worktree = workspace.project().read(cx).worktrees(cx).next();
             if let Some(worktree) = worktree {
                 let worktree_id = worktree.read(cx).id();
@@ -358,26 +668,30 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
                 None
             }
         })
-        .log_err()
-        .flatten();
+        .context("Failed to prepare main.rs open task")?
+        .context("Test project did not contain a worktree")?;
 
-    if let Some(task) = open_file_task {
-        cx.background_executor.allow_parking();
-        let block_result = cx.foreground_executor.block_test(task);
-        cx.background_executor.forbid_parking();
-        if let Ok(item) = block_result {
-            workspace_window
-                .update(&mut cx, |workspace, window, cx| {
-                    let pane = workspace.active_pane().clone();
-                    pane.update(cx, |pane, cx| {
-                        if let Some(index) = pane.index_for_item(item.as_ref()) {
-                            pane.activate_item(index, true, true, window, cx);
-                        }
-                    });
-                })
-                .log_err();
-        }
-    }
+    cx.background_executor.allow_parking();
+    let item_result = cx.foreground_executor.block_test(open_file_task);
+    cx.background_executor.forbid_parking();
+    let item = item_result.context("Failed to open src/main.rs")?;
+
+    let item_activated = workspace_window
+        .update(&mut *cx, |workspace, window, cx| {
+            let pane = workspace.active_pane().clone();
+            pane.update(cx, |pane, cx| {
+                let Some(index) = pane.index_for_item(item.as_ref()) else {
+                    return false;
+                };
+                pane.activate_item(index, true, true, window, cx);
+                true
+            })
+        })
+        .context("Failed to activate src/main.rs")?;
+    anyhow::ensure!(
+        item_activated,
+        "src/main.rs was not added to the active pane"
+    );
 
     cx.run_until_parked();
 
@@ -385,9 +699,103 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.refresh();
     })
-    .log_err();
+    .context("Failed to refresh workspace window")?;
 
     cx.run_until_parked();
+
+    if let Some(group) = filtered_group {
+        println!("\n--- Filtered visual test: {group} ---");
+        let filtered_result = match group {
+            "project_panel" => run_visual_test(
+                "project_panel",
+                workspace_window.into(),
+                &mut cx,
+                update_baseline,
+            ),
+            "workspace_with_editor" => {
+                workspace_window
+                    .update(&mut *cx, |workspace, window, cx| {
+                        workspace.close_panel::<ProjectPanel>(window, cx);
+                    })
+                    .context("Failed to close ProjectPanel")?;
+                cx.run_until_parked();
+                run_visual_test(
+                    "workspace_with_editor",
+                    workspace_window.into(),
+                    &mut cx,
+                    update_baseline,
+                )
+            }
+            "thread_item_branch_names" => {
+                run_thread_item_branch_name_visual_tests(app_state, &mut cx, update_baseline)
+            }
+            "multi_workspace_sidebar" => {
+                run_multi_workspace_sidebar_visual_tests(app_state, &mut cx, update_baseline)
+            }
+            "error_message_wrapping" => {
+                run_error_wrapping_visual_tests(app_state, &mut cx, update_baseline)
+            }
+            "agent_thread_with_image" => {
+                run_agent_thread_view_test(app_state, &mut cx, update_baseline)
+            }
+            "breakpoint_hover" => {
+                run_breakpoint_hover_visual_tests(app_state, &mut cx, update_baseline)
+            }
+            "diff_review_button" => {
+                run_diff_review_visual_tests(app_state, &mut cx, update_baseline)
+            }
+            "thread_item_icon_decorations" => {
+                run_thread_item_icon_decorations_visual_tests(app_state, &mut cx, update_baseline)
+            }
+            "sidebar_duplicate_names" => run_sidebar_duplicate_project_names_visual_tests(
+                app_state,
+                &mut cx,
+                update_baseline,
+            ),
+            "tool_permissions_settings" => {
+                run_tool_permissions_visual_tests(app_state, &mut cx, update_baseline)
+            }
+            "settings_ui" => {
+                run_settings_ui_subpage_visual_tests(app_state, &mut cx, update_baseline)
+            }
+            _ => unreachable!("validated visual test group"),
+        };
+
+        workspace_window
+            .update(&mut *cx, |workspace, _window, cx| {
+                let project = workspace.project().clone();
+                project.update(cx, |project, cx| {
+                    let worktree_ids: Vec<_> = project
+                        .worktrees(cx)
+                        .map(|worktree| worktree.read(cx).id())
+                        .collect();
+                    for id in worktree_ids {
+                        project.remove_worktree(id, cx);
+                    }
+                });
+            })
+            .log_err();
+        cx.run_until_parked();
+        cx.update_window(workspace_window.into(), |_, window, _cx| {
+            window.remove_window();
+        })
+        .log_err();
+        cx.run_until_parked();
+
+        let result = match filtered_result {
+            Ok(TestResult::Passed) => {
+                println!("✓ {group}: PASSED");
+                Ok(())
+            }
+            Ok(TestResult::BaselineUpdated(_)) => {
+                println!("✓ {group}: Baseline updated");
+                Ok(())
+            }
+            Err(error) => Err(error),
+        };
+        finish_visual_test_context(&mut cx)?;
+        return result;
+    }
 
     // Track test results
     let mut passed = 0;
@@ -421,7 +829,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     // Close project panel for this test
     workspace_window
-        .update(&mut cx, |workspace, window, cx| {
+        .update(&mut *cx, |workspace, window, cx| {
             workspace.close_panel::<ProjectPanel>(window, cx);
         })
         .log_err();
@@ -611,7 +1019,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     // Run Test 10: Settings UI sub-page auto-open visual tests
     println!("\n--- Test 10: settings_ui_subpage_auto_open (2 variants) ---");
-    match run_settings_ui_subpage_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+    match run_settings_ui_subpage_visual_tests(app_state, &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ settings_ui_subpage_auto_open: PASSED");
             passed += 1;
@@ -629,7 +1037,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Clean up the main workspace's worktree to stop background scanning tasks
     // This prevents "root path could not be canonicalized" errors when main() drops temp_dir
     workspace_window
-        .update(&mut cx, |workspace, _window, cx| {
+        .update(&mut *cx, |workspace, _window, cx| {
             let project = workspace.project().clone();
             project.update(cx, |project, cx| {
                 let worktree_ids: Vec<_> =
@@ -666,13 +1074,16 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         println!("Baselines Updated: {}", updated);
     }
 
-    if failed > 0 {
+    let result = if failed > 0 {
         eprintln!("\n=== Visual Tests FAILED ===");
         Err(anyhow::anyhow!("{} tests failed", failed))
     } else {
         println!("\n=== All Visual Tests PASSED ===");
         Ok(())
-    }
+    };
+
+    finish_visual_test_context(&mut cx)?;
+    result
 }
 
 #[cfg(target_os = "macos")]
@@ -691,6 +1102,11 @@ fn run_visual_test(
     // Ensure all pending work is done
     cx.run_until_parked();
 
+    if let Some(requested_theme_name) = visual_test_theme()? {
+        cx.update(|cx| activate_visual_test_theme(cx, &requested_theme_name))?;
+        cx.run_until_parked();
+    }
+
     // Refresh the window to ensure it's fully rendered
     cx.update_window(window, |_, window, _cx| {
         window.refresh();
@@ -698,14 +1114,24 @@ fn run_visual_test(
 
     cx.run_until_parked();
 
+    let namespace = if visual_test_theme()?.is_some() {
+        Some(theme_namespace(&active_visual_test_theme_name(cx)?))
+    } else {
+        None
+    };
+
     // Capture the screenshot using direct texture capture
     let screenshot = cx.capture_screenshot(window)?;
 
-    // Get paths
-    let baseline_path = get_baseline_path(test_name);
-    let output_dir = std::env::var("VISUAL_TEST_OUTPUT_DIR")
+    // Explicit theme runs use isolated paths. Unspecified theme runs retain the legacy paths.
+    let baseline_path = get_baseline_path(test_name, namespace.as_deref());
+    let output_root = std::env::var("VISUAL_TEST_OUTPUT_DIR")
         .unwrap_or_else(|_| "target/visual_tests".to_string());
-    let output_path = PathBuf::from(&output_dir).join(format!("{}.png", test_name));
+    let output_dir = namespace.map_or_else(
+        || PathBuf::from(&output_root),
+        |namespace| PathBuf::from(&output_root).join(namespace),
+    );
+    let output_path = output_dir.join(format!("{}.png", test_name));
 
     // Ensure output directory exists
     std::fs::create_dir_all(&output_dir)?;
@@ -745,7 +1171,7 @@ fn run_visual_test(
         Ok(TestResult::Passed)
     } else {
         // Save diff image
-        let diff_path = PathBuf::from(&output_dir).join(format!("{}_diff.png", test_name));
+        let diff_path = output_dir.join(format!("{}_diff.png", test_name));
         comparison.diff_image.save(&diff_path)?;
         println!("  Diff image saved to: {}", diff_path.display());
 
@@ -758,7 +1184,7 @@ fn run_visual_test(
 }
 
 #[cfg(target_os = "macos")]
-fn get_baseline_path(test_name: &str) -> PathBuf {
+fn get_baseline_path(test_name: &str, theme_namespace: Option<&str>) -> PathBuf {
     // Get the workspace root (where Cargo.toml is)
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     let workspace_root = PathBuf::from(manifest_dir)
@@ -767,9 +1193,15 @@ fn get_baseline_path(test_name: &str) -> PathBuf {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    workspace_root
-        .join(BASELINE_DIR)
-        .join(format!("{}.png", test_name))
+    let baseline_dir = workspace_root.join(BASELINE_DIR);
+    theme_namespace.map_or_else(
+        || baseline_dir.join(format!("{}.png", test_name)),
+        |namespace| {
+            baseline_dir
+                .join(namespace)
+                .join(format!("{}.png", test_name))
+        },
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -964,7 +1396,7 @@ cargo run
 }
 
 #[cfg(target_os = "macos")]
-fn init_app_state(cx: &mut App) -> Arc<AppState> {
+fn init_app_state(cx: &mut App, load_all_themes: bool) -> Arc<AppState> {
     use fs::Fs;
     use node_runtime::NodeRuntime;
     use session::Session;
@@ -989,7 +1421,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
     let workspace_store = cx.new(|cx| workspace::WorkspaceStore::new(client.clone(), cx));
 
-    theme_settings::init(theme::LoadThemes::JustBase, cx);
+    theme_settings::init(visual_test_theme_loader(load_all_themes), cx);
     client::init(&client, cx);
 
     let app_state = Arc::new(AppState {
@@ -2126,7 +2558,7 @@ fn run_agent_thread_view_test(
     let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
 
     // Create a window sized for the agent panel
-    let window_size = size(px(500.0), px(900.0));
+    let window_size = size(px(1200.0), px(900.0));
     let bounds = Bounds {
         origin: point(px(0.0), px(0.0)),
         size: window_size,
@@ -2166,16 +2598,22 @@ fn run_agent_thread_view_test(
         .context("Failed to load AgentPanel")?;
     cx.background_executor.forbid_parking();
 
-    cx.update_window(workspace_window.into(), |_, _window, cx| {
-        workspace_window
-            .update(cx, |workspace, window, cx| {
-                workspace.add_panel(panel.clone(), window, cx);
-                workspace.open_panel::<AgentPanel>(window, cx);
-            })
-            .log_err();
-    })?;
+    workspace_window
+        .update(cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<AgentPanel>(window, cx);
+        })
+        .context("Failed to add and open AgentPanel")?;
 
     cx.run_until_parked();
+
+    let agent_dock_is_open = cx.read(|cx| -> Result<bool> {
+        let workspace = workspace_window.read(cx)?;
+        Ok(workspace
+            .agent_panel_position(cx)
+            .is_some_and(|position| workspace.dock_at_position(position).read(cx).is_open()))
+    })?;
+    anyhow::ensure!(agent_dock_is_open, "AgentPanel dock did not open");
 
     // Inject the stub server and open the stub thread
     cx.update_window(workspace_window.into(), |_, window, cx| {

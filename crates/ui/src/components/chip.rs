@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{PixelChromeRadius, PixelChromeStroke, prelude::*};
 use gpui::{AnyElement, AnyView, Hsla, IntoElement, ParentElement, Styled};
 
 /// Chips provide a container for an informative label.
@@ -109,8 +109,8 @@ impl RenderOnce for Chip {
             .when(!self.truncate, |this| this.flex_none())
             .gap_0p5()
             .px_1()
-            .border_1()
-            .rounded_sm()
+            .border(PixelChromeStroke::Border.width())
+            .rounded(PixelChromeRadius::Control.pixels())
             .border_color(border_color)
             .bg(bg_color)
             .overflow_hidden()
