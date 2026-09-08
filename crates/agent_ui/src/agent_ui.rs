@@ -23,6 +23,19 @@ mod message_editor;
 mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
+pub mod orion_code_bootstrap;
+pub mod orion_code_managed_update_configuration;
+pub mod orion_code_update;
+pub mod orion_code_update_activation;
+pub mod orion_code_update_coordinator;
+pub mod orion_code_update_feed;
+pub mod orion_code_update_installer;
+#[cfg(test)]
+mod orion_code_update_integration_tests;
+pub mod orion_code_update_pipeline;
+pub mod orion_code_update_platform;
+pub mod orion_code_update_preflight;
+pub mod orion_code_update_retention;
 mod profile_selector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
@@ -85,6 +98,51 @@ pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
+pub use orion_code_bootstrap::{
+    EnsureOrionCodeRegistrySettings, OrionCodeBootstrap, OrionCodeBootstrapChoice,
+    OrionCodeBootstrapErrorKind, OrionCodeBootstrapPhase, OrionCodeBootstrapRecord,
+    OrionCodeInstallSource,
+};
+pub use orion_code_managed_update_configuration::{
+    OrionCodeManagedUpdateConfiguration, OrionCodeManagedUpdateConfigurationError,
+};
+pub use orion_code_update::{
+    OrionCodeCandidate, OrionCodeCurrentReleaseState, OrionCodeIndexVerifier,
+    OrionCodeUpdateIndexV1, OrionCodeUpdateRecordV2, OrionCodeUpdateResolution,
+};
+pub use orion_code_update_activation::{
+    OrionCodeActivationCoordinator, OrionCodeActivationHealthCheck, OrionCodeActivationHealthError,
+    OrionCodeActivationStatus,
+};
+pub use orion_code_update_coordinator::{
+    OrionCodeUpdateCheckRequest, OrionCodeUpdateCheckTrigger, OrionCodeUpdateCoordinator,
+    OrionCodeUpdateCoordinatorStatus, OrionCodeUpdateDisabledReason, OrionCodeUpdateFeed,
+    OrionCodeUpdateFeedError, OrionCodeUpdateFeedResponse, OrionCodeUpdateScheduleReason,
+};
+pub use orion_code_update_feed::{
+    OrionCodeHttpFeedError, OrionCodeHttpUpdateFeed, OrionCodeSignedIndexFetch,
+    OrionCodeUpdateFeedConfiguration, OrionCodeVerifiedUpdateFeed,
+};
+pub use orion_code_update_installer::{
+    OrionCodeArchiveInstaller, OrionCodeArchiveInstallerError, OrionCodePreflightError,
+    OrionCodeStagedIdentity, OrionCodeUpdatePreflight,
+};
+pub use orion_code_update_pipeline::{
+    OrionCodeArchiveInstallerHandle, OrionCodeCandidateInstaller, OrionCodePipelineError,
+    OrionCodeUpdatePipeline, OrionCodeUpdatePipelineStatus,
+};
+pub use orion_code_update_platform::{
+    OrionCodeMacPlatformTrust, OrionCodeMacPlatformVerifier, OrionCodePlatformVerificationError,
+    OrionCodePlatformVerifier,
+};
+pub use orion_code_update_preflight::OrionCodeManagedPreflight;
+pub use orion_code_update_retention::{
+    OrionCodeManagedInstallIdentity, OrionCodeRetentionDecision, OrionCodeRetentionDisposition,
+    OrionCodeRetentionError, OrionCodeRetentionInput, OrionCodeRetentionPlan,
+    OrionCodeRetentionReferences, OrionCodeRetentionReport, OrionCodeRetentionRestartGrace,
+    apply_orion_code_retention_plan, discover_orion_code_receipt_owned_installs,
+    plan_orion_code_retention,
+};
 pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
@@ -617,6 +675,22 @@ pub fn init(
     context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);
+    OrionCodeBootstrap::init_global(is_new_install, cx);
+    OrionCodeUpdateCoordinator::init_global(cx);
+    OrionCodeActivationCoordinator::init_global(cx);
+    OrionCodeUpdatePipeline::init_global(cx);
+    match orion_code_managed_update_configuration::configure_embedded_orion_code_managed_update(cx)
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            log::warn!(
+                "Orion Code managed updates remain disabled because production release configuration is not embedded"
+            );
+        }
+        Err(error) => {
+            log::error!("Failed to configure Orion Code managed updates: {error}");
+        }
+    }
 
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
@@ -975,6 +1049,8 @@ mod tests {
 
         let agent_settings = AgentSettings {
             enabled: true,
+            orion_code_update_channel: Default::default(),
+            orion_code_update_mode: Default::default(),
             button: true,
             dock: DockPosition::Right,
             flexible: true,

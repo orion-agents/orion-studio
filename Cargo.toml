@@ -152,6 +152,7 @@ members = [
     "crates/open_router",
     "crates/openai_subscribed",
     "crates/opencode",
+    "crates/orion_code_update",
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
@@ -419,6 +420,7 @@ open_path_prompt = { path = "crates/open_path_prompt" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
 openai_subscribed = { path = "crates/openai_subscribed" }
 opencode = { path = "crates/opencode" }
+orion_code_update = { path = "crates/orion_code_update" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
@@ -571,6 +573,7 @@ cargo_toml = "0.21"
 cbindgen = { version = "0.28.0", default-features = false }
 chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+ed25519-dalek = "3.0.0"
 ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }

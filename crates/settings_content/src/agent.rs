@@ -43,6 +43,39 @@ pub enum SidebarSide {
     Right,
 }
 
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OrionCodeUpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OrionCodeUpdateMode {
+    #[default]
+    Automatic,
+    Manual,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct OrionCodeSettingsContent {
+    /// The release channel used to discover Orion Code updates.
+    ///
+    /// Default: stable
+    pub update_channel: Option<OrionCodeUpdateChannel>,
+    /// Whether Orion Studio downloads Orion Code updates automatically.
+    ///
+    /// Default: automatic
+    pub update_mode: Option<OrionCodeUpdateMode>,
+}
+
 /// How thinking blocks should be displayed by default in the agent panel.
 #[derive(
     Clone,
@@ -198,6 +231,8 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
+    /// Orion Code installation and update settings.
+    pub orion_code: Option<OrionCodeSettingsContent>,
     /// Whether to show the agent panel button in the status bar.
     ///
     /// Default: true
@@ -1063,6 +1098,83 @@ impl std::fmt::Display for ToolPermissionMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orion_code_update_settings_round_trip_with_nested_agent_shape() {
+        let settings: crate::SettingsContent = serde_json::from_value(serde_json::json!({
+            "agent": {
+                "orion_code": {
+                    "update_channel": "beta",
+                    "update_mode": "manual"
+                }
+            }
+        }))
+        .expect("deserialize Orion Code update settings");
+
+        let serialized = serde_json::to_value(&settings).expect("serialize settings");
+        assert_eq!(
+            serialized.pointer("/agent/orion_code"),
+            Some(&serde_json::json!({
+                "update_channel": "beta",
+                "update_mode": "manual"
+            }))
+        );
+        assert!(serialized.pointer("/agent/update_channel").is_none());
+        assert!(serialized.pointer("/agent/update_mode").is_none());
+
+        let reparsed: crate::SettingsContent =
+            serde_json::from_value(serialized).expect("reparse serialized settings");
+        assert_eq!(
+            reparsed
+                .agent
+                .as_ref()
+                .and_then(|agent| agent.orion_code.as_ref()),
+            settings
+                .agent
+                .as_ref()
+                .and_then(|agent| agent.orion_code.as_ref())
+        );
+    }
+
+    #[test]
+    fn orion_code_update_settings_have_safe_defaults() {
+        assert_eq!(
+            OrionCodeUpdateChannel::default(),
+            OrionCodeUpdateChannel::Stable
+        );
+        assert_eq!(
+            OrionCodeUpdateMode::default(),
+            OrionCodeUpdateMode::Automatic
+        );
+    }
+
+    #[test]
+    fn orion_code_update_settings_merge_fields_independently() {
+        use crate::merge_from::MergeFrom as _;
+
+        let mut settings: AgentSettingsContent = serde_json::from_value(serde_json::json!({
+            "orion_code": {
+                "update_channel": "stable",
+                "update_mode": "automatic"
+            }
+        }))
+        .expect("deserialize base Orion Code settings");
+        let user_settings: AgentSettingsContent = serde_json::from_value(serde_json::json!({
+            "orion_code": {
+                "update_mode": "manual"
+            }
+        }))
+        .expect("deserialize user Orion Code settings");
+
+        settings.merge_from(&user_settings);
+
+        let orion_code = settings.orion_code.expect("merged Orion Code settings");
+        assert_eq!(
+            orion_code.update_channel,
+            Some(OrionCodeUpdateChannel::Stable)
+        );
+        assert_eq!(orion_code.update_mode, Some(OrionCodeUpdateMode::Manual));
+    }
 
     #[test]
     fn legacy_cloud_provider_is_normalized_in_agent_model_settings() {

@@ -10,8 +10,8 @@ use collections::HashMap;
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use gpui::{
-    AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    TaskExt,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, SharedString,
+    Subscription, Task, TaskExt,
 };
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
@@ -27,7 +27,9 @@ use url::Url;
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
-use crate::agent_registry_store::{AgentRegistryStore, RegistryAgent, RegistryTargetConfig};
+use crate::agent_registry_store::{
+    AgentRegistryStore, ORION_CODE_AGENT_ID, RegistryAgent, RegistryTargetConfig,
+};
 
 use crate::worktree_store::WorktreeStore;
 
@@ -38,6 +40,93 @@ pub struct AgentServerCommand {
     #[serde(default)]
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrionCodeManagedArchiveRuntime {
+    version: Version,
+    target: String,
+    command: PathBuf,
+}
+
+#[derive(Default)]
+struct GlobalOrionCodeManagedArchiveRuntime(Option<OrionCodeManagedArchiveRuntime>);
+
+impl Global for GlobalOrionCodeManagedArchiveRuntime {}
+
+impl OrionCodeManagedArchiveRuntime {
+    pub fn new(version: &str, target: &str, command: &str) -> Result<Self> {
+        let parsed_version = Version::parse(version)
+            .with_context(|| format!("invalid managed Orion Code version {version:?}"))?;
+        anyhow::ensure!(
+            parsed_version.to_string() == version,
+            "managed Orion Code version must be canonical exact semver"
+        );
+        anyhow::ensure!(
+            !target.is_empty()
+                && target.len() <= 64
+                && target.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                }),
+            "invalid managed Orion Code target {target:?}"
+        );
+        let command = PathBuf::from(command);
+        anyhow::ensure!(
+            !command.as_os_str().is_empty()
+                && command
+                    .components()
+                    .all(|component| { matches!(component, std::path::Component::Normal(_)) }),
+            "managed Orion Code command must be a normalized relative path"
+        );
+        anyhow::ensure!(
+            !command.to_string_lossy().contains('\\')
+                && !command.to_string_lossy().contains(':')
+                && command.to_string_lossy().len() <= 512,
+            "managed Orion Code command contains an invalid path component"
+        );
+        Ok(Self {
+            version: parsed_version,
+            target: target.to_string(),
+            command,
+        })
+    }
+
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    pub fn relative_command(&self) -> &Path {
+        &self.command
+    }
+
+    pub fn install_root(&self) -> PathBuf {
+        paths::external_agents_dir()
+            .join("registry")
+            .join(ORION_CODE_AGENT_ID)
+            .join("versions")
+            .join(self.version.to_string())
+            .join(&self.target)
+    }
+
+    pub fn command_path(&self) -> PathBuf {
+        self.install_root().join(&self.command)
+    }
+}
+
+pub fn set_orion_code_managed_archive_runtime(
+    runtime: Option<OrionCodeManagedArchiveRuntime>,
+    cx: &mut App,
+) {
+    cx.set_global(GlobalOrionCodeManagedArchiveRuntime(runtime));
+}
+
+pub fn orion_code_managed_archive_runtime(cx: &App) -> Option<OrionCodeManagedArchiveRuntime> {
+    cx.try_global::<GlobalOrionCodeManagedArchiveRuntime>()
+        .and_then(|runtime| runtime.0.clone())
 }
 
 impl std::fmt::Debug for AgentServerCommand {
@@ -417,6 +506,28 @@ impl AgentServerStore {
                             );
                         }
                         RegistryAgent::Npx(agent) => {
+                            if name == ORION_CODE_AGENT_ID
+                                && let Some(runtime) = orion_code_managed_archive_runtime(cx)
+                            {
+                                self.external_agents.insert(
+                                    agent_name.clone(),
+                                    ExternalAgentEntry::new(
+                                        Box::new(LocalOrionCodeArchiveAgent {
+                                            fs: fs.clone(),
+                                            project_environment: project_environment.clone(),
+                                            version: runtime.version().to_string().into(),
+                                            runtime,
+                                            settings_env: env.clone(),
+                                            new_version_available_tx: None,
+                                        })
+                                            as Box<dyn ExternalAgentServer>,
+                                        ExternalAgentSource::Registry,
+                                        agent.metadata.icon_path.clone(),
+                                        Some(agent.metadata.name.clone()),
+                                    ),
+                                );
+                                continue;
+                            }
                             self.external_agents.insert(
                                 agent_name.clone(),
                                 ExternalAgentEntry::new(
@@ -437,6 +548,13 @@ impl AgentServerStore {
                                     agent.metadata.icon_path.clone(),
                                     Some(agent.metadata.name.clone()),
                                 ),
+                            );
+                        }
+                        RegistryAgent::Unavailable(agent) => {
+                            log::info!(
+                                "Registry agent '{}' is not currently installable: {}",
+                                name,
+                                agent.reason
                             );
                         }
                     }
@@ -1114,6 +1232,279 @@ async fn remove_stale_versioned_archive_cache_dirs(
     Ok(())
 }
 
+pub async fn remove_orion_code_managed_install(fs: Arc<dyn Fs>) -> Result<()> {
+    remove_orion_code_managed_install_from(fs, paths::external_agents_dir().to_path_buf()).await
+}
+
+async fn remove_orion_code_managed_install_from(
+    fs: Arc<dyn Fs>,
+    external_agents_directory: PathBuf,
+) -> Result<()> {
+    let Some(root_metadata) = fs
+        .metadata(&external_agents_directory)
+        .await
+        .with_context(|| {
+            format!("reading metadata for managed Agent root {external_agents_directory:?}")
+        })?
+    else {
+        return Ok(());
+    };
+    if root_metadata.is_symlink || !root_metadata.is_dir {
+        bail!(
+            "refusing to remove Orion Code from non-directory or symlink Agent root {external_agents_directory:?}"
+        );
+    }
+    let canonical_root = fs
+        .canonicalize(&external_agents_directory)
+        .await
+        .with_context(|| {
+            format!("canonicalizing managed Agent root {external_agents_directory:?}")
+        })?;
+    let managed_versions_directory = external_agents_directory
+        .join("registry")
+        .join("npx")
+        .join(ORION_CODE_AGENT_ID);
+    if !validate_orion_code_managed_install_path(
+        fs.as_ref(),
+        &external_agents_directory,
+        &canonical_root,
+        &managed_versions_directory,
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
+    let mut entries = fs
+        .read_dir(&managed_versions_directory)
+        .await
+        .with_context(|| {
+            format!("reading managed Orion Code versions from {managed_versions_directory:?}")
+        })?;
+    let mut validated_install_directories = Vec::new();
+    while let Some(entry) = entries.next().await {
+        let entry = entry.with_context(|| {
+            format!("reading entry in managed Orion Code directory {managed_versions_directory:?}")
+        })?;
+        let Some(version_name) = entry.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Ok(version) = Version::parse(version_name) else {
+            continue;
+        };
+        if version.to_string() != version_name {
+            continue;
+        }
+        validate_orion_code_registry_npx_version_path(&external_agents_directory, &entry)?;
+        if validate_orion_code_managed_install_path(
+            fs.as_ref(),
+            &external_agents_directory,
+            &canonical_root,
+            &entry,
+        )
+        .await?
+        {
+            validated_install_directories.push(entry);
+        }
+    }
+
+    for install_directory in validated_install_directories {
+        if !validate_orion_code_managed_install_path(
+            fs.as_ref(),
+            &external_agents_directory,
+            &canonical_root,
+            &install_directory,
+        )
+        .await?
+        {
+            continue;
+        }
+        fs.remove_dir(
+            &install_directory,
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .with_context(|| format!("removing managed Orion Code install {install_directory:?}"))?;
+    }
+
+    Ok(())
+}
+
+async fn validate_orion_code_managed_install_path(
+    fs: &dyn Fs,
+    external_agents_directory: &Path,
+    canonical_root: &Path,
+    install_directory: &Path,
+) -> Result<bool> {
+    let relative_install = install_directory
+        .strip_prefix(external_agents_directory)
+        .with_context(|| {
+            format!(
+                "managed Orion Code install {install_directory:?} is not below {external_agents_directory:?}"
+            )
+        })?;
+    let mut current = external_agents_directory.to_path_buf();
+    for component in relative_install.components() {
+        let std::path::Component::Normal(component) = component else {
+            bail!("refusing invalid managed Orion Code install path {install_directory:?}");
+        };
+        current.push(component);
+        let Some(metadata) = fs
+            .metadata(&current)
+            .await
+            .with_context(|| format!("reading metadata for {current:?}"))?
+        else {
+            return Ok(false);
+        };
+        if metadata.is_symlink || !metadata.is_dir {
+            bail!("refusing non-directory or symlink in managed install path {current:?}");
+        }
+    }
+
+    let canonical_install = fs.canonicalize(install_directory).await.with_context(|| {
+        format!("canonicalizing managed Orion Code install {install_directory:?}")
+    })?;
+    if canonical_install == canonical_root || !canonical_install.starts_with(canonical_root) {
+        bail!(
+            "refusing to remove Orion Code install outside the managed Agent root: {canonical_install:?}"
+        );
+    }
+    Ok(true)
+}
+
+fn registry_npx_install_directory(
+    external_agents_directory: &Path,
+    registry_id: &str,
+    version: &str,
+) -> Result<PathBuf> {
+    let agent_directory = external_agents_directory
+        .join("registry")
+        .join("npx")
+        .join(sanitize_path_component(registry_id));
+    if registry_id != ORION_CODE_AGENT_ID {
+        return Ok(agent_directory);
+    }
+
+    let version = Version::parse(version)
+        .with_context(|| format!("invalid Orion Code Registry version {version:?}"))?;
+    let install_directory = agent_directory.join(version.to_string());
+    validate_orion_code_registry_npx_version_path(external_agents_directory, &install_directory)?;
+    Ok(install_directory)
+}
+
+fn validate_orion_code_registry_npx_version_path(
+    external_agents_directory: &Path,
+    install_directory: &Path,
+) -> Result<()> {
+    let mut components = install_directory
+        .strip_prefix(external_agents_directory)
+        .with_context(|| {
+            format!(
+                "Orion Code install {install_directory:?} is not below {external_agents_directory:?}"
+            )
+        })?
+        .components();
+    let expected_prefix = ["registry", "npx", ORION_CODE_AGENT_ID];
+    for expected in expected_prefix {
+        match components.next() {
+            Some(std::path::Component::Normal(component))
+                if component == std::ffi::OsStr::new(expected) => {}
+            _ => bail!("invalid Orion Code Registry install path {install_directory:?}"),
+        }
+    }
+    let Some(std::path::Component::Normal(version_component)) = components.next() else {
+        bail!("invalid Orion Code Registry install path {install_directory:?}");
+    };
+    if components.next().is_some() {
+        bail!("invalid Orion Code Registry install path {install_directory:?}");
+    }
+    let version_component = version_component
+        .to_str()
+        .with_context(|| format!("non-Unicode Orion Code version path {install_directory:?}"))?;
+    let version = Version::parse(version_component)
+        .with_context(|| format!("invalid Orion Code version path {install_directory:?}"))?;
+    if version.to_string() != version_component {
+        bail!("non-normalized Orion Code version path {install_directory:?}");
+    }
+
+    Ok(())
+}
+
+async fn prepare_orion_code_registry_npx_install_directory(
+    fs: &dyn Fs,
+    external_agents_directory: &Path,
+    install_directory: &Path,
+) -> Result<()> {
+    validate_orion_code_registry_npx_version_path(external_agents_directory, install_directory)?;
+    if fs.metadata(external_agents_directory).await?.is_none() {
+        fs.create_dir(external_agents_directory)
+            .await
+            .with_context(|| {
+                format!("creating managed Agent root {external_agents_directory:?}")
+            })?;
+    }
+
+    let root_metadata = fs
+        .metadata(external_agents_directory)
+        .await?
+        .with_context(|| format!("missing managed Agent root {external_agents_directory:?}"))?;
+    if root_metadata.is_symlink || !root_metadata.is_dir {
+        bail!(
+            "refusing Orion Code install through non-directory or symlink Agent root {external_agents_directory:?}"
+        );
+    }
+    let canonical_root = fs
+        .canonicalize(external_agents_directory)
+        .await
+        .with_context(|| {
+            format!("canonicalizing managed Agent root {external_agents_directory:?}")
+        })?;
+
+    let relative_install = install_directory
+        .strip_prefix(external_agents_directory)
+        .with_context(|| {
+            format!(
+                "Orion Code install {install_directory:?} is not below {external_agents_directory:?}"
+            )
+        })?;
+    let mut current = external_agents_directory.to_path_buf();
+    for component in relative_install.components() {
+        let std::path::Component::Normal(component) = component else {
+            bail!("invalid Orion Code Registry install path {install_directory:?}");
+        };
+        current.push(component);
+        let Some(metadata) = fs
+            .metadata(&current)
+            .await
+            .with_context(|| format!("reading metadata for {current:?}"))?
+        else {
+            break;
+        };
+        if metadata.is_symlink || !metadata.is_dir {
+            bail!("refusing non-directory or symlink in managed install path {current:?}");
+        }
+    }
+
+    fs.create_dir(install_directory)
+        .await
+        .with_context(|| format!("creating managed Orion Code install {install_directory:?}"))?;
+    if !validate_orion_code_managed_install_path(
+        fs,
+        external_agents_directory,
+        &canonical_root,
+        install_directory,
+    )
+    .await?
+    {
+        bail!("managed Orion Code install was not created at {install_directory:?}");
+    }
+
+    Ok(())
+}
+
 struct LocalRegistryArchiveAgent {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
@@ -1335,6 +1726,140 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
     }
 }
 
+struct LocalOrionCodeArchiveAgent {
+    fs: Arc<dyn Fs>,
+    project_environment: Entity<ProjectEnvironment>,
+    version: SharedString,
+    runtime: OrionCodeManagedArchiveRuntime,
+    settings_env: HashMap<String, String>,
+    new_version_available_tx: Option<watch::Sender<Option<String>>>,
+}
+
+impl ExternalAgentServer for LocalOrionCodeArchiveAgent {
+    fn version(&self) -> Option<&SharedString> {
+        Some(&self.version)
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
+    fn get_command(
+        &mut self,
+        extra_args: Vec<String>,
+        extra_env: HashMap<String, String>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<AgentServerCommand>> {
+        let fs = self.fs.clone();
+        let project_environment = self.project_environment.downgrade();
+        let runtime = self.runtime.clone();
+        let settings_env = self.settings_env.clone();
+
+        cx.spawn(async move |cx| {
+            let command_path =
+                validate_orion_code_managed_archive_command(fs.as_ref(), &runtime).await?;
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.default_environment(cx)
+                })?
+                .await
+                .unwrap_or_default();
+            env.extend(extra_env);
+            env.extend(settings_env);
+            enforce_orion_code_managed_environment(
+                ORION_CODE_AGENT_ID,
+                paths::data_dir(),
+                &mut env,
+            );
+            Ok(AgentServerCommand {
+                path: command_path,
+                args: extra_args,
+                env: Some(env),
+            })
+        })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+async fn validate_orion_code_managed_archive_command(
+    fs: &dyn Fs,
+    runtime: &OrionCodeManagedArchiveRuntime,
+) -> Result<PathBuf> {
+    let external_agents_directory = paths::external_agents_dir();
+    let command_path = runtime.command_path();
+    let relative_command = command_path
+        .strip_prefix(external_agents_directory)
+        .with_context(|| {
+            format!(
+                "managed Orion Code command {command_path:?} is not below {external_agents_directory:?}"
+            )
+        })?;
+    let root_metadata = fs
+        .metadata(external_agents_directory)
+        .await
+        .with_context(|| format!("reading managed Agent root {external_agents_directory:?}"))?
+        .with_context(|| format!("managed Agent root is missing: {external_agents_directory:?}"))?;
+    anyhow::ensure!(
+        root_metadata.is_dir && !root_metadata.is_symlink,
+        "managed Agent root must be a real directory"
+    );
+    let canonical_root = fs
+        .canonicalize(external_agents_directory)
+        .await
+        .with_context(|| {
+            format!("canonicalizing managed Agent root {external_agents_directory:?}")
+        })?;
+
+    let mut current = external_agents_directory.to_path_buf();
+    let component_count = relative_command.components().count();
+    for (index, component) in relative_command.components().enumerate() {
+        let std::path::Component::Normal(component) = component else {
+            bail!("invalid component in managed Orion Code command {command_path:?}");
+        };
+        current.push(component);
+        let metadata = fs
+            .metadata(&current)
+            .await
+            .with_context(|| format!("reading managed Orion Code path {current:?}"))?
+            .with_context(|| format!("managed Orion Code path is missing: {current:?}"))?;
+        anyhow::ensure!(
+            !metadata.is_symlink,
+            "managed Orion Code path must not contain symlinks: {current:?}"
+        );
+        if index + 1 == component_count {
+            anyhow::ensure!(
+                !metadata.is_dir && !metadata.is_fifo && metadata.is_executable,
+                "managed Orion Code command is not a regular executable file: {current:?}"
+            );
+        } else {
+            anyhow::ensure!(
+                metadata.is_dir,
+                "managed Orion Code parent is not a directory: {current:?}"
+            );
+        }
+    }
+    let canonical_command = fs
+        .canonicalize(&command_path)
+        .await
+        .with_context(|| format!("canonicalizing managed Orion Code command {command_path:?}"))?;
+    anyhow::ensure!(
+        canonical_command != canonical_root && canonical_command.starts_with(&canonical_root),
+        "managed Orion Code command escaped the managed Agent root"
+    );
+    Ok(canonical_command)
+}
+
 struct LocalRegistryNpxAgent {
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
@@ -1371,6 +1896,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let registry_id = self.registry_id.clone();
+        let version = self.version.clone();
         let package = self.package.clone();
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
@@ -1384,31 +1910,90 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .unwrap_or_default();
 
-            let install_dir = paths::external_agents_dir()
-                .join("registry")
-                .join("npx")
-                .join(sanitize_path_component(&registry_id));
-            fs.create_dir(&install_dir).await?;
-
-            let (package_name, package_spec) = bounded_npm_package_spec(&package);
-            node_runtime
-                .run_npm_subcommand(
-                    Some(&install_dir),
-                    "install",
-                    &[package_spec.as_str(), "--save-exact"],
+            let external_agents_directory = paths::external_agents_dir();
+            let install_dir = registry_npx_install_directory(
+                external_agents_directory,
+                &registry_id,
+                version.as_ref(),
+            )?;
+            if registry_id.as_ref() == ORION_CODE_AGENT_ID {
+                prepare_orion_code_registry_npx_install_directory(
+                    fs.as_ref(),
+                    external_agents_directory,
+                    &install_dir,
                 )
                 .await?;
-            let executable = node_runtime::read_package_executable(
-                install_dir.join("node_modules"),
-                package_name,
-            )
-            .await?;
+            } else {
+                fs.create_dir(&install_dir).await?;
+            }
+
+            let (package_name, package_spec) = registry_npm_package_spec(&registry_id, &package);
+            let node_modules_directory = install_dir.join("node_modules");
+            let installed_version = if registry_id.as_ref() == ORION_CODE_AGENT_ID {
+                match node_runtime::read_package_installed_version(
+                    node_modules_directory.clone(),
+                    package_name,
+                )
+                .await
+                {
+                    Ok(installed_version) => installed_version,
+                    Err(error) => {
+                        log::warn!(
+                            "Failed to inspect cached Registry package {package_name}: {error:#}"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let cached_executable = if should_reuse_cached_registry_npx_install(
+                &registry_id,
+                version.as_ref(),
+                installed_version.as_ref(),
+            ) {
+                match node_runtime::read_package_executable(
+                    node_modules_directory.clone(),
+                    package_name,
+                )
+                .await
+                {
+                    Ok(executable) if fs.is_file(&executable).await => Some(executable),
+                    Ok(executable) => {
+                        log::warn!(
+                            "Cached Orion Code {version} executable is missing at {executable:?}; reinstalling"
+                        );
+                        None
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "Cached Orion Code {version} has no usable executable; reinstalling: {error:#}"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let executable = if let Some(executable) = cached_executable {
+                executable
+            } else {
+                node_runtime
+                    .run_npm_subcommand(
+                        Some(&install_dir),
+                        "install",
+                        &[package_spec.as_str(), "--save-exact"],
+                    )
+                    .await?;
+                node_runtime::read_package_executable(node_modules_directory, package_name).await?
+            };
 
             let node_binary = node_runtime.binary_path().await?;
             env.extend(node_runtime::npm_command_env(&node_binary));
             env.extend(distribution_env);
             env.extend(extra_env);
             env.extend(settings_env);
+            enforce_orion_code_managed_environment(&registry_id, paths::data_dir(), &mut env);
 
             let mut command_args = vec![executable.to_string_lossy().into_owned()];
             command_args.extend(args);
@@ -1431,6 +2016,25 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+fn enforce_orion_code_managed_environment(
+    registry_id: &str,
+    studio_data_directory: &Path,
+    environment: &mut HashMap<String, String>,
+) {
+    if registry_id != ORION_CODE_AGENT_ID {
+        return;
+    }
+
+    environment.insert("ORION_CODE_DISABLE_ENV_FILES".to_string(), "1".to_string());
+    environment.insert(
+        "ORION_CODE_DATA_DIR".to_string(),
+        studio_data_directory
+            .join("orion-code")
+            .to_string_lossy()
+            .into_owned(),
+    );
 }
 
 /// People are using min-release-age more frequently. Which means a fresh registry will likely have
@@ -1465,6 +2069,29 @@ fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
     }
 
     (package_name, format!("{package_name}@0.0.0 - {version}"))
+}
+
+fn registry_npm_package_spec<'a>(registry_id: &str, package_spec: &'a str) -> (&'a str, String) {
+    let (package_name, bounded_spec) = bounded_npm_package_spec(package_spec);
+    if registry_id == ORION_CODE_AGENT_ID {
+        (package_name, package_spec.to_string())
+    } else {
+        (package_name, bounded_spec)
+    }
+}
+
+fn should_reuse_cached_registry_npx_install(
+    registry_id: &str,
+    requested_version: &str,
+    installed_version: Option<&Version>,
+) -> bool {
+    if registry_id != ORION_CODE_AGENT_ID {
+        return false;
+    }
+    Version::parse(requested_version)
+        .ok()
+        .as_ref()
+        .is_some_and(|requested| Some(requested) == installed_version)
 }
 
 struct LocalCustomAgent {
@@ -1773,6 +2400,34 @@ mod tests {
         })
     }
 
+    #[test]
+    fn orion_code_managed_archive_runtime_uses_a_contained_exact_path() {
+        let runtime = OrionCodeManagedArchiveRuntime::new(
+            "0.4.0-beta.1",
+            "darwin-aarch64",
+            "OrionCodeSidecar.app/Contents/MacOS/orion-code-acp",
+        )
+        .expect("valid managed runtime");
+        assert_eq!(runtime.version(), &Version::parse("0.4.0-beta.1").unwrap());
+        assert!(
+            runtime
+                .command_path()
+                .starts_with(paths::external_agents_dir())
+        );
+        assert!(runtime.command_path().ends_with(
+            "registry/orion-code/versions/0.4.0-beta.1/darwin-aarch64/OrionCodeSidecar.app/Contents/MacOS/orion-code-acp"
+        ));
+
+        for (version, target, command) in [
+            ("latest", "darwin-aarch64", "bin/orion-code-acp"),
+            ("0.4.0", "../darwin-aarch64", "bin/orion-code-acp"),
+            ("0.4.0", "darwin-aarch64", "../bin/orion-code-acp"),
+            ("0.4.0", "darwin-aarch64", "/bin/orion-code-acp"),
+        ] {
+            assert!(OrionCodeManagedArchiveRuntime::new(version, target, command).is_err());
+        }
+    }
+
     fn init_test_settings(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -1854,6 +2509,105 @@ mod tests {
         assert_eq!(
             bounded_npm_package_spec("agent-package@latest"),
             ("agent-package", "agent-package@latest".to_string())
+        );
+    }
+
+    #[test]
+    fn orion_code_uses_the_exact_registry_package_version() {
+        assert_eq!(
+            registry_npm_package_spec(ORION_CODE_AGENT_ID, "@orion-agents/orion-code@0.3.2"),
+            (
+                "@orion-agents/orion-code",
+                "@orion-agents/orion-code@0.3.2".to_string()
+            )
+        );
+        assert_eq!(
+            registry_npm_package_spec("another-agent", "agent-package@1.2.3"),
+            ("agent-package", "agent-package@0.0.0 - 1.2.3".to_string())
+        );
+    }
+
+    #[test]
+    fn orion_code_managed_environment_is_host_owned() {
+        let mut environment = HashMap::from_iter([
+            ("ORION_CODE_DISABLE_ENV_FILES".to_string(), "0".to_string()),
+            (
+                "ORION_CODE_DATA_DIR".to_string(),
+                "/untrusted/override".to_string(),
+            ),
+        ]);
+
+        enforce_orion_code_managed_environment(
+            ORION_CODE_AGENT_ID,
+            Path::new("/studio-data"),
+            &mut environment,
+        );
+
+        assert_eq!(
+            environment
+                .get("ORION_CODE_DISABLE_ENV_FILES")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            environment.get("ORION_CODE_DATA_DIR").map(String::as_str),
+            Some("/studio-data/orion-code")
+        );
+    }
+
+    #[test]
+    fn only_reuses_an_exact_cached_orion_code_version() {
+        let installed = Version::parse("0.3.2").expect("valid installed version");
+        assert!(should_reuse_cached_registry_npx_install(
+            ORION_CODE_AGENT_ID,
+            "0.3.2",
+            Some(&installed)
+        ));
+        assert!(!should_reuse_cached_registry_npx_install(
+            ORION_CODE_AGENT_ID,
+            "0.3.3",
+            Some(&installed)
+        ));
+        assert!(!should_reuse_cached_registry_npx_install(
+            "another-agent",
+            "0.3.2",
+            Some(&installed)
+        ));
+        assert!(!should_reuse_cached_registry_npx_install(
+            ORION_CODE_AGENT_ID,
+            "latest",
+            Some(&installed)
+        ));
+    }
+
+    #[test]
+    fn orion_code_registry_npx_install_directory_is_versioned_and_contained() {
+        let external_agents_directory = Path::new("/external-agents");
+        assert_eq!(
+            registry_npx_install_directory(
+                external_agents_directory,
+                ORION_CODE_AGENT_ID,
+                "0.3.2-beta.1+build.7",
+            )
+            .expect("valid Orion Code version"),
+            external_agents_directory.join("registry/npx/orion-code/0.3.2-beta.1+build.7")
+        );
+        assert!(
+            registry_npx_install_directory(
+                external_agents_directory,
+                ORION_CODE_AGENT_ID,
+                "../0.3.2",
+            )
+            .is_err()
+        );
+        assert_eq!(
+            registry_npx_install_directory(
+                external_agents_directory,
+                "another-agent",
+                "not-a-semver",
+            )
+            .expect("non-Orion Registry behavior remains version-independent"),
+            external_agents_directory.join("registry/npx/another-agent")
         );
     }
 
@@ -2181,6 +2935,234 @@ mod tests {
                 "v_newer".to_string(),
                 "v_not_a_dir".to_string(),
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn orion_code_versioned_installs_preserve_existing_versions(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let external_agents_directory = PathBuf::from("/external-agents");
+        fs.create_dir(&external_agents_directory)
+            .await
+            .expect("create managed Agent root");
+        let old_install = registry_npx_install_directory(
+            &external_agents_directory,
+            ORION_CODE_AGENT_ID,
+            "0.3.2",
+        )
+        .expect("old version path");
+        prepare_orion_code_registry_npx_install_directory(
+            fs.as_ref(),
+            &external_agents_directory,
+            &old_install,
+        )
+        .await
+        .expect("prepare old version");
+        fs.insert_file(old_install.join("verified"), b"keep".to_vec())
+            .await;
+
+        let new_install = registry_npx_install_directory(
+            &external_agents_directory,
+            ORION_CODE_AGENT_ID,
+            "0.3.3",
+        )
+        .expect("new version path");
+        prepare_orion_code_registry_npx_install_directory(
+            fs.as_ref(),
+            &external_agents_directory,
+            &new_install,
+        )
+        .await
+        .expect("prepare new version");
+
+        assert_ne!(old_install, new_install);
+        assert!(fs.is_file(&old_install.join("verified")).await);
+        assert!(fs.is_dir(&new_install).await);
+    }
+
+    #[gpui::test]
+    async fn refuses_to_prepare_orion_code_install_through_a_symlink(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let external_agents_directory = PathBuf::from("/external-agents");
+        let outside_directory = PathBuf::from("/outside");
+        fs.create_dir(&external_agents_directory.join("registry/npx"))
+            .await
+            .expect("create managed npx directory");
+        fs.create_dir(&outside_directory)
+            .await
+            .expect("create outside directory");
+        fs.create_symlink(
+            &external_agents_directory.join("registry/npx/orion-code"),
+            outside_directory.clone(),
+        )
+        .await
+        .expect("create malicious private-root symlink");
+        let install_directory = registry_npx_install_directory(
+            &external_agents_directory,
+            ORION_CODE_AGENT_ID,
+            "0.3.2",
+        )
+        .expect("version path");
+
+        let error = prepare_orion_code_registry_npx_install_directory(
+            fs.as_ref(),
+            &external_agents_directory,
+            &install_directory,
+        )
+        .await
+        .expect_err("private-root symlink must be rejected");
+
+        assert!(error.to_string().contains("symlink"));
+        assert!(!fs.is_dir(&outside_directory.join("0.3.2")).await);
+    }
+
+    #[gpui::test]
+    async fn removes_only_orion_code_private_version_directories(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let external_agents_directory = PathBuf::from("/external-agents");
+        fs.insert_tree(
+            &external_agents_directory,
+            serde_json::json!({
+                "registry": {
+                    "orion-code": { "archive": "keep" },
+                    "another-agent": { "archive": "keep" },
+                    "npx": {
+                        "orion-code": {
+                            "0.3.1": { "package.json": "managed" },
+                            "0.3.2-beta.1+build.7": { "package.json": "managed" },
+                            "current": { "package.json": "keep" },
+                            "notes.txt": "keep"
+                        },
+                        "another-agent": { "package.json": "keep" }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        remove_orion_code_managed_install_from(fs.clone(), external_agents_directory.clone())
+            .await
+            .expect("remove exact Orion Code managed directories");
+
+        assert!(
+            fs.is_dir(&external_agents_directory.join("registry/orion-code"))
+                .await
+        );
+        assert!(
+            fs.is_dir(&external_agents_directory.join("registry/another-agent"))
+                .await
+        );
+        assert!(
+            !fs.is_dir(&external_agents_directory.join("registry/npx/orion-code/0.3.1"))
+                .await
+        );
+        assert!(
+            !fs.is_dir(
+                &external_agents_directory.join("registry/npx/orion-code/0.3.2-beta.1+build.7")
+            )
+            .await
+        );
+        assert!(
+            fs.is_dir(&external_agents_directory.join("registry/npx/orion-code/current"))
+                .await
+        );
+        assert!(
+            fs.is_file(&external_agents_directory.join("registry/npx/orion-code/notes.txt"))
+                .await
+        );
+        assert!(
+            fs.is_dir(&external_agents_directory.join("registry/npx/another-agent"))
+                .await
+        );
+    }
+
+    #[gpui::test]
+    async fn refuses_to_remove_orion_code_managed_install_through_a_symlink(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let external_agents_directory = PathBuf::from("/external-agents");
+        let outside_directory = PathBuf::from("/outside");
+        fs.create_dir(&external_agents_directory.join("registry"))
+            .await
+            .expect("create Registry directory");
+        fs.create_dir(&external_agents_directory.join("registry/npx/orion-code"))
+            .await
+            .expect("create Orion Code versions directory");
+        fs.create_dir(&outside_directory)
+            .await
+            .expect("create outside directory");
+        fs.insert_file(outside_directory.join("keep"), b"keep".to_vec())
+            .await;
+        fs.create_symlink(
+            &external_agents_directory.join("registry/npx/orion-code/0.3.2"),
+            outside_directory.clone(),
+        )
+        .await
+        .expect("create malicious managed-install symlink");
+
+        let error = remove_orion_code_managed_install_from(fs.clone(), external_agents_directory)
+            .await
+            .expect_err("managed install symlink must be rejected");
+
+        assert!(error.to_string().contains("symlink"));
+        assert!(fs.is_file(&outside_directory.join("keep")).await);
+    }
+
+    #[gpui::test]
+    async fn orion_code_refuses_symlinks_in_intermediate_managed_install_directories(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let registry_symlink_root = PathBuf::from("/registry-symlink");
+        fs.create_dir(&registry_symlink_root)
+            .await
+            .expect("create first managed root");
+        fs.insert_tree(
+            &registry_symlink_root.join("alternate"),
+            serde_json::json!({ "orion-code": { "keep": "data" } }),
+        )
+        .await;
+        fs.create_symlink(
+            &registry_symlink_root.join("registry"),
+            registry_symlink_root.join("alternate"),
+        )
+        .await
+        .expect("create Registry symlink");
+
+        let error =
+            remove_orion_code_managed_install_from(fs.clone(), registry_symlink_root.clone())
+                .await
+                .expect_err("Registry symlink must be rejected");
+        assert!(error.to_string().contains("symlink"));
+        assert!(
+            fs.is_file(&registry_symlink_root.join("alternate/orion-code/keep"))
+                .await
+        );
+
+        let npx_symlink_root = PathBuf::from("/npx-symlink");
+        fs.create_dir(&npx_symlink_root.join("registry"))
+            .await
+            .expect("create second Registry directory");
+        fs.insert_tree(
+            &npx_symlink_root.join("alternate"),
+            serde_json::json!({ "orion-code": { "keep": "data" } }),
+        )
+        .await;
+        fs.create_symlink(
+            &npx_symlink_root.join("registry/npx"),
+            npx_symlink_root.join("alternate"),
+        )
+        .await
+        .expect("create npx symlink");
+
+        let error = remove_orion_code_managed_install_from(fs.clone(), npx_symlink_root.clone())
+            .await
+            .expect_err("npx symlink must be rejected");
+        assert!(error.to_string().contains("symlink"));
+        assert!(
+            fs.is_file(&npx_symlink_root.join("alternate/orion-code/keep"))
+                .await
         );
     }
 

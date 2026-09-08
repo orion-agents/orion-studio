@@ -17,9 +17,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    NotifyWhenAgentWaiting, OrionCodeUpdateChannel, OrionCodeUpdateMode, PlaySoundWhenAgentDone,
+    RegisterSetting, Settings, SettingsContent, SettingsStore, SidebarDockPosition, SidebarSide,
+    ThinkingBlockDisplay, ToolPermissionMode, update_settings_file,
+    update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -204,6 +205,8 @@ fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshol
 #[derive(Clone, Debug, RegisterSetting)]
 pub struct AgentSettings {
     pub enabled: bool,
+    pub orion_code_update_channel: OrionCodeUpdateChannel,
+    pub orion_code_update_mode: OrionCodeUpdateMode,
     pub button: bool,
     pub dock: DockPosition,
     pub flexible: bool,
@@ -754,8 +757,11 @@ pub fn normalize_path(raw: &str) -> String {
 impl Settings for AgentSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
+        let orion_code = agent.orion_code.unwrap_or_default();
         Self {
             enabled: agent.enabled.unwrap(),
+            orion_code_update_channel: orion_code.update_channel.unwrap_or_default(),
+            orion_code_update_mode: orion_code.update_mode.unwrap_or_default(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
@@ -1686,6 +1692,62 @@ mod tests {
             "default.json should not have any active tool-specific rules, found: {:?}",
             permissions.tools.keys().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_default_json_orion_code_update_settings_parse() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json_lenient::Value = serde_json_lenient::from_str(default_json).unwrap();
+        let orion_code = value
+            .get("agent")
+            .and_then(|agent| agent.get("orion_code"))
+            .expect("default.json should have agent.orion_code");
+
+        let content: settings::OrionCodeSettingsContent =
+            serde_json_lenient::from_value(orion_code.clone()).unwrap();
+        assert_eq!(content.update_channel, Some(OrionCodeUpdateChannel::Stable));
+        assert_eq!(content.update_mode, Some(OrionCodeUpdateMode::Automatic));
+    }
+
+    #[gpui::test]
+    fn test_orion_code_update_settings_reach_runtime(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        let settings = AgentSettings::get_global(cx);
+        assert_eq!(
+            settings.orion_code_update_channel,
+            OrionCodeUpdateChannel::Stable
+        );
+        assert_eq!(
+            settings.orion_code_update_mode,
+            OrionCodeUpdateMode::Automatic
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{
+                        "agent": {
+                            "orion_code": {
+                                "update_channel": "beta",
+                                "update_mode": "manual"
+                            }
+                        }
+                    }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let settings = AgentSettings::get_global(cx);
+        assert_eq!(
+            settings.orion_code_update_channel,
+            OrionCodeUpdateChannel::Beta
+        );
+        assert_eq!(settings.orion_code_update_mode, OrionCodeUpdateMode::Manual);
     }
 
     #[test]

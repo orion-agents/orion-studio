@@ -1,4 +1,5 @@
 use crate::multibuffer_hint::MultibufferHint;
+use agent_ui::OrionCodeBootstrap;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 use db::kvp::KeyValueStore;
@@ -211,6 +212,7 @@ struct Onboarding {
     user_store: Entity<UserStore>,
     scroll_handle: ScrollHandle,
     _settings_subscription: Subscription,
+    _orion_code_bootstrap_subscription: Option<Subscription>,
 }
 
 impl Onboarding {
@@ -269,6 +271,8 @@ impl Onboarding {
                 user_store: workspace.user_store().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+                _orion_code_bootstrap_subscription: OrionCodeBootstrap::try_global(cx)
+                    .map(|bootstrap| cx.observe(&bootstrap, |_, _, cx| cx.notify())),
             }
         })
     }
@@ -427,12 +431,17 @@ impl Item for Onboarding {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>> {
-        Task::ready(Some(cx.new(|cx| Onboarding {
-            workspace: self.workspace.clone(),
-            user_store: self.user_store.clone(),
-            scroll_handle: ScrollHandle::new(),
-            focus_handle: cx.focus_handle(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+        Task::ready(Some(cx.new(|cx| {
+            Onboarding {
+                workspace: self.workspace.clone(),
+                user_store: self.user_store.clone(),
+                scroll_handle: ScrollHandle::new(),
+                focus_handle: cx.focus_handle(),
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+                _orion_code_bootstrap_subscription: OrionCodeBootstrap::try_global(cx)
+                    .map(|bootstrap| cx.observe(&bootstrap, |_, _, cx| cx.notify())),
+            }
         })))
     }
 

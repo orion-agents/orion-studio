@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_ui::{OrionCodeBootstrap, OrionCodeBootstrapPhase};
 use client::{Client, TelemetrySettings, UserStore, zed_urls};
 use cloud_api_types::Plan;
 use collections::HashMap;
 use fs::Fs;
 use gpui::{Action, Animation, AnimationExt, App, Entity, IntoElement, TaskExt, pulsating_between};
+use project::agent_registry_store::ORION_CODE_AGENT_ID;
 use project::agent_server_store::AllAgentServersSettings;
 use project::project_settings::ProjectSettings;
 use project::{AgentRegistryStore, RegistryAgent};
@@ -539,16 +541,40 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
         .child(h_flex().gap_1().child(vscode).child(cursor))
 }
 
-pub(crate) const FEATURED_AGENT_IDS: &[&str] =
-    &["claude-acp", "codex-acp", "github-copilot-cli", "cursor"];
+pub(crate) const FEATURED_AGENT_IDS: &[&str] = &[
+    ORION_CODE_AGENT_ID,
+    "claude-acp",
+    "codex-acp",
+    "github-copilot-cli",
+    "cursor",
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FeaturedAgentConfiguration {
+    Missing,
+    Registry,
+    Custom,
+}
 
 fn render_registry_agent_button(
     agent: &RegistryAgent,
-    installed: bool,
+    configuration: FeaturedAgentConfiguration,
     cx: &mut App,
 ) -> impl IntoElement {
     let agent_id = agent.id().to_string();
     let element_id = format!("{}-onboarding", agent_id);
+    let is_orion_code = agent_id == ORION_CODE_AGENT_ID;
+    let unavailable_reason = agent.unavailable_reason().cloned();
+    let bootstrap = is_orion_code
+        .then(|| OrionCodeBootstrap::try_global(cx))
+        .flatten();
+    let bootstrap_phase = bootstrap
+        .as_ref()
+        .map(|bootstrap| bootstrap.read(cx).phase())
+        .unwrap_or_default();
+    let bootstrap_has_error = bootstrap
+        .as_ref()
+        .is_some_and(|bootstrap| bootstrap.read(cx).last_error().is_some());
 
     let icon = match agent.icon_path() {
         Some(icon_path) => Icon::from_external_svg(icon_path.clone()),
@@ -559,7 +585,52 @@ fn render_registry_agent_button(
 
     let fs = <dyn Fs>::global(cx);
 
-    let state_element = if installed {
+    let state_element = if configuration == FeaturedAgentConfiguration::Custom && is_orion_code {
+        Label::new("Conflict")
+            .size(LabelSize::XSmall)
+            .color(Color::Error)
+            .into_any_element()
+    } else if unavailable_reason.is_some() {
+        Label::new("Unavailable")
+            .size(LabelSize::XSmall)
+            .color(Color::Warning)
+            .into_any_element()
+    } else if is_orion_code {
+        match bootstrap_phase {
+            OrionCodeBootstrapPhase::Pending => Label::new("Set Up")
+                .size(LabelSize::XSmall)
+                .color(Color::Accent)
+                .into_any_element(),
+            OrionCodeBootstrapPhase::Configuring => Label::new("Configuring…")
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+                .into_any_element(),
+            OrionCodeBootstrapPhase::Configured => Label::new("Configured")
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+                .into_any_element(),
+            OrionCodeBootstrapPhase::Verifying => Label::new("Verifying…")
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+                .into_any_element(),
+            OrionCodeBootstrapPhase::Ready if bootstrap_has_error => Label::new("Retry Update")
+                .size(LabelSize::XSmall)
+                .color(Color::Warning)
+                .into_any_element(),
+            OrionCodeBootstrapPhase::Ready => Icon::new(IconName::Check)
+                .size(IconSize::Small)
+                .color(Color::Success)
+                .into_any_element(),
+            OrionCodeBootstrapPhase::Failed => Label::new("Retry")
+                .size(LabelSize::XSmall)
+                .color(Color::Error)
+                .into_any_element(),
+            OrionCodeBootstrapPhase::DisabledByUser => Label::new("Enable")
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+                .into_any_element(),
+        }
+    } else if configuration != FeaturedAgentConfiguration::Missing {
         Icon::new(IconName::Check)
             .size(IconSize::Small)
             .color(Color::Success)
@@ -571,33 +642,63 @@ fn render_registry_agent_button(
             .into_any_element()
     };
 
+    let disabled = if is_orion_code {
+        unavailable_reason.is_some()
+            || configuration == FeaturedAgentConfiguration::Custom
+            || matches!(
+                bootstrap_phase,
+                OrionCodeBootstrapPhase::Configuring
+                    | OrionCodeBootstrapPhase::Configured
+                    | OrionCodeBootstrapPhase::Verifying
+            )
+            || (bootstrap_phase == OrionCodeBootstrapPhase::Ready && !bootstrap_has_error)
+    } else {
+        configuration != FeaturedAgentConfiguration::Missing
+    };
+
     AgentSetupButton::new(element_id)
         .icon(icon)
-        .name(agent.name().clone())
+        .name(if is_orion_code {
+            SharedString::from(format!("{} — Recommended", agent.name()))
+        } else {
+            agent.name().clone()
+        })
         .state(state_element)
-        .disabled(installed)
+        .disabled(disabled)
         .on_click(move |_, window, cx| {
             telemetry::event!("Welcome Agent Install Clicked", agent = agent_id.as_str());
-            update_settings_file(fs.clone(), cx, {
-                let agent_id = agent_id.clone();
-                move |settings, _| {
-                    let agent_servers = settings.agent_servers.get_or_insert_default();
-                    agent_servers.entry(agent_id).or_insert_with(|| {
-                        CustomAgentServerSettings::Registry {
-                            env: Default::default(),
-                            default_mode: None,
-                            default_config_options: HashMap::default(),
-                            favorite_config_option_values: HashMap::default(),
-                        }
-                    });
-                }
-            });
-            window.dispatch_action(
-                Box::new(zed_actions::agent::SelectAgent {
-                    agent: agent_id.clone(),
-                }),
-                cx,
-            );
+            if is_orion_code {
+                let Some(bootstrap) = OrionCodeBootstrap::try_global(cx) else {
+                    zlog::error!("Orion Code bootstrap is not initialized");
+                    return;
+                };
+                bootstrap
+                    .update(cx, |bootstrap, cx| {
+                        bootstrap.accept_and_configure(fs.clone(), cx)
+                    })
+                    .detach_and_log_err(cx);
+            } else {
+                update_settings_file(fs.clone(), cx, {
+                    let agent_id = agent_id.clone();
+                    move |settings, _| {
+                        let agent_servers = settings.agent_servers.get_or_insert_default();
+                        agent_servers.entry(agent_id).or_insert_with(|| {
+                            CustomAgentServerSettings::Registry {
+                                env: Default::default(),
+                                default_mode: None,
+                                default_config_options: HashMap::default(),
+                                favorite_config_option_values: HashMap::default(),
+                            }
+                        });
+                    }
+                });
+                window.dispatch_action(
+                    Box::new(zed_actions::agent::SelectAgent {
+                        agent: agent_id.clone(),
+                    }),
+                    cx,
+                );
+            }
         })
 }
 
@@ -703,9 +804,27 @@ fn render_ai_section(user_store: &Entity<UserStore>, cx: &mut App) -> impl IntoE
         else {
             return grid;
         };
-        let is_installed = installed_agents.contains_key(*agent_id);
-        grid.child(render_registry_agent_button(agent, is_installed, cx))
+        let configuration = match installed_agents.get(*agent_id) {
+            None => FeaturedAgentConfiguration::Missing,
+            Some(project::agent_server_store::CustomAgentServerSettings::Registry { .. }) => {
+                FeaturedAgentConfiguration::Registry
+            }
+            Some(project::agent_server_store::CustomAgentServerSettings::Custom { .. }) => {
+                FeaturedAgentConfiguration::Custom
+            }
+        };
+        grid.child(render_registry_agent_button(agent, configuration, cx))
     });
+
+    let orion_code_status = registry_agents
+        .iter()
+        .find(|agent| agent.id().as_ref() == ORION_CODE_AGENT_ID)
+        .and_then(RegistryAgent::unavailable_reason)
+        .cloned()
+        .or_else(|| {
+            OrionCodeBootstrap::try_global(cx)
+                .and_then(|bootstrap| bootstrap.read(cx).last_error().cloned())
+        });
 
     v_flex()
         .gap_0p5()
@@ -715,6 +834,13 @@ fn render_ai_section(user_store: &Entity<UserStore>, cx: &mut App) -> impl IntoE
                 .color(Color::Muted),
         )
         .child(grid)
+        .when_some(orion_code_status, |this, status| {
+            this.child(
+                Label::new(status)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+        })
 }
 
 pub(crate) fn render_basics_page(user_store: &Entity<UserStore>, cx: &mut App) -> impl IntoElement {

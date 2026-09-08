@@ -80,7 +80,9 @@ use super::entry_view_state::EntryViewState;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
 use crate::agent_connection_store::{
-    AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
+    AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore, OrionCodeActivityKind,
+    OrionCodeActivityLease, OrionCodeActivityOwner, OrionCodeUpdateActivity,
+    is_orion_code_agent_id,
 };
 use crate::agent_diff::AgentDiff;
 use crate::completion_provider::{AgentContextSelection, AvailableSkill};
@@ -106,6 +108,46 @@ const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
+
+fn increment_activity_count(count: &mut usize, description: &str) {
+    if let Some(incremented) = count.checked_add(1) {
+        *count = incremented;
+    } else {
+        *count = usize::MAX;
+        log::error!("Orion Code {description} activity count overflowed");
+    }
+}
+
+fn orion_code_activity_owner(
+    connection: &Rc<dyn AgentConnection>,
+    cx: &mut App,
+) -> Option<OrionCodeActivityOwner> {
+    if !is_orion_code_agent_id(&connection.agent_id()) {
+        return None;
+    }
+
+    let activity = OrionCodeUpdateActivity::init_global(cx);
+    Some(activity.read(cx).owner())
+}
+
+fn acquire_orion_code_connection_activity(
+    connection: &Rc<dyn AgentConnection>,
+    kind: OrionCodeActivityKind,
+    cx: &mut App,
+) -> Option<OrionCodeActivityLease> {
+    if !is_orion_code_agent_id(&connection.agent_id()) {
+        return None;
+    }
+
+    let activity = OrionCodeUpdateActivity::init_global(cx);
+    match activity.read(cx).acquire(kind) {
+        Ok(activity) => Some(activity),
+        Err(error) => {
+            log::error!("Failed to acquire Orion Code {kind:?} activity: {error}");
+            None
+        }
+    }
+}
 
 pub(crate) mod elicitation;
 mod message_queue;
@@ -280,16 +322,24 @@ pub(crate) struct Conversation {
     threads: HashMap<acp::SessionId, Entity<AcpThread>>,
     permission_requests: IndexMap<acp::SessionId, Vec<acp::ToolCallId>>,
     elicitation_requests: IndexMap<acp::SessionId, Vec<ElicitationEntryId>>,
+    orion_code_activity_owner: Option<OrionCodeActivityOwner>,
     subscriptions: Vec<Subscription>,
     updated_at: Option<Instant>,
 }
 
 impl Conversation {
+    fn for_connection(connection: &Rc<dyn AgentConnection>, cx: &mut App) -> Self {
+        Self {
+            orion_code_activity_owner: orion_code_activity_owner(connection, cx),
+            ..Self::default()
+        }
+    }
+
     pub fn register_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
         let session_id = thread.read(cx).session_id().clone();
         let subscription = cx.subscribe(&thread, {
             let session_id = session_id.clone();
-            move |this, _thread, event, _cx| {
+            move |this, _thread, event, cx| {
                 this.updated_at = Some(Instant::now());
                 match event {
                     AcpThreadEvent::ToolAuthorizationRequested(id) => {
@@ -339,10 +389,52 @@ impl Conversation {
                     | AcpThreadEvent::WorkingDirectoriesUpdated
                     | AcpThreadEvent::PromptUpdated => {}
                 }
+                this.refresh_orion_code_activity(cx);
             }
         });
         self.subscriptions.push(subscription);
         self.threads.insert(session_id, thread);
+        self.refresh_orion_code_activity(cx);
+    }
+
+    fn refresh_orion_code_activity(&mut self, cx: &App) {
+        let Some(activity_owner) = self.orion_code_activity_owner.as_mut() else {
+            return;
+        };
+
+        let mut active_turns = 0usize;
+        let mut active_tools = 0usize;
+        let mut pending_permissions = 0usize;
+        for thread in self.threads.values() {
+            let thread = thread.read(cx);
+            if thread.status() == ThreadStatus::Generating {
+                increment_activity_count(&mut active_turns, "active turn");
+            }
+            for entry in thread.entries() {
+                let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                    continue;
+                };
+                match &tool_call.status {
+                    ToolCallStatus::Pending | ToolCallStatus::InProgress => {
+                        increment_activity_count(&mut active_tools, "active tool");
+                    }
+                    ToolCallStatus::WaitingForConfirmation { .. } => {
+                        increment_activity_count(&mut active_tools, "active tool");
+                        increment_activity_count(&mut pending_permissions, "pending permission");
+                    }
+                    ToolCallStatus::Completed
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Rejected
+                    | ToolCallStatus::Canceled => {}
+                }
+            }
+        }
+
+        if let Err(error) =
+            activity_owner.set_session_activity(active_turns, active_tools, pending_permissions)
+        {
+            log::error!("Failed to update Orion Code session activity: {error}");
+        }
     }
 
     pub fn permission_options_for_tool_call<'a>(
@@ -1103,6 +1195,17 @@ impl ConversationView {
                     return;
                 }
             };
+            let load_activity = cx
+                .update(|_window, cx| {
+                    acquire_orion_code_connection_activity(
+                        &connection,
+                        OrionCodeActivityKind::Load,
+                        cx,
+                    )
+                })
+                .log_err()
+                .flatten();
+            let _load_activity = load_activity;
 
             this.update_in(cx, |this, _window, cx| {
                 let request_elicitation_subscription =
@@ -1189,7 +1292,7 @@ impl ConversationView {
                         let root_session_id = thread.read(cx).session_id().clone();
 
                         let conversation = cx.new(|cx| {
-                            let mut conversation = Conversation::default();
+                            let mut conversation = Conversation::for_connection(&connection, cx);
                             conversation.register_thread(thread.clone(), cx);
                             conversation
                         });
@@ -2080,6 +2183,11 @@ impl ConversationView {
             .cloned()
             .unwrap_or_else(|| self.project.read(cx).default_path_list(cx));
 
+        let load_activity = acquire_orion_code_connection_activity(
+            &connected.connection,
+            OrionCodeActivityKind::Load,
+            cx,
+        );
         let subagent_thread_task = connected.connection.clone().load_session(
             subagent_id,
             self.project.clone(),
@@ -2089,6 +2197,7 @@ impl ConversationView {
         );
 
         cx.spawn_in(window, async move |this, cx| {
+            let _load_activity = load_activity;
             let subagent_thread = subagent_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
                 let Some(conversation) = this

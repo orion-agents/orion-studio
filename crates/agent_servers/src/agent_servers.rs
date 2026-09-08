@@ -24,7 +24,9 @@ pub use acp::test_support::{
 };
 pub use acp::{
     AcpConnection, AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection,
-    GEMINI_TERMINAL_AUTH_METHOD_ID,
+    AcpInitializeSnapshot, AcpPreflightError, AcpPreflightFailureKind, AcpPreflightLimits,
+    AcpPreflightRequest, GEMINI_TERMINAL_AUTH_METHOD_ID, run_isolated_acp_preflight,
+    run_isolated_acp_preflight_with_executor,
 };
 
 pub struct AgentServerDelegate {
