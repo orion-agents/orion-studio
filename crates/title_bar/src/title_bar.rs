@@ -1238,7 +1238,7 @@ impl TitleBar {
             ButtonLike::new("user-menu")
                 .aria_label("User menu")
                 .tab_index(0isize)
-                .child(Icon::new(IconName::ChevronDown).size(IconSize::Small))
+                .child(Icon::new(IconName::Menu).size(IconSize::Small))
         };
 
         PopoverMenu::new("user-menu")
