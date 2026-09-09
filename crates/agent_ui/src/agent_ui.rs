@@ -4,6 +4,7 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod agent_registry_ui;
+mod ai_native_conversation_item;
 mod buffer_codegen;
 mod completion_provider;
 mod config_options;
@@ -75,6 +76,7 @@ pub use crate::agent_panel::{
     ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
+pub use crate::ai_native_conversation_item::{AiNativeConversationItem, FocusAiNativeConversation};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::message_editor::MessageEditorEvent;
 pub use crate::thread_metadata_store::ThreadId;
