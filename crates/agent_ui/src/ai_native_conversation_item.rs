@@ -1,10 +1,12 @@
 use crate::{AgentPanel, AgentPanelEvent, ConversationView};
+use acp_thread::ThreadStatus;
 use agent_settings::{AgentSettings, WindowLayout};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
     Render, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use settings::SettingsStore;
+use ui::{Color, Label, LabelCommon, LabelSize, h_flex, v_flex};
 use workspace::{Item, Workspace, item::ItemEvent};
 
 actions!(
@@ -134,12 +136,57 @@ impl Focusable for AiNativeConversationItem {
 }
 
 impl Render for AiNativeConversationItem {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let mut container = div().size_full();
         if let Some(conversation_view) = self.conversation_view.clone() {
-            container = container.child(conversation_view);
+            let header = self.render_header(cx);
+            container =
+                container.child(v_flex().size_full().child(header).child(conversation_view));
         }
         container
+    }
+}
+
+impl AiNativeConversationItem {
+    /// Single-line task header: thread title plus the current status.
+    ///
+    /// The thread title editor is owned by the thread view (the agent panel only
+    /// renders it), so it is re-hosted here to keep the task identity visible
+    /// while the dock-hosted panel stays closed.
+    fn render_header(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let title_and_status = self
+            .conversation_view
+            .as_ref()
+            .and_then(|conversation_view| {
+                let conversation_view = conversation_view.read(cx);
+                conversation_view.active_thread().map(|thread_view| {
+                    let thread_view = thread_view.read(cx);
+                    let title_editor = thread_view.title_editor.clone();
+                    let status = thread_view.thread.read(cx).status();
+                    (title_editor, status)
+                })
+            });
+
+        let mut header = h_flex()
+            .h_8()
+            .px_2()
+            .gap_2()
+            .items_center()
+            .justify_between();
+
+        if let Some((title_editor, status)) = title_and_status {
+            let status_label = match status {
+                ThreadStatus::Idle => "Idle",
+                ThreadStatus::Generating => "Running",
+            };
+            header = header.child(title_editor).child(
+                Label::new(status_label)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
+        }
+
+        header
     }
 }
 
