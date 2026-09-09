@@ -82,6 +82,16 @@ impl AiNativeConversationItem {
     }
 }
 
+/// Registers the actions that drive the AI Native center surface.
+pub(crate) fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|workspace, _: &FocusAiNativeConversation, window, cx| {
+            AiNativeConversationItem::deploy_in_workspace(workspace, window, cx);
+        });
+    })
+    .detach();
+}
+
 impl EventEmitter<ItemEvent> for AiNativeConversationItem {}
 
 impl Focusable for AiNativeConversationItem {
