@@ -57,12 +57,24 @@ impl PanelLayout {
         git_panel_dock: Some(DockPosition::Left),
     };
 
+    const AI_NATIVE: Self = Self {
+        agent_dock: Some(DockPosition::Bottom),
+        project_panel_dock: Some(DockSide::Right),
+        outline_panel_dock: Some(DockSide::Right),
+        collaboration_panel_dock: Some(DockPosition::Right),
+        git_panel_dock: Some(DockPosition::Right),
+    };
+
     pub fn is_agent_layout(&self) -> bool {
         *self == Self::AGENT
     }
 
     pub fn is_editor_layout(&self) -> bool {
         *self == Self::EDITOR
+    }
+
+    pub fn is_ai_native_layout(&self) -> bool {
+        *self == Self::AI_NATIVE
     }
 
     fn read_from(content: &SettingsContent) -> Self {
@@ -126,12 +138,17 @@ impl PanelLayout {
 pub enum WindowLayout {
     Editor(Option<PanelLayout>),
     Agent(Option<PanelLayout>),
+    AiNative(Option<PanelLayout>),
     Custom(PanelLayout),
 }
 
 impl WindowLayout {
     pub fn agent() -> Self {
         Self::Agent(None)
+    }
+
+    pub fn ai_native() -> Self {
+        Self::AiNative(None)
     }
 
     pub fn editor() -> Self {
@@ -339,6 +356,10 @@ impl AgentSettings {
             return WindowLayout::Agent(Some(user_layout));
         }
 
+        if merged_layout.is_ai_native_layout() {
+            return WindowLayout::AiNative(Some(user_layout));
+        }
+
         if merged_layout.is_editor_layout() {
             return WindowLayout::Editor(Some(user_layout));
         }
@@ -376,7 +397,21 @@ impl AgentSettings {
                     PanelLayout::EDITOR.write_diff_to(&merged, settings);
                 })
             }
+            WindowLayout::AiNative(None) => {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
+                    PanelLayout::AI_NATIVE.write_diff_to(&merged, settings);
+                    // AI Native puts the threads sidebar on the left so the
+                    // conversation surface reads as the center column. The
+                    // sidebar side is written here (same settings write as the
+                    // dock combination) but is deliberately excluded from layout
+                    // identification so existing Classic/Agentic/Custom users are
+                    // never misclassified.
+                    settings.agent.get_or_insert_default().sidebar_side =
+                        Some(SidebarDockPosition::Left);
+                })
+            }
             WindowLayout::Agent(Some(saved))
+            | WindowLayout::AiNative(Some(saved))
             | WindowLayout::Editor(Some(saved))
             | WindowLayout::Custom(saved) => {
                 update_settings_file_with_completion(fs, cx, move |settings, _cx| {
@@ -1971,6 +2006,147 @@ mod tests {
             };
             assert_eq!(user_layout.agent_dock, Some(DockPosition::Right));
             assert_eq!(user_layout.project_panel_dock, Some(DockSide::Right));
+        });
+    }
+
+    #[gpui::test]
+    fn test_ai_native_layout_identification(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        // The AI Native dock combination (agent bottom, everything else right)
+        // is identified as AiNative rather than Custom.
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{
+                        "agent": { "dock": "bottom" },
+                        "project_panel": { "dock": "right" },
+                        "outline_panel": { "dock": "right" },
+                        "collaboration_panel": { "dock": "right" },
+                        "git_panel": { "dock": "right" }
+                    }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let layout = AgentSettings::get_layout(cx);
+        let WindowLayout::AiNative(_) = layout else {
+            panic!("expected AiNative, got {:?}", layout);
+        };
+
+        // Classic (agent right, others left) must still be identified as Editor,
+        // and Agentic (agent left, others right) as Agent — no cross-talk.
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "dock": "left" } }"#, cx)
+                .unwrap();
+        });
+        let layout = AgentSettings::get_layout(cx);
+        assert!(
+            matches!(layout, WindowLayout::Agent(_)),
+            "expected Agent, got {:?}",
+            layout
+        );
+    }
+
+    #[gpui::test]
+    fn test_ai_native_sidebar_side_not_part_of_identification(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        // Setting the threads sidebar side must not change how the dock
+        // combination is classified.
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{
+                        "agent": { "dock": "left", "sidebar_side": "right" }
+                    }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let layout = AgentSettings::get_layout(cx);
+        assert!(
+            matches!(layout, WindowLayout::Agent(_)),
+            "sidebar side must not affect identification, got {:?}",
+            layout
+        );
+    }
+
+    #[gpui::test]
+    async fn test_set_layout_ai_native_writes_dock_and_sidebar_side(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.save(
+            paths::settings_file().as_path(),
+            &serde_json::json!({}).to_string().into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            project::DisableAiSettings::register(cx);
+            AgentSettings::register(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(r#"{}"#, cx).unwrap();
+            });
+
+            AgentSettings::set_layout(WindowLayout::ai_native(), fs.clone(), cx)
+        })
+        .await
+        .ok();
+
+        cx.run_until_parked();
+
+        let written = fs.load(paths::settings_file().as_path()).await.unwrap();
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(&written, cx).unwrap();
+            });
+
+            let store = cx.global::<SettingsStore>();
+            let user_layout = store
+                .raw_user_settings()
+                .map(|u| PanelLayout::read_from(u.content.as_ref()))
+                .unwrap_or_default();
+
+            assert_eq!(
+                user_layout.agent_dock,
+                Some(DockPosition::Bottom),
+                "AI Native must put the agent dock at the bottom"
+            );
+
+            // The sidebar side is written in the same settings write.
+            assert_eq!(
+                store
+                    .raw_user_settings()
+                    .unwrap()
+                    .content
+                    .agent
+                    .as_ref()
+                    .unwrap()
+                    .sidebar_side,
+                Some(SidebarDockPosition::Left),
+                "AI Native must place the threads sidebar on the left in the same write"
+            );
+
+            // And the written combination is recognized as AiNative.
+            let layout = AgentSettings::get_layout(cx);
+            assert!(
+                matches!(layout, WindowLayout::AiNative(_)),
+                "written layout should be recognized as AiNative, got {:?}",
+                layout
+            );
         });
     }
 }
