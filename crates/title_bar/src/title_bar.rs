@@ -84,6 +84,8 @@ actions!(
         UseClassicLayout,
         /// Switches to the agentic panel layout.
         UseAgenticLayout,
+        /// Switches to the AI Native conversation-first panel layout.
+        UseAiNativeLayout,
     ]
 );
 
@@ -109,6 +111,10 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|_workspace, _: &UseAgenticLayout, _window, cx| {
             set_window_layout(WindowLayout::Agent(None), cx);
+        });
+
+        workspace.register_action(|_workspace, _: &UseAiNativeLayout, _window, cx| {
+            set_window_layout(WindowLayout::AiNative(None), cx);
         });
 
         workspace.register_action(|workspace, _: &SimulateUpdateAvailable, _window, cx| {
@@ -178,6 +184,7 @@ fn update_layout_action_filter(cx: &mut App) {
     let layout_actions = [
         TypeId::of::<UseClassicLayout>(),
         TypeId::of::<UseAgenticLayout>(),
+        TypeId::of::<UseAiNativeLayout>(),
     ];
     CommandPaletteFilter::update_global(cx, |filter, _| {
         if disable_ai {
@@ -1254,6 +1261,7 @@ impl TitleBar {
                 let current_layout = AgentSettings::get_layout(cx);
                 let is_editor = matches!(current_layout, WindowLayout::Editor(_));
                 let is_agent = matches!(current_layout, WindowLayout::Agent(_));
+                let is_ai_native = matches!(current_layout, WindowLayout::AiNative(_));
                 let is_custom = matches!(current_layout, WindowLayout::Custom(_));
 
                 ContextMenu::build(window, cx, |menu, _, _cx| {
@@ -1398,6 +1406,15 @@ impl TitleBar {
                                     Some(UseAgenticLayout.boxed_clone()),
                                     move |window, cx| {
                                         window.dispatch_action(UseAgenticLayout.boxed_clone(), cx);
+                                    },
+                                )
+                                .toggleable_entry(
+                                    "AI Native",
+                                    is_ai_native,
+                                    IconPosition::Start,
+                                    Some(UseAiNativeLayout.boxed_clone()),
+                                    move |window, cx| {
+                                        window.dispatch_action(UseAiNativeLayout.boxed_clone(), cx);
                                     },
                                 )
                                 .when(is_custom, |menu| {
