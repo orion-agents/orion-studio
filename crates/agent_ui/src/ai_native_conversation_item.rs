@@ -3,7 +3,7 @@ use acp_thread::ThreadStatus;
 use agent_settings::{AgentSettings, WindowLayout};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
-    Render, Styled, Subscription, WeakEntity, Window, actions, div,
+    Render, Styled, Subscription, Window, actions, div,
 };
 use settings::SettingsStore;
 use ui::{Color, Label, LabelCommon, LabelSize, h_flex, v_flex};
@@ -25,7 +25,10 @@ actions!(
 /// dock-hosted `AgentPanel` stays closed and this item is the only visible
 /// rendering position for it.
 pub struct AiNativeConversationItem {
-    workspace: WeakEntity<Workspace>,
+    /// The panel that owns the ACP session and the thread map. Holding the
+    /// panel (rather than the workspace) lets the item read the active surface
+    /// without leasing the workspace entity.
+    panel: Option<Entity<AgentPanel>>,
     conversation_view: Option<Entity<ConversationView>>,
     focus_handle: FocusHandle,
     _panel_subscription: Option<Subscription>,
@@ -33,12 +36,12 @@ pub struct AiNativeConversationItem {
 
 impl AiNativeConversationItem {
     pub(crate) fn new(
-        workspace: WeakEntity<Workspace>,
+        panel: Option<Entity<AgentPanel>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
-            workspace,
+            panel,
             conversation_view: None,
             focus_handle: cx.focus_handle(),
             _panel_subscription: None,
@@ -58,16 +61,14 @@ impl AiNativeConversationItem {
             return existing;
         }
 
-        let item = cx.new(|cx| Self::new(workspace.weak_handle(), window, cx));
+        let panel = workspace.panel::<AgentPanel>(cx);
+        let item = cx.new(|cx| Self::new(panel, window, cx));
         workspace.add_item_to_center(Box::new(item.clone()), window, cx);
         item
     }
 
     fn refresh_and_subscribe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+        let Some(panel) = self.panel.as_ref() else {
             return;
         };
 
@@ -76,7 +77,7 @@ impl AiNativeConversationItem {
         // Re-bind whenever AgentPanel switches, restores or replaces its active
         // surface. The item never creates a second ConversationView.
         self._panel_subscription = Some(cx.subscribe_in(
-            &panel,
+            panel,
             window,
             |this, panel, _event: &AgentPanelEvent, _window, cx| {
                 this.conversation_view = panel.read(cx).active_conversation_view().cloned();
@@ -118,8 +119,14 @@ fn sync_ai_native_surface(
         return;
     }
 
-    AiNativeConversationItem::deploy_in_workspace(workspace, window, cx);
-    workspace.close_panel::<AgentPanel>(window, cx);
+    let item = AiNativeConversationItem::deploy_in_workspace(workspace, window, cx);
+
+    // Only close the dock-hosted panel once it actually has a conversation to
+    // hand over. Otherwise the panel would stop initializing its thread and the
+    // center surface would have nothing to render.
+    if item.read(cx).conversation_view.is_some() {
+        workspace.close_panel::<AgentPanel>(window, cx);
+    }
 }
 
 impl EventEmitter<ItemEvent> for AiNativeConversationItem {}
