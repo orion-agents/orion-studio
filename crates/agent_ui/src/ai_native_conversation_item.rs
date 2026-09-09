@@ -1,8 +1,10 @@
 use crate::{AgentPanel, AgentPanelEvent, ConversationView};
+use agent_settings::{AgentSettings, WindowLayout};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
     Render, Styled, Subscription, WeakEntity, Window, actions, div,
 };
+use settings::SettingsStore;
 use workspace::{Item, Workspace, item::ItemEvent};
 
 actions!(
@@ -84,12 +86,38 @@ impl AiNativeConversationItem {
 
 /// Registers the actions that drive the AI Native center surface.
 pub(crate) fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
         workspace.register_action(|workspace, _: &FocusAiNativeConversation, window, cx| {
             AiNativeConversationItem::deploy_in_workspace(workspace, window, cx);
         });
+        if let Some(window) = window {
+            cx.observe_global_in::<SettingsStore>(window, |workspace, window, cx| {
+                sync_ai_native_surface(workspace, window, cx);
+            })
+            .detach();
+        }
     })
     .detach();
+}
+
+/// Keeps the AI Native center surface and the dock-hosted AgentPanel in sync.
+///
+/// When AI Native is selected the center item becomes the only visible
+/// rendering position for the conversation, so the dock-hosted AgentPanel is
+/// closed. Closing it does not destroy it: AgentPanel stays the lifecycle host
+/// (it owns the thread map, the ACP session and persistence) and the center
+/// item only borrows its active surface.
+fn sync_ai_native_surface(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if !matches!(AgentSettings::get_layout(cx), WindowLayout::AiNative(_)) {
+        return;
+    }
+
+    AiNativeConversationItem::deploy_in_workspace(workspace, window, cx);
+    workspace.close_panel::<AgentPanel>(window, cx);
 }
 
 impl EventEmitter<ItemEvent> for AiNativeConversationItem {}
