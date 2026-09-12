@@ -560,6 +560,7 @@ dependencies = [
  "vim",
  "watch",
  "workspace",
+ "worktree",
  "zed_actions",
 ]
 

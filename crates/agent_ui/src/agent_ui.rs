@@ -25,6 +25,7 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
+mod task_inspector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 pub mod terminal_thread_metadata_store;
@@ -76,7 +77,7 @@ pub use crate::agent_panel::{
     ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
-pub use crate::ai_native_conversation_item::{AiNativeConversationItem, FocusAiNativeConversation};
+pub use crate::ai_native_conversation_item::AiNativeConversationItem;
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::message_editor::MessageEditorEvent;
 pub use crate::thread_metadata_store::ThreadId;
@@ -87,6 +88,10 @@ pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
+pub use task_inspector::{
+    ShowTaskChanges, ShowTaskFiles, ShowTaskReview, TaskChangesView, TaskFilesView,
+    TaskInspectorPanel, TaskInspectorTab, TaskReviewView, ToggleTaskInspector,
+};
 pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
@@ -617,6 +622,7 @@ pub fn init(
     }
     agent_panel::init(cx);
     ai_native_conversation_item::init(cx);
+    task_inspector::init(cx);
     context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);

@@ -51,7 +51,8 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    AccessibleMode, FocusAiNativeConversation, MultiWorkspace, ToggleWorktreeSecurity,
+    UseAgenticLayout, UseAiNativeLayout, UseClassicLayout, Workspace,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -74,18 +75,6 @@ actions!(
         SwitchBranch,
         /// A debug action to simulate an update being available to test the update banner UI.
         SimulateUpdateAvailable
-    ]
-);
-
-actions!(
-    workspace,
-    [
-        /// Switches to the classic, editor-focused panel layout.
-        UseClassicLayout,
-        /// Switches to the agentic panel layout.
-        UseAgenticLayout,
-        /// Switches to the AI Native conversation-first panel layout.
-        UseAiNativeLayout,
     ]
 );
 
@@ -113,9 +102,10 @@ pub fn init(cx: &mut App) {
             set_window_layout(WindowLayout::Agent(None), cx);
         });
 
-        workspace.register_action(|_workspace, _: &UseAiNativeLayout, _window, cx| {
-            set_window_layout(WindowLayout::AiNative(None), cx);
-        });
+        // `UseAiNativeLayout` is deliberately not handled here. Its sequence is
+        // not a plain settings write — it also opens the Threads sidebar, binds
+        // the center conversation surface and stands down the dock-hosted Agent
+        // panel — so `agent_ui` registers the handler that owns those steps.
 
         workspace.register_action(|workspace, _: &SimulateUpdateAvailable, _window, cx| {
             if let Some(titlebar) = workspace
@@ -185,6 +175,9 @@ fn update_layout_action_filter(cx: &mut App) {
         TypeId::of::<UseClassicLayout>(),
         TypeId::of::<UseAgenticLayout>(),
         TypeId::of::<UseAiNativeLayout>(),
+        // The way back to the task is as AI Native-only as the layout action
+        // itself: without AI there is no center conversation to focus.
+        TypeId::of::<FocusAiNativeConversation>(),
     ];
     CommandPaletteFilter::update_global(cx, |filter, _| {
         if disable_ai {

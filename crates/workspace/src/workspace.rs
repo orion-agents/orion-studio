@@ -474,6 +474,31 @@ pub struct CloseItemInAllPanes {
 pub struct SendKeystrokes(pub String);
 
 actions!(
+    workspace,
+    [
+        /// Switches to the classic, editor-focused panel layout.
+        UseClassicLayout,
+        /// Switches to the agentic panel layout.
+        UseAgenticLayout,
+        /// Switches to the AI Native conversation-first panel layout.
+        ///
+        /// Defined here rather than in the title bar because the AI Native
+        /// sequence is not a pure settings write: it also has to open the
+        /// Threads sidebar, bind the center conversation surface and stand down
+        /// the dock-hosted Agent panel. Owning the action in `workspace` lets
+        /// `agent_ui` register that sequence while the title bar only has to
+        /// dispatch it.
+        UseAiNativeLayout,
+        /// Returns focus from any item to the AI Native center conversation.
+        ///
+        /// A workspace-level navigation action (like the layout actions) rather
+        /// than an agent action, so the docs and command palette reference it as
+        /// `workspace::FocusAiNativeConversation`.
+        FocusAiNativeConversation,
+    ]
+);
+
+actions!(
     project_symbols,
     [
         /// Toggles the project symbols search.
@@ -1435,6 +1460,21 @@ type PromptForOpenPath = Box<
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
+/// Redirects focus away from a dock-hosted panel whose surface is rendered
+/// somewhere else.
+///
+/// The AI Native layout keeps the agent panel alive as a hidden lifecycle host
+/// and renders its active surface in the center pane instead. Every existing
+/// code path that asks to focus that panel — thread selection in the Threads
+/// sidebar, `NewThread`, `NewTerminalThread` and friends — has to land on the
+/// center surface rather than reopening the dock, otherwise the same
+/// conversation would be rendered twice.
+///
+/// The hook receives the panel's `persistent_name()` and returns `true` when it
+/// handled the request.
+pub type PanelFocusRedirect =
+    Arc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>, &'static str) -> bool>;
+
 #[derive(Default)]
 struct DispatchingKeystrokes {
     dispatched: HashSet<Vec<Keystroke>>,
@@ -1508,6 +1548,9 @@ pub struct Workspace {
     _dev_container_task: Option<Task<Result<()>>>,
     _panels_task: Option<Task<Result<()>>>,
     sidebar_focus_handle: Option<FocusHandle>,
+    /// Redirects focus for a dock-hosted panel whose surface is rendered
+    /// somewhere else. See [`Workspace::set_panel_focus_redirect`].
+    panel_focus_redirect: Option<PanelFocusRedirect>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     /// Shared with the parent `MultiWorkspace` and any sibling workspaces: holds
     /// the id of the single workspace currently presented in this OS window.
@@ -1980,6 +2023,7 @@ impl Workspace {
             last_open_dock_positions: Vec::new(),
             removing: false,
             sidebar_focus_handle: None,
+            panel_focus_redirect: None,
             multi_workspace,
             active_workspace_id: None,
             active_worktree_creation: ActiveWorktreeCreation::default(),
@@ -2712,6 +2756,12 @@ impl Workspace {
 
     pub fn set_sidebar_focus_handle(&mut self, handle: Option<FocusHandle>) {
         self.sidebar_focus_handle = handle;
+    }
+
+    /// Installs a hook that can take over focus requests aimed at a dock-hosted
+    /// panel. See [`PanelFocusRedirect`].
+    pub fn set_panel_focus_redirect(&mut self, redirect: PanelFocusRedirect) {
+        self.panel_focus_redirect = Some(redirect);
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
@@ -4568,6 +4618,16 @@ impl Workspace {
         cx: &mut Context<Self>,
         should_focus: &mut dyn FnMut(&dyn PanelHandle, &mut Window, &mut Context<Dock>) -> bool,
     ) -> Option<Arc<dyn PanelHandle>> {
+        // A layout may own the surface of this panel elsewhere. When it does,
+        // focusing the panel is a focus transfer to that surface, not an
+        // instruction to reopen the dock.
+        if let Some(redirect) = self.panel_focus_redirect.clone()
+            && redirect(self, window, cx, T::persistent_name())
+        {
+            cx.notify();
+            return None;
+        }
+
         let mut result_panel = None;
         let mut serialize = false;
         for dock in self.all_docks() {
@@ -4634,6 +4694,24 @@ impl Workspace {
         for dock in self.all_docks().iter() {
             dock.update(cx, |dock, cx| {
                 if dock.panel::<T>().is_some() {
+                    dock.set_open(false, window, cx)
+                }
+            })
+        }
+    }
+
+    /// Closes the dock hosting `T` only when `T` is that dock's active panel.
+    ///
+    /// Used to undo a layout-driven reveal: switching away from a layout that
+    /// opened a panel for the user must not take down a dock the user had
+    /// already opened for something else.
+    pub fn close_panel_if_active<T: Panel>(&self, window: &mut Window, cx: &mut Context<Self>) {
+        for dock in self.all_docks().iter() {
+            dock.update(cx, |dock, cx| {
+                let is_active = dock
+                    .active_panel()
+                    .is_some_and(|panel| panel.persistent_name() == T::persistent_name());
+                if is_active && dock.panel::<T>().is_some() {
                     dock.set_open(false, window, cx)
                 }
             })
