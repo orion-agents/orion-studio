@@ -25,7 +25,7 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
-mod task_inspector;
+mod task_environment;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 pub mod terminal_thread_metadata_store;
@@ -83,15 +83,14 @@ pub use crate::message_editor::MessageEditorEvent;
 pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use conversation_view::open_markdown_in_workspace;
-pub use conversation_view::{ConversationView, StateChange};
+pub use conversation_view::{
+    CENTER_READING_COLUMN_WIDTH, ConversationSurface, ConversationView, StateChange,
+};
 pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
-pub use task_inspector::{
-    ShowTaskChanges, ShowTaskFiles, ShowTaskReview, TaskChangesView, TaskFilesView,
-    TaskInspectorPanel, TaskInspectorTab, TaskReviewView, ToggleTaskInspector,
-};
+pub use task_environment::{TaskEnvironmentPanel, ToggleTaskEnvironment};
 pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
@@ -622,7 +621,7 @@ pub fn init(
     }
     agent_panel::init(cx);
     ai_native_conversation_item::init(cx);
-    task_inspector::init(cx);
+    task_environment::init(cx);
     context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);

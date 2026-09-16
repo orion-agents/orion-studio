@@ -51,8 +51,8 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    AccessibleMode, FocusAiNativeConversation, MultiWorkspace, ToggleWorktreeSecurity,
-    UseAgenticLayout, UseAiNativeLayout, UseClassicLayout, Workspace,
+    AccessibleMode, FocusAiNativeConversation, MultiWorkspace, ReturnToAiNativeTask,
+    ToggleWorktreeSecurity, UseAgenticLayout, UseAiNativeLayout, UseClassicLayout, Workspace,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -1256,6 +1256,7 @@ impl TitleBar {
                 let is_agent = matches!(current_layout, WindowLayout::Agent(_));
                 let is_ai_native = matches!(current_layout, WindowLayout::AiNative(_));
                 let is_custom = matches!(current_layout, WindowLayout::Custom(_));
+                let ai_native_trip = workspace::ai_native_trip_active(cx);
 
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     menu.when(hosted_services_available && is_signed_in, |this| {
@@ -1417,6 +1418,20 @@ impl TitleBar {
                                             .disabled(true),
                                     )
                                 })
+                                // The way back from a code-workspace trip. Only
+                                // meaningful once the user has left AI Native, so it
+                                // The way back from a code-workspace trip. Only shown
+                                // while a trip is actually in progress: a user who
+                                // switched layouts directly has no task to return to.
+                                .when(
+                                    ai_enabled && !is_ai_native && ai_native_trip,
+                                    |menu| {
+                                        menu.separator().action(
+                                            "Return to task",
+                                            ReturnToAiNativeTask.boxed_clone(),
+                                        )
+                                    },
+                                )
                             })
                     })
                     .when(hosted_services_available && is_signed_in, |this| {

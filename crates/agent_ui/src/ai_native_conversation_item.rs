@@ -11,20 +11,20 @@
 //! persistence; the item only borrows its active surface and re-binds on
 //! `AgentPanelEvent`.
 
-use crate::{AgentPanel, AgentPanelEvent, ConversationView, NewThread, TerminalId};
-use acp_thread::ThreadStatus;
+use crate::{AgentPanel, AgentPanelEvent, ConversationSurface, ConversationView, TerminalId};
 use agent_settings::{AgentSettings, WindowLayout};
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, Window, actions, div,
+    Anchor, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Window, div,
 };
 use settings::{Settings as _, SettingsStore};
 use std::sync::Arc;
 use terminal_view::TerminalView;
-use ui::prelude::*;
+use ui::{AlertModal, PopoverMenu, prelude::*};
 use workspace::{
-    FocusAiNativeConversation, Item, Panel, TabBarSettings, UseAiNativeLayout, Workspace,
-    item::ItemEvent, pane::Pane,
+    ConfirmExitToCodeWorkspace, FocusAiNativeConversation, Item, ModalView, OpenInCodeWorkspace,
+    Panel, ReturnToAiNativeTask, TabBarSettings, UseAiNativeLayout, Workspace, item::ItemEvent,
+    pane::Pane,
 };
 
 /// Which surface the center pane is currently mirroring.
@@ -126,25 +126,50 @@ impl AiNativeConversationItem {
     /// Using the panel's `visible_*` accessors — rather than re-deriving the
     /// active entry from the thread store — is what keeps the two in step when
     /// the user switches between an agent thread and a terminal thread.
-    fn refresh_surface(&mut self, cx: &App) {
+    fn refresh_surface(&mut self, cx: &mut Context<Self>) {
         let Some(panel) = self.panel.clone() else {
             self.surface = CenterSurface::Empty;
             return;
         };
-        let panel = panel.read(cx);
 
-        if let Some(conversation_view) = panel.visible_conversation_view() {
-            self.surface = CenterSurface::Conversation(conversation_view.clone());
-        } else if let Some(id) = panel.active_terminal_id()
-            && let Some(view) = panel.visible_terminal_view()
-        {
-            self.surface = CenterSurface::Terminal {
-                id,
-                view: view.clone(),
-            };
-        } else {
-            self.surface = CenterSurface::Empty;
+        let next_surface = {
+            let panel = panel.read(cx);
+            if let Some(conversation_view) = panel.visible_conversation_view() {
+                CenterSurface::Conversation(conversation_view.clone())
+            } else if let Some(id) = panel.active_terminal_id()
+                && let Some(view) = panel.visible_terminal_view()
+            {
+                CenterSurface::Terminal {
+                    id,
+                    view: view.clone(),
+                }
+            } else {
+                CenterSurface::Empty
+            }
+        };
+
+        // This item is the only visible rendering position for the active
+        // conversation, so it selects the `Center` layout contract. The view
+        // keeps owning every piece of session state — only the presentation
+        // differs (plan §4.6.1).
+        if let Some(conversation_view) = next_surface.as_conversation() {
+            conversation_view.update(cx, |view, cx| {
+                view.set_surface(ConversationSurface::Center, cx);
+            });
         }
+
+        // A conversation this item is no longer presenting goes back to the dock
+        // contract, so it renders exactly as before wherever else it appears.
+        if let Some(previous) = self.surface.as_conversation()
+            && next_surface.as_conversation().map(|next| next.entity_id())
+                != Some(previous.entity_id())
+        {
+            previous.update(cx, |view, cx| {
+                view.set_surface(ConversationSurface::Dock, cx);
+            });
+        }
+
+        self.surface = next_surface;
     }
 }
 
@@ -157,6 +182,22 @@ pub(crate) fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &UseAiNativeLayout, window, cx| {
             use_ai_native_layout(workspace, window, cx);
+        });
+
+        workspace.register_action(|workspace, _: &OpenInCodeWorkspace, window, cx| {
+            // Ask first. The modal writes nothing, so backing out costs nothing.
+            workspace.toggle_modal(window, cx, |_, cx| ExitToCodeWorkspaceModal {
+                focus_handle: cx.focus_handle(),
+            });
+        });
+
+        workspace.register_action(|workspace, _: &ConfirmExitToCodeWorkspace, window, cx| {
+            workspace.hide_modal(window, cx);
+            leave_for_code_workspace(workspace, window, cx);
+        });
+
+        workspace.register_action(|workspace, _: &ReturnToAiNativeTask, window, cx| {
+            return_to_ai_native_task(workspace, window, cx);
         });
 
         // Focusing the agent panel has to reach the center surface while AI
@@ -226,6 +267,119 @@ fn use_ai_native_layout(
     window.focus(&item.read(cx).focus_handle(cx), cx);
 }
 
+/// Leaves AI Native for the Agentic code workspace.
+///
+/// Nothing about the task is torn down: `AgentPanel` keeps owning the thread,
+/// draft, queue and permissions across the layout change, so
+/// [`FocusAiNativeConversation`] brings the user back to the same conversation.
+///
+/// Asks before leaving AI Native for the code workspace.
+///
+/// Leaving is reversible — [`return_to_ai_native_task`] comes back to the same task
+/// — but the center pane changes shape, so the user is told what survives first.
+/// This view only asks: it writes nothing, so cancelling is a genuine no-op. The
+/// layout changes only once `ConfirmExitToCodeWorkspace` runs.
+struct ExitToCodeWorkspaceModal {
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for ExitToCodeWorkspaceModal {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for ExitToCodeWorkspaceModal {}
+
+impl ModalView for ExitToCodeWorkspaceModal {
+    fn fade_out_background(&self) -> bool {
+        false
+    }
+}
+
+impl Render for ExitToCodeWorkspaceModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        AlertModal::new("ai-native-exit-modal")
+            .width(rems(34.))
+            .key_context("AiNativeExitModal")
+            .on_action(
+                cx.listener(|_, _: &ConfirmExitToCodeWorkspace, window, cx| {
+                    window.dispatch_action(Box::new(ConfirmExitToCodeWorkspace), cx);
+                }),
+            )
+            .title("Open in Code Workspace")
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(Label::new(
+                        "Your task stays exactly as it is — the conversation, draft, queued \
+                         messages, scroll position and any code files you already have open \
+                         all come back when you return.",
+                    ))
+                    .child(
+                        Label::new("Opens the Agentic layout with its usual editor tabs.")
+                            .color(Color::Muted),
+                    ),
+            )
+            .footer(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .justify_end()
+                    .child(
+                        Button::new("ai-native-exit-cancel", "Cancel")
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                    )
+                    .child(
+                        Button::new("ai-native-exit-confirm", "Open in Code Workspace").on_click(
+                            cx.listener(|_, _, window, cx| {
+                                window.dispatch_action(Box::new(ConfirmExitToCodeWorkspace), cx);
+                            }),
+                        ),
+                    ),
+            )
+    }
+}
+
+/// Only the layout write is needed here. The settings observer runs
+/// `sync_ai_native_surface`, which restores the pane's normal tab-bar predicate on
+/// the way out — and because this is a real navigation rather than a silent state
+/// change, the user's existing code items come back untouched.
+fn leave_for_code_workspace(
+    _workspace: &mut Workspace,
+    _window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    // Mark the trip so the code workspace can offer `Return to task` — a user who
+    // switched layouts directly has no AI Native task to go back to.
+    workspace::set_ai_native_trip_active(true, cx);
+    let fs = <dyn fs::Fs>::global(cx);
+    drop(AgentSettings::set_layout(WindowLayout::Agent(None), fs, cx));
+}
+
+/// Returns from a code workspace trip to the same AI Native task.
+///
+/// The inverse of [`open_in_code_workspace`], and deliberately just as small: it
+/// writes the layout back and re-deploys the center surface. The task's thread,
+/// draft, queue, permissions and scroll position live in `AgentPanel`, which the
+/// outbound trip never tore down — so returning restores the user to exactly where
+/// they left, with no new session and no new conversation surface.
+fn return_to_ai_native_task(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    // The trip is over; the entry disappears until the user leaves again.
+    workspace::set_ai_native_trip_active(false, cx);
+    let fs = <dyn fs::Fs>::global(cx);
+    drop(AgentSettings::set_layout(
+        WindowLayout::AiNative(None),
+        fs,
+        cx,
+    ));
+    AiNativeConversationItem::deploy_in_workspace(workspace, window, cx);
+}
+
 fn open_threads_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) {
     let Some(multi_workspace) = workspace.multi_workspace().and_then(|weak| weak.upgrade()) else {
         return;
@@ -268,31 +422,19 @@ fn sync_ai_native_surface(
     }
 }
 
-/// Hides the pane tab bar while the AI Native conversation surface is the active
-/// item, and restores the standard behaviour when a normal code item is
-/// activated.
+/// Keeps the center pane's tab bar off for the whole AI Native layout, and
+/// restores the standard predicate for every other layout.
 ///
-/// The decision is made from the pane's active item rather than from the layout
-/// alone, so opening a file still shows a tab bar — the user keeps a normal
-/// editor workflow and a way back to the task.
+/// The decision comes from the layout alone, not from the pane's active item.
+/// AI Native presents one conversation as the only center content, so activating
+/// a code item must not bring a tab row back — leaving the layout is what restores
+/// the pane's normal predicate and the user's existing items.
 pub(crate) fn sync_center_tab_bar(panes: Vec<Entity<Pane>>, cx: &mut App) {
     let ai_native = matches!(AgentSettings::get_layout(cx), WindowLayout::AiNative(_));
 
-    let decisions: Vec<(Entity<Pane>, bool)> = panes
-        .into_iter()
-        .map(|pane| {
-            let hide = ai_native
-                && pane
-                    .read(cx)
-                    .active_item()
-                    .is_some_and(|item| item.act_as::<AiNativeConversationItem>(cx).is_some());
-            (pane, hide)
-        })
-        .collect();
-
-    for (pane, hide) in decisions {
+    for pane in panes {
         pane.update(cx, |pane, cx| {
-            if hide {
+            if ai_native {
                 pane.set_should_display_tab_bar(|_, _| false);
             } else {
                 pane.set_should_display_tab_bar(|_, cx| TabBarSettings::get_global(cx).show);
@@ -310,9 +452,9 @@ impl Focusable for AiNativeConversationItem {
         // user expects, and so `AgentPanel`'s activation focus stays consistent.
         match &self.surface {
             CenterSurface::Conversation(conversation_view) => {
-                conversation_view.read(cx).focus_handle(cx).clone()
+                conversation_view.read(cx).focus_handle(cx)
             }
-            CenterSurface::Terminal { view, .. } => view.read(cx).focus_handle(cx).clone(),
+            CenterSurface::Terminal { view, .. } => view.read(cx).focus_handle(cx),
             CenterSurface::Empty => self.focus_handle.clone(),
         }
     }
@@ -322,11 +464,9 @@ impl Render for AiNativeConversationItem {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content: AnyElement = match self.surface.clone() {
             CenterSurface::Empty => self.render_empty_state(cx).into_any_element(),
-            CenterSurface::Conversation(conversation_view) => v_flex()
-                .size_full()
-                .child(self.render_task_header(cx))
-                .child(conversation_view)
-                .into_any_element(),
+            // The conversation draws its own task header under the `Center`
+            // contract, so stacking a second one here would double the identity.
+            CenterSurface::Conversation(conversation_view) => conversation_view.into_any_element(),
             CenterSurface::Terminal { id, view } => v_flex()
                 .size_full()
                 .child(self.render_terminal_header(id, cx))
@@ -339,62 +479,6 @@ impl Render for AiNativeConversationItem {
 }
 
 impl AiNativeConversationItem {
-    /// Single-line task header: thread title, agent and the current status.
-    ///
-    /// The thread title editor is owned by the thread view (the agent panel only
-    /// renders it), so it is re-hosted here to keep the task identity visible
-    /// while the dock-hosted panel stays closed.
-    ///
-    /// Session mode and model/reasoning controls are deliberately **not**
-    /// duplicated here: the reused `ThreadView` composer already renders them in
-    /// its status row, gated on what the ACP session actually declares (config
-    /// options when present, otherwise the mode selector). v1.17.0 §5 allows
-    /// either the header or the composer status layer, and rendering the same
-    /// entity twice is exactly what §4.5 forbids.
-    fn render_task_header(&self, cx: &mut Context<Self>) -> Div {
-        let identity = self
-            .surface
-            .as_conversation()
-            .and_then(|conversation_view| {
-                let conversation_view = conversation_view.read(cx);
-                conversation_view.active_thread().map(|thread_view| {
-                    let thread_view = thread_view.read(cx);
-                    let title_editor = thread_view.title_editor.clone();
-                    let agent = thread_view.agent_display_name.clone();
-                    let status = thread_view.thread.read(cx).status();
-                    (title_editor, agent, status)
-                })
-            });
-
-        let mut header = h_flex()
-            .h_8()
-            .px_2()
-            .gap_2()
-            .items_center()
-            .justify_between();
-
-        if let Some((title_editor, agent, status)) = identity {
-            let status_label = match status {
-                ThreadStatus::Idle => "Idle",
-                ThreadStatus::Generating => "Running",
-            };
-            header = header.child(title_editor).child(
-                h_flex()
-                    .flex_shrink_0()
-                    .gap_2()
-                    .items_center()
-                    .child(Label::new(agent).size(LabelSize::Small).color(Color::Muted))
-                    .child(
-                        Label::new(status_label)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            );
-        }
-
-        header
-    }
-
     /// Terminal threads keep their own identity instead of being dressed up as
     /// a conversation: icon, real terminal title, and an explicit label.
     fn render_terminal_header(&self, id: TerminalId, cx: &mut Context<Self>) -> Div {
@@ -437,7 +521,7 @@ impl AiNativeConversationItem {
     ///
     /// AI Native is a conversation-first layout, so the empty state still shows
     /// the way in — but it must not start an agent on the user's behalf.
-    fn render_empty_state(&self, _cx: &mut Context<Self>) -> Div {
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> Div {
         v_flex()
             .size_full()
             .items_center()
@@ -453,14 +537,37 @@ impl AiNativeConversationItem {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
-            .child(
-                Button::new("ai-native-new-thread", "New Thread")
+            .child(self.render_new_conversation_chooser(cx))
+    }
+
+    /// The AI Native entry point for a new conversation.
+    ///
+    /// A chooser rather than a direct `NewThread`: the plan makes the agent type an
+    /// explicit first step, and the options come from the same `NewThreadChoice`
+    /// model the AgentPanel toolbar renders, so the two entry points cannot
+    /// disagree about which agents exist or what they are called.
+    fn render_new_conversation_chooser(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace = self.panel.as_ref().map(|panel| panel.read(cx).workspace());
+        let focus_handle = cx.focus_handle();
+
+        PopoverMenu::new("ai-native-new-conversation")
+            .trigger(
+                Button::new("ai-native-new-conversation", "New conversation")
                     .style(ButtonStyle::Outlined)
-                    .label_size(LabelSize::Small)
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(NewThread), cx);
-                    }),
+                    .label_size(LabelSize::Small),
             )
+            .anchor(Anchor::TopLeft)
+            .menu({
+                move |window, cx| {
+                    Some(crate::agent_panel::build_agent_choice_menu(
+                        workspace.as_ref(),
+                        false,
+                        focus_handle.clone(),
+                        window,
+                        cx,
+                    ))
+                }
+            })
     }
 }
 

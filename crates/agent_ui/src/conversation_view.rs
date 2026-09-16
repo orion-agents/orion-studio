@@ -601,6 +601,36 @@ pub enum AcpServerViewEvent {
 
 impl EventEmitter<AcpServerViewEvent> for ConversationView {}
 
+/// Which rendering contract a [`ConversationView`] is presenting under.
+///
+/// This is a read-only render input: it is never persisted, never enters thread
+/// state, and never changes how a session is driven. It only selects the layout
+/// contract used when drawing the conversation.
+///
+/// [`ConversationSurface::Dock`] is the long-standing panel presentation and
+/// must keep behaving exactly as before. [`ConversationSurface::Center`] is the
+/// conversation-first presentation used by the AI Native workspace, where the
+/// conversation owns a bounded, centered reading column rather than filling its
+/// container.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConversationSurface {
+    #[default]
+    Dock,
+    Center,
+}
+
+impl ConversationSurface {
+    pub fn is_center(self) -> bool {
+        matches!(self, Self::Center)
+    }
+}
+
+/// Cap on the conversation reading column in [`ConversationSurface::Center`].
+///
+/// A cap only — the column still shrinks with the window. Filling the container
+/// does not satisfy the contract.
+pub const CENTER_READING_COLUMN_WIDTH: f32 = 780.0;
+
 pub struct ConversationView {
     agent: Rc<dyn AgentServer>,
     connection_store: Entity<AgentConnectionStore>,
@@ -625,10 +655,122 @@ pub struct ConversationView {
     /// Shared with the child [`ThreadView`] when one is constructed.
     pub(crate) code_span_resolver: AgentCodeSpanResolver,
     request_elicitation_form_states: HashMap<ElicitationEntryId, ElicitationFormState>,
+    /// Rendering contract selected by the host surface. See [`ConversationSurface`].
+    surface: ConversationSurface,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ConversationView {
+    /// The rendering contract this conversation is currently presenting under.
+    pub fn surface(&self) -> ConversationSurface {
+        self.surface
+    }
+
+    /// Selects the rendering contract used when drawing this conversation.
+    ///
+    /// `Dock` and `Center` share all state, subscriptions, actions and session
+    /// control flow — only the layout contract differs. Setting the value it
+    /// already has is a no-op.
+    pub fn set_surface(&mut self, surface: ConversationSurface, cx: &mut Context<Self>) {
+        if self.surface == surface {
+            return;
+        }
+        self.surface = surface;
+        cx.notify();
+    }
+
+    /// Single-line task identity, rendered by the conversation area itself.
+    ///
+    /// Only the `Center` contract draws this. Under `Dock` the panel's own chrome
+    /// already carries the task identity, and stacking a second header on top of
+    /// the conversation is what §4.6.2 rules out — so the dock path is untouched.
+    ///
+    /// Session mode and model/reasoning controls are deliberately **not**
+    /// duplicated here: the reused `ThreadView` composer already renders them in
+    /// its status row, gated on what the ACP session actually declares (config
+    /// options when present, otherwise the mode selector). v1.17.0 §5 allows
+    /// either the header or the composer status layer, and rendering the same
+    /// entity twice is exactly what §4.5 forbids.
+    fn render_task_header(&self, cx: &mut Context<Self>) -> Div {
+        let header = h_flex()
+            .flex_shrink_0()
+            .h_8()
+            .px_3()
+            .gap_2()
+            .items_center()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border);
+
+        let Some(thread_view) = self.active_thread() else {
+            return header;
+        };
+
+        let thread_view = thread_view.read(cx);
+        let title_editor = thread_view.title_editor.clone();
+        let agent = thread_view.agent_display_name.clone();
+        let status_label = match thread_view.thread.read(cx).status() {
+            ThreadStatus::Idle => "Idle",
+            ThreadStatus::Generating => "Running",
+        };
+
+        // An empty thread is still a draft: the plan lets the user re-open the agent
+        // chooser until the first send, because the agent is what the draft binds to.
+        // Once messages exist the agent is the session's identity — changing it would
+        // mean starting a new session, so the badge stops being interactive and says
+        // so instead of silently switching the thread's backend.
+        let is_draft = thread_view.thread.read(cx).entries().is_empty();
+        let agent_control: AnyElement = if is_draft {
+            let workspace = self.workspace.clone();
+            let focus_handle = cx.focus_handle();
+            PopoverMenu::new("ai-native-task-agent-badge")
+                .trigger(
+                    Button::new("ai-native-task-agent", agent)
+                        .style(ButtonStyle::Subtle)
+                        .label_size(LabelSize::Small),
+                )
+                .anchor(gpui::Anchor::BottomLeft)
+                .menu(move |window, cx| {
+                    Some(crate::agent_panel::build_agent_choice_menu(
+                        Some(&workspace),
+                        false,
+                        focus_handle.clone(),
+                        window,
+                        cx,
+                    ))
+                })
+                .into_any_element()
+        } else {
+            Button::new("ai-native-task-agent", agent)
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .disabled(true)
+                .tooltip(|_window, cx| {
+                    Tooltip::with_meta(
+                        "Agent",
+                        None,
+                        "This task's agent is fixed. Start a new conversation to use a \
+                         different agent.",
+                        cx,
+                    )
+                })
+                .into_any_element()
+        };
+
+        header.child(title_editor).child(
+            h_flex()
+                .flex_shrink_0()
+                .gap_2()
+                .items_center()
+                .child(agent_control)
+                .child(
+                    Label::new(status_label)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+        )
+    }
+
     pub fn has_auth_methods(&self) -> bool {
         self.as_connected().map_or(false, |connected| {
             !connected.connection.auth_methods().is_empty()
@@ -902,6 +1044,7 @@ impl ConversationView {
             draft_prompt_persist_task: None,
             code_span_resolver,
             request_elicitation_form_states: HashMap::default(),
+            surface: ConversationSurface::default(),
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -3459,11 +3602,48 @@ impl Render for ConversationView {
             }
         };
 
+        // `Center` renders a full-width task header above a bounded, centered
+        // reading column; `Dock` keeps filling its container exactly as before.
+        let body = if self.surface.is_center() {
+            v_flex()
+                .flex_1()
+                .min_h_0()
+                .child(self.render_task_header(cx))
+                .child(
+                    v_flex()
+                        .id("conversation-body")
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .items_center()
+                        .debug_selector(|| "conversation-body".to_string())
+                        .child(
+                            div()
+                                .id("ai-native-reading-column")
+                                .flex_1()
+                                .min_h_0()
+                                .w_full()
+                                .max_w(px(CENTER_READING_COLUMN_WIDTH))
+                                .debug_selector(|| "ai-native-reading-column".to_string())
+                                .child(content),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            v_flex()
+                .id("conversation-body")
+                .flex_1()
+                .min_h_0()
+                .debug_selector(|| "conversation-body".to_string())
+                .child(content)
+                .into_any_element()
+        };
+
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().panel_background)
-            .child(v_flex().flex_1().min_h_0().child(content))
+            .child(body)
             .when(!active_thread_renders_request_elicitations, |this| {
                 this.children(request_elicitation_connection.as_ref().map_or_else(
                     Vec::new,
@@ -3762,6 +3942,42 @@ pub(crate) mod tests {
         let weak_view = conversation_view.downgrade();
         drop(conversation_view);
         assert!(!weak_view.is_upgradable());
+    }
+
+    /// A conversation renders under the dock contract until a host surface
+    /// explicitly selects otherwise. This is what makes the dock path zero-risk:
+    /// nothing changes for the agent panel.
+    #[gpui::test]
+    async fn test_conversation_surface_defaults_to_dock(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+
+        assert_eq!(
+            conversation_view.read_with(cx, |view, _cx| view.surface()),
+            ConversationSurface::Dock,
+        );
+    }
+
+    /// The reading-column contract is asserted at the workspace level, where the
+    /// conversation is actually rendered into a pane — see
+    /// `task_environment::tests::test_center_surface_presents_a_bounded_centered_reading_column`.
+    #[gpui::test]
+    async fn test_setting_the_same_surface_is_a_noop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+
+        conversation_view.update(cx, |view, cx| {
+            view.set_surface(ConversationSurface::Dock, cx);
+        });
+
+        assert_eq!(
+            conversation_view.read_with(cx, |view, _cx| view.surface()),
+            ConversationSurface::Dock,
+        );
     }
 
     #[gpui::test]

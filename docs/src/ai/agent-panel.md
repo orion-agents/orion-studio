@@ -10,6 +10,42 @@ It's the core of Orion Studio's AI code editing experience — use it for code g
 
 Open it with {#action agent::NewThread} from [the Command Palette](../command-palette.md) or click the ✨ icon in the status bar.
 
+## AI Native Layout {#ai-native}
+
+Orion Studio ships three panel layouts, switchable from **Panel Layout** in the user menu:
+
+- **Classic** — editor-first. Panels sit on the left, the Agent Panel opens on the right.
+- **Agentic** — the Agent Panel and Threads Sidebar share the left side.
+- **AI Native** — conversation-first. The Threads Sidebar moves to the left, the current task's conversation is the center of the window, and a tab-free **Task Environment** panel docks on the right.
+
+AI Native (or the {#action workspace::UseAiNativeLayout} action) is for work where the thread *is* the task. The Agent Panel keeps owning your threads, its ACP session, and message persistence, but it stands down from the dock so the same conversation is rendered in the center pane — there is only ever one live conversation surface on screen. If you trigger an action that would normally focus the Agent Panel, focus goes to the center conversation instead.
+
+The center surface follows whatever the current thread is. Agent threads show the conversation, plan, tool activity, approvals, and the Composer; a [Terminal Thread](./terminal-threads.md) shows its terminal, labelled as a terminal rather than presented as a conversation.
+
+New conversations start by choosing the agent: the **New conversation** entry, the empty state's button, and the task header's agent badge all open the same chooser, which lists the native agent, your configured external agents, and a terminal — plus **Manage agents…** for the ACP registry. A one-off pick here does not change the panel's remembered agent, and once a thread has messages its agent is fixed: start a new conversation to use a different one.
+
+### Task Environment {#task-environment}
+
+The right dock holds a single, tab-free **Task Environment** panel. It shows the facts for the current task only, as expandable rows — there are no tabs, and no second IDE inside it:
+
+| Row | Shows |
+| --- | --- |
+| **Changes** | Files the current task touched, with an `A`/`M`/`D` status and `+/-` line counts. Selecting a file previews its diff **in place**, on the right. |
+| **Local worktree** | The worktree the task is bound to. Hidden when no project is open. |
+| **Branch** | The branch, its upstream, and ahead/behind counts. Hidden when the project has no Git repository. |
+| **Commit or push** | The branch/upstream summary and how many task changes a commit would include, with an **Open Git in Code Workspace** action. Committing itself stays in the code workspace. |
+| **Plan** | The plan the agent published, with completed and total steps. Hidden until the agent publishes one. |
+| **Subagents** | Subagent sessions this task spawned, with each one's status. Hidden when there are none. |
+| **Sources** | The context attached to this task's Composer. Adding or removing context stays a Composer action. |
+
+Rows without real data are hidden rather than shown empty: the panel never invents a branch, a plan, or a count.
+
+### Code on demand {#code-on-demand}
+
+Selecting a file under **Changes** previews its diff on the right; it never opens an editor and never brings a tab bar back. Full editing, Git history, and hunk review are an explicit trip: **Open review in Code Workspace** asks first — your conversation, draft, queued messages, scroll position, and open files all survive the trip — and then opens the usual Agentic layout. **Return to task** (in the title bar's layout menu, or the panel's **Back to task** button) brings you back to the *same* task.
+
+AI Native obeys the same capability rules as the rest of the Agent Panel: session modes and model or reasoning configuration only appear when the connected agent declares them, and permission prompts and questions use the options the agent actually offered.
+
 ## Getting Started {#getting-started}
 
 If you're using the Agent Panel for the first time, configure either a model for the [Orion Studio Agent](./zed-agent.md) or an [External Agent](./external-agents.md).

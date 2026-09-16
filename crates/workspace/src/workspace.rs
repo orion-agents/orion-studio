@@ -495,8 +495,56 @@ actions!(
         /// than an agent action, so the docs and command palette reference it as
         /// `workspace::FocusAiNativeConversation`.
         FocusAiNativeConversation,
+        /// Leaves the AI Native workbench for the code workspace.
+        ///
+        /// The only sanctioned route from an AI Native file / review affordance to
+        /// an editor: previews stay in the right-hand environment panel, and full
+        /// editing or review is an explicit, reversible navigation rather than
+        /// something that silently replaces the conversation.
+        ///
+        /// The fallback layout is a product decision recorded in the v2 plan
+        /// (Phase 0-4): **Agentic**. `FocusAiNativeConversation` is the return path
+        /// and restores the same task, thread and draft.
+        OpenInCodeWorkspace,
+        /// Returns from a code workspace trip back to the AI Native task.
+        ///
+        /// The counterpart to `OpenInCodeWorkspace`: it restores the AI Native
+        /// layout and re-focuses the *same* task, so leaving and coming back never
+        /// costs the user their thread, draft, queue or scroll position.
+        ReturnToAiNativeTask,
+        /// Runs the trip to the code workspace after the user has been told what
+        /// survives it.
+        ///
+        /// Split from `OpenInCodeWorkspace` so the confirmation layer can be pure UI:
+        /// it never writes the layout itself, which is what makes cancelling a no-op.
+        ConfirmExitToCodeWorkspace,
     ]
 );
+
+/// Tracks whether the current code workspace was reached **from an AI Native trip**.
+///
+/// `Return to task` is only meaningful when there is an AI Native task to return to:
+/// a user who switched to Agentic directly never had one, so the title bar shows the
+/// entry only while this is set. It is transient by design — it is never persisted,
+/// and it is cleared the moment the user returns.
+#[derive(Default, Debug)]
+pub struct AiNativeTripActive(pub bool);
+
+impl Global for AiNativeTripActive {}
+
+/// Sets whether an AI Native trip is in progress.
+pub fn set_ai_native_trip_active(active: bool, cx: &mut App) {
+    cx.set_global(AiNativeTripActive(active));
+}
+
+/// Whether the current code workspace was reached from an AI Native trip.
+///
+/// Unset behaves the same as `false`, so callers do not have to initialise it.
+pub fn ai_native_trip_active(cx: &App) -> bool {
+    cx.try_global::<AiNativeTripActive>()
+        .map(|trip| trip.0)
+        .unwrap_or(false)
+}
 
 actions!(
     project_symbols,
