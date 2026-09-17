@@ -1,7 +1,7 @@
-# Install the macOS Apple Silicon Preview
+# Install Orion Studio on macOS Apple Silicon
 
-Orion Studio is currently distributed as a **Preview** for **macOS 11.0 or
-later on Apple Silicon (arm64)** only. Download it from
+Stable Orion Studio is distributed for **macOS 11.0 or later on Apple Silicon
+(arm64)** only. Download it from
 [GitHub Releases](https://github.com/orion-agents/orion-studio/releases); no
 other download site or package manager is supported.
 
@@ -11,14 +11,15 @@ Confirm that:
 
 - the Mac uses Apple Silicon;
 - the Mac runs macOS 11.0 or later;
-- the GitHub release is marked **Pre-release**;
+- the GitHub release has an exact Stable version tag such as `v1.17.0` and is
+  not marked **Pre-release**;
 - the release contains `Orion-Studio-aarch64.dmg` and publishes its SHA-256
   digest; and
 - you have read the release entry and the
-  [known limitations](./releases/preview-macos-arm64.md#known-limitations).
+  [release policy](./releases/release-policy.md).
 
 Do not install an Intel, Linux, Windows, unsigned, locally shared, or
-third-party-mirrored artifact as though it were the supported Preview.
+third-party-mirrored artifact as though it were the supported Stable release.
 
 ## Back Up Before First Launch
 
@@ -46,7 +47,7 @@ database and reports the conflict instead of choosing either copy.
 
 ## Download and Verify SHA-256
 
-Download `Orion-Studio-aarch64.dmg` from the selected GitHub Pre-release. In
+Download `Orion-Studio-aarch64.dmg` from the selected GitHub Stable release. In
 Terminal, calculate its digest:
 
 ```sh
@@ -61,25 +62,27 @@ the release omits a digest or if the values differ.
 ## Install and Verify Gatekeeper
 
 1. Open `Orion-Studio-aarch64.dmg`.
-2. Drag **Orion Studio Preview.app** into **Applications**.
+2. Drag **Orion Studio.app** into **Applications**.
 3. Eject the disk image.
 4. Before first launch, run:
 
 ```sh
-codesign --verify --deep --strict --verbose=2 "/Applications/Orion Studio Preview.app"
-spctl --assess --type execute --verbose=4 "/Applications/Orion Studio Preview.app"
-file "/Applications/Orion Studio Preview.app/Contents/MacOS/orion-studio"
+codesign --verify --deep --strict --verbose=2 "/Applications/Orion Studio.app"
+spctl --assess --type execute --verbose=4 "/Applications/Orion Studio.app"
+stapler validate "/Applications/Orion Studio.app"
+file "/Applications/Orion Studio.app/Contents/MacOS/orion-studio"
 ```
 
 `codesign` must complete successfully, `spctl` must report that the app is
-accepted, and `file` must identify an `arm64` executable. If any check fails,
+accepted, `stapler` must validate the ticket, and `file` must identify an
+`arm64` executable. If any check fails,
 do not bypass Gatekeeper, remove quarantine attributes, or force the app open.
 Delete the app and DMG, then report the release URL and command output through
 the [support process](../SUPPORT.md).
 
 ## First Launch and Migration
 
-Open **Orion Studio Preview** from Applications. If legacy Zed data is present,
+Open **Orion Studio** from Applications. If legacy Zed data is present,
 migration completes before Orion Studio initializes persistence or displays the
 first workspace. Keep the Mac awake and avoid launching additional Orion Studio
 or Zed processes while it runs.
@@ -96,7 +99,7 @@ If the first window does not appear or a migration error is shown:
 2. Check `~/Library/Logs/Orion Studio/Orion Studio.log` for startup or migration
    errors.
 3. Confirm that the Zed backup remains readable.
-4. File an issue with the Preview tag, macOS version, Apple chip model, relevant
+4. File an issue with the release tag, macOS version, Apple chip model, relevant
    redacted log lines, and whether Zed was running.
 
 Never attach source code, credentials, access tokens, private project names, or
@@ -104,14 +107,14 @@ an entire unredacted log to a public issue.
 
 ## Updating
 
-Automatic updates are not supported in this Preview. For each update, download
-the newer Pre-release from GitHub Releases, verify its new SHA-256 digest and
+Automatic updates are not supported. For each update, download the newer Stable
+release from GitHub Releases, verify its new SHA-256 digest and
 Gatekeeper status, quit Orion Studio, and replace the app in Applications.
 
 ## Uninstalling
 
-1. Quit Orion Studio Preview.
-2. Move **Orion Studio Preview.app** from Applications to the Trash.
+1. Quit Orion Studio.
+2. Move **Orion Studio.app** from Applications to the Trash.
 3. Empty the Trash only when recovery is no longer needed.
 
 Removing the app does not remove user data. To remove Orion Studio data as a
@@ -130,6 +133,6 @@ the separately installed upstream application.
 ## Getting Help
 
 Use [GitHub Issues](https://github.com/orion-agents/orion-studio/issues/new/choose)
-for reproducible, non-sensitive Preview problems. Follow
+for reproducible, non-sensitive release problems. Follow
 [SECURITY.md](../SECURITY.md) for vulnerabilities or sensitive reports. GitHub
 Discussions is not required or assumed to be enabled.

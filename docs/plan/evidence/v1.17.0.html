@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orion Studio v1.17.0 — AI Native 交互稿（REVISION 3）</title>
+<style>
+  :root {
+    --bg: #191919;
+    --bg-panel: #1d1d1d;
+    --bg-elev: #232323;
+    --bg-hover: #2a2a2a;
+    --border: #2e2e2e;
+    --border-strong: #3a3a3a;
+    --text: #e6e6e6;
+    --text-dim: #9b9b9b;
+    --text-faint: #6e6e6e;
+    --accent: #6f66e6;
+    --accent-hover: #837bf0;
+    --accent-soft: rgba(111,102,230,.16);
+    --green: #46b45c;
+    --amber: #d29922;
+    --red: #e05252;
+    --add-bg: rgba(70,180,92,.14);
+    --del-bg: rgba(224,82,82,.12);
+    --reading: 780px;
+    --r-sm: 5px;
+    --r-md: 8px;
+    --r-lg: 12px;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    min-height: 100dvh;
+    background: #101010;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- 验收对照条（非产品 UI） ---------- */
+  .harness {
+    background: #0c0c0c;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 18px;
+    font-size: 12px;
+  }
+  .harness-label {
+    color: var(--text-faint);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    font-size: 11px;
+  }
+  .seg {
+    display: inline-flex;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+  }
+  .seg button {
+    background: transparent;
+    border: 0;
+    color: var(--text-dim);
+    font: inherit;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .seg button:hover { background: var(--bg-hover); color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .harness input[type="range"] { width: 150px; accent-color: var(--accent); }
+  .readout { display: flex; flex-wrap: wrap; gap: 14px; font-family: var(--mono); font-size: 11px; }
+  .readout b { font-weight: 500; color: var(--text); }
+  .verdict-ok { color: var(--green); }
+  .verdict-bad { color: var(--amber); }
+  .harness .ghost {
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    color: var(--text-dim);
+    font: inherit;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .harness .ghost:hover { background: var(--bg-hover); color: var(--text); }
+  .harness .ghost[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-hover); }
+
+  /* ---------- 应用外壳：CSS Grid，非百分比计算 ---------- */
+  .stage { padding: 0; display: flex; justify-content: center; }
+  .app {
+    width: 1280px;
+    max-width: 100%;
+    height: 760px;
+    display: grid;
+    grid-template-columns: 16% 1fr 18%;
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  /* ---------- 左侧：Threads ---------- */
+  .threads { background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
+  .threads-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 12px 10px;
+  }
+  .threads-title { font-size: 12px; font-weight: 500; color: var(--text-dim); letter-spacing: .03em; }
+  .icon-btn {
+    background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
+    width: 22px; height: 22px; border-radius: var(--r-sm);
+    display: grid; place-items: center;
+    transition: background .15s, color .15s;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+  .thread-list { overflow-y: auto; padding: 0 6px 12px; }
+  .thread {
+    display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start;
+    padding: 8px 8px; border-radius: var(--r-md); cursor: pointer;
+    transition: background .15s;
+  }
+  .thread:hover { background: var(--bg-hover); }
+  .thread[aria-selected="true"] { background: var(--accent-soft); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; background: var(--text-faint); }
+  .dot.working { background: var(--green); }
+  .dot.plan { background: #5b8dd6; }
+  .dot.waiting { background: var(--amber); }
+  .thread-name { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thread[aria-selected="true"] .thread-name { font-weight: 500; }
+  .thread-meta { font-size: 11px; color: var(--text-faint); margin-top: 1px; }
+  .thread-sub { display: flex; align-items: center; gap: 6px; }
+
+  /* ---------- 中央：Conversation ---------- */
+  .center { display: flex; flex-direction: column; min-width: 0; background: var(--bg); position: relative; }
+
+  /* 任务身份：由对话区自身渲染，不是外层叠加 */
+  .task-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px; border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+  }
+  .task-id { min-width: 0; }
+  .task-title { font-size: 14px; font-weight: 500; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task-status { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+  .task-status .dot { margin-top: 0; }
+  .task-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--accent-soft); border: 1px solid rgba(111,102,230,.35);
+    color: #b7b1f5; border-radius: var(--r-sm);
+    font-size: 12px; padding: 4px 9px; cursor: pointer;
+    transition: background .15s;
+  }
+  .pill:hover { background: rgba(111,102,230,.26); }
+
+  .timeline { flex: 1 1 auto; overflow-y: auto; padding: 20px 0 24px; }
+
+  /* 阅读列：有上限的居中列。这是本次修订的核心契约 */
+  .reading {
+    width: 100%;
+    max-width: var(--reading);
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+  .app[data-surface="dock"] .reading { max-width: none; }
+
+  .col-rule {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    width: var(--reading); max-width: 100%;
+    height: 100%; pointer-events: none;
+    border-left: 1px dashed rgba(111,102,230,.22);
+    border-right: 1px dashed rgba(111,102,230,.22);
+    opacity: 0; transition: opacity .2s;
+  }
+  .app[data-guides="on"] .col-rule { opacity: 1; }
+
+  .msg { display: grid; grid-template-columns: 26px 1fr; gap: 12px; margin-bottom: 20px; }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 500; color: #fff;
+    flex: 0 0 auto;
+  }
+  .avatar.you { background: #3d4650; }
+  .avatar.orion { background: var(--accent); }
+  .msg-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .msg-author { font-size: 12.5px; font-weight: 500; }
+  .msg-time { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+  .msg-body { color: #d6d6d6; }
+  .msg-body p + p { margin-top: 8px; }
+
+  /* 工具过程：可折叠任务卡片，时间线一等元素 */
+  .card {
+    border: 1px solid var(--border-strong);
+    background: var(--bg-panel);
+    border-radius: var(--r-lg);
+    margin-top: 12px;
+    overflow: hidden;
+  }
+  .card-head {
+    display: flex; align-items: center; gap: 9px;
+    padding: 10px 13px; cursor: pointer; user-select: none;
+    transition: background .15s;
+  }
+  .card-head:hover { background: var(--bg-hover); }
+  .card-title { font-size: 12.5px; color: var(--text); }
+  .card-toggle { margin-left: auto; font-size: 11.5px; color: var(--text-faint); display: flex; align-items: center; gap: 4px; }
+  .chev { transition: transform .18s cubic-bezier(.16,1,.3,1); }
+  .card[data-open="false"] .chev { transform: rotate(-90deg); }
+  .card-body { padding: 2px 13px 12px 13px; }
+  .card[data-open="false"] .card-body { display: none; }
+  .step { display: grid; grid-template-columns: 16px 1fr; gap: 9px; align-items: start; padding: 4px 0; font-size: 12.5px; }
+  .step.done { color: var(--text-dim); }
+  .step .mark { width: 14px; height: 14px; margin-top: 3px; display: grid; place-items: center; }
+  .ring { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--text-faint); }
+  .ring.active { border-color: var(--accent); border-right-color: transparent; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 权限审批：独立卡片 */
+  .perm { border-color: rgba(210,153,34,.42); background: #221f18; }
+  .perm-head {
+    display: flex; align-items: flex-start; gap: 9px;
+    padding: 11px 13px 9px;
+  }
+  .perm-title { font-size: 12.5px; font-weight: 500; color: #e8c56a; }
+  .perm-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .cmd {
+    font-family: var(--mono); font-size: 12px; color: #cfcfcf;
+    background: #141414; border: 1px solid var(--border);
+    border-radius: var(--r-sm); padding: 8px 10px; margin: 0 13px 11px;
+  }
+  .perm-actions { display: flex; gap: 8px; padding: 0 13px 13px; }
+  .btn {
+    font: inherit; font-size: 12.5px; border-radius: var(--r-sm);
+    padding: 5px 13px; cursor: pointer; border: 1px solid transparent;
+    transition: background .15s, border-color .15s, transform .06s;
+  }
+  .btn:active { transform: scale(.98); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-ghost { background: transparent; border-color: var(--border-strong); color: var(--text); }
+  .btn-ghost:hover { background: var(--bg-hover); }
+
+  .tool-collapsed {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 11px; margin-top: 10px;
+    border: 1px solid var(--border); border-radius: var(--r-md);
+    font-size: 12px; color: var(--text-dim); cursor: pointer;
+    transition: background .15s;
+  }
+  .tool-collapsed:hover { background: var(--bg-hover); }
+  .tool-collapsed .meta { margin-left: auto; font-size: 11px; color: var(--text-faint); font-family: var(--mono); }
+
+  /* Composer：固定底部，对齐阅读列 */
+  .composer-wrap {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--border);
+    padding: 12px 0 14px;
+    background: var(--bg);
+  }
+  .composer {
+    display: flex; align-items: flex-end; gap: 9px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+    background: var(--bg-elev); padding: 9px 11px;
+  }
+  .composer textarea {
+    flex: 1 1 auto; background: transparent; border: 0; outline: none; resize: none;
+    color: var(--text); font: inherit; line-height: 1.5;
+    max-height: 96px; padding: 2px 0;
+  }
+  .composer textarea::placeholder { color: var(--text-faint); }
+  .send {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); border: 0; color: #fff;
+    display: grid; place-items: center; cursor: pointer; flex: 0 0 auto;
+    transition: background .15s;
+  }
+  .send:hover { background: var(--accent-hover); }
+  .send:disabled { background: var(--bg-hover); color: var(--text-faint); cursor: default; }
+
+  /* 空状态 */
+  .empty { display: none; flex: 1 1 auto; place-items: center; }
+  .app[data-empty="on"] .empty { display: grid; }
+  .app[data-empty="on"] .timeline,
+  .app[data-empty="on"] .composer-wrap { display: none; }
+  .empty-inner { text-align: center; max-width: 320px; }
+  .empty-inner h3 { font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+  .empty-inner p { font-size: 12.5px; color: var(--text-dim); margin-bottom: 16px; }
+
+  /* ---------- 右侧：Task Inspector ---------- */
+  .inspector { background: var(--bg-panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .tab {
+    flex: 1 1 0; background: transparent; border: 0; border-bottom: 2px solid transparent;
+    color: var(--text-dim); font: inherit; font-size: 12.5px;
+    padding: 11px 4px; cursor: pointer;
+    transition: color .15s, border-color .15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .insp-body { flex: 1 1 auto; overflow-y: auto; }
+  .pane { display: none; padding: 13px 12px; }
+  .pane[data-active="true"] { display: block; }
+  .pane-head { font-size: 11.5px; color: var(--text-faint); margin-bottom: 9px; letter-spacing: .03em; }
+
+  .file-row {
+    display: grid; grid-template-columns: 15px 1fr auto; gap: 8px; align-items: center;
+    padding: 6px 4px; border-radius: var(--r-sm); cursor: pointer;
+    transition: background .15s;
+  }
+  .file-row:hover { background: var(--bg-hover); }
+  .file-row .path { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-row .delta { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .delta .add { color: var(--green); }
+  .delta .del { color: var(--red); }
+  .badge-a { color: var(--green); }
+  .badge-m { color: var(--amber); }
+
+  .tree { font-size: 12px; }
+  .tree-row {
+    display: grid; grid-template-columns: 15px 1fr; gap: 7px; align-items: center;
+    padding: 4px 4px; border-radius: var(--r-sm); cursor: pointer;
+  }
+  .tree-row:hover { background: var(--bg-hover); }
+  .tree-row[data-depth="1"] { padding-left: 18px; }
+  .tree-row[data-depth="2"] { padding-left: 32px; }
+
+  .diff {
+    margin-top: 14px; border: 1px solid var(--border); border-radius: var(--r-md);
+    overflow: hidden; font-family: var(--mono); font-size: 11.5px;
+  }
+  .diff-head { padding: 6px 9px; background: #171717; color: var(--text-dim); border-bottom: 1px solid var(--border); font-family: var(--font); font-size: 11.5px; }
+  .diff-line { display: grid; grid-template-columns: 26px 26px 1fr; gap: 0; white-space: pre; }
+  .diff-line .ln { color: var(--text-faint); text-align: right; padding: 1px 6px; }
+  .diff-line .code { padding: 1px 8px; overflow-x: auto; }
+  .diff-line.add { background: var(--add-bg); }
+  .diff-line.del { background: var(--del-bg); }
+  .insp-foot { padding: 12px; border-top: 1px solid var(--border); }
+  .insp-foot .btn { width: 100%; text-align: center; }
+
+  .review-stat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .stat { background: var(--bg-elev); border-radius: var(--r-md); padding: 9px 10px; }
+  .stat .n { font-size: 17px; font-weight: 500; }
+  .stat .k { font-size: 11px; color: var(--text-faint); }
+
+  .empty-note { font-size: 12px; color: var(--text-faint); padding: 22px 4px; text-align: center; }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #444; background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="harness">
+  <span class="harness-label">验收对照 · 非产品 UI</span>
+
+  <span class="seg" role="group" aria-label="渲染模式">
+    <button id="m-center" aria-pressed="true">Center 模式</button>
+    <button id="m-dock" aria-pressed="false">Dock 模式</button>
+  </span>
+
+  <label style="display:flex;align-items:center;gap:8px;color:var(--text-dim)">
+    窗口宽度
+    <input id="w-slider" type="range" min="900" max="1800" step="20" value="1280">
+    <b id="w-val" style="font-family:var(--mono);font-size:11px;color:var(--text)">1280</b>
+  </label>
+
+  <span class="readout">
+    <span>中央区 <b id="ro-center">—</b></span>
+    <span>阅读列 <b id="ro-col">—</b></span>
+    <span id="ro-verdict" class="verdict-ok">—</span>
+  </span>
+
+  <button class="ghost" id="t-guides" aria-pressed="false">显示列宽参考线</button>
+  <button class="ghost" id="t-empty" aria-pressed="false">无活动线程</button>
+</div>
+
+<div class="stage">
+  <div class="app" id="app" data-surface="center" data-guides="off" data-empty="off">
+
+    <!-- 左侧：Threads -->
+    <aside class="threads">
+      <div class="threads-head">
+        <span class="threads-title">Threads</span>
+        <button class="icon-btn" title="新建线程" aria-label="新建线程">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 3v10M3 8h10"/></svg>
+        </button>
+      </div>
+      <div class="thread-list" role="listbox" aria-label="任务线程">
+        <div class="thread" role="option" aria-selected="true">
+          <span class="dot working"></span>
+          <span><span class="thread-name">Add search to docs</span><span class="thread-meta">Working · 2m ago</span></span>
+        </div>
+        <div class="thread" role="option" aria-selected="false">
+          <span class="dot"></span>
+          <span><span class="thread-name">Fix build failure</span><span class="thread-meta">Idle · 14m ago</span></span>
+        </div>
+        <div class="thread" role="option" aria-selected="false">
+          <span class="dot plan"></span>
+          <span><span class="thread-name">Refactor auth flow</span><span class="thread-meta">Plan · 1h ago</span></span>
+        </div>
+        <div class="thread" role="option" aria-selected="false">
+          <span class="dot waiting"></span>
+          <span><span class="thread-name">Design settings page</span><span class="thread-meta">Waiting · 3h ago</span></span>
+        </div>
+        <div class="thread" role="option" aria-selected="false">
+          <span class="dot"></span>
+          <span><span class="thread-name">Improve test coverage</span><span class="thread-meta">Idle · 5h ago</span></span>
+        </div>
+        <div class="thread" role="option" aria-selected="false">
+          <span class="dot working"></span>
+          <span><span class="thread-name">Update dependencies</span><span class="thread-meta">Working · 1d ago</span></span>
+        </div>
+        <div class="thread" role="option" aria-selected="false">
+          <span class="dot waiting"></span>
+          <span><span class="thread-name">Add onboarding tour</span><span class="thread-meta">Waiting · 1d ago</span></span>
+        </div>
+        <div class="thread" role="option" aria-selected="false">
+          <span class="dot"></span>
+          <span><span class="thread-name">Investigate performance</span><span class="thread-meta">Idle · 2d ago</span></span>
+        </div>
+        <div class="thread" role="option" aria-selected="false">
+          <span class="dot"></span>
+          <span><span class="thread-name">Polish UI copy</span><span class="thread-meta">Idle · 2d ago</span></span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 中央：Conversation Surface -->
+    <main class="center">
+      <div class="col-rule" aria-hidden="true"></div>
+
+      <!-- 任务身份由对话区自身渲染 -->
+      <header class="task-header">
+        <div class="task-id">
+          <div class="task-title">Add search to docs</div>
+          <div class="task-status">
+            <span class="dot working" id="task-dot"></span>
+            <span class="status-text" id="task-state">Working</span><span>·</span><span id="task-desc">Agent is implementing your request</span>
+          </div>
+        </div>
+        <div class="task-actions">
+          <span class="pill">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0l1.6 4.6L14 6.2l-4.4 1.6L8 12.4 6.4 7.8 2 6.2l4.4-1.6z"/></svg>
+            Plan
+            <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6.5l4 4 4-4"/></svg>
+          </span>
+          <button class="icon-btn" title="更多" aria-label="更多">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="13" cy="8" r="1.3"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- 空状态：无活动线程 -->
+      <div class="empty">
+        <div class="empty-inner">
+          <h3>尚无活动线程</h3>
+          <p>AI Native 布局已就绪。新建一个线程开始任务，对话记录会出现在这里。</p>
+          <button class="btn btn-primary">新建线程</button>
+        </div>
+      </div>
+
+      <div class="timeline">
+        <div class="reading">
+
+          <div class="msg">
+            <div class="avatar you">Y</div>
+            <div>
+              <div class="msg-head"><span class="msg-author">You</span><span class="msg-time">10:24 AM</span></div>
+              <div class="msg-body"><p>Add a search feature to the documentation. It should support keyword search, show relevant results, and work well on large doc sets.</p></div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar orion">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="#fff"><path d="M8 0l1.6 4.6L14 6.2l-4.4 1.6L8 12.4 6.4 7.8 2 6.2l4.4-1.6z"/></svg>
+            </div>
+            <div>
+              <div class="msg-head"><span class="msg-author">Orion</span><span class="msg-time">10:24 AM</span></div>
+              <div class="msg-body"><p>I'll help you add search to the documentation. I'll start by exploring the current docs structure, then implement a search solution with relevant result ranking.</p></div>
+
+              <!-- 工具过程：可折叠任务卡片 -->
+              <div class="card" data-open="true" id="task-card">
+                <div class="card-head" role="button" tabindex="0" aria-expanded="true">
+                  <span class="ring active"></span>
+                  <span class="card-title">Working on this task…</span>
+                  <span class="card-toggle">
+                    <span class="t-label">Show less</span>
+                    <svg class="chev" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6.5l4 4 4-4"/></svg>
+                  </span>
+                </div>
+                <div class="card-body">
+                  <div class="step done">
+                    <span class="mark"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.8"><path d="M3 8.5l3.2 3.2L13 5"/></svg></span>
+                    <span>Scan project structure</span>
+                  </div>
+                  <div class="step done">
+                    <span class="mark"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.8"><path d="M3 8.5l3.2 3.2L13 5"/></svg></span>
+                    <span>Find docs and content files</span>
+                  </div>
+                  <div class="step">
+                    <span class="mark"><span class="ring active"></span></span>
+                    <span>Implement search functionality</span>
+                  </div>
+                  <div class="step">
+                    <span class="mark"><span class="ring"></span></span>
+                    <span>Add result ranking</span>
+                  </div>
+                  <div class="step">
+                    <span class="mark"><span class="ring"></span></span>
+                    <span>Test the implementation</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar orion">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="#fff"><path d="M8 0l1.6 4.6L14 6.2l-4.4 1.6L8 12.4 6.4 7.8 2 6.2l4.4-1.6z"/></svg>
+            </div>
+            <div>
+              <div class="msg-head"><span class="msg-author">Orion</span><span class="msg-time">10:27 AM</span></div>
+              <div class="msg-body"><p>I need to install a search library to provide efficient indexing and search capabilities for the documentation.</p></div>
+
+              <!-- 权限审批：独立卡片 -->
+              <div class="card perm">
+                <div class="perm-head">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.5" style="margin-top:2px;flex:0 0 auto">
+                    <path d="M8 1.8L14.5 13.5H1.5z"/><path d="M8 6.4v3.1M8 11.6v.1"/>
+                  </svg>
+                  <div>
+                    <div class="perm-title">Install package</div>
+                    <div class="perm-desc">This will run a package manager command to add a dependency.</div>
+                  </div>
+                </div>
+                <div class="cmd">pnpm add @orama/orama</div>
+                <div class="perm-actions">
+                  <button class="btn btn-primary">Allow once</button>
+                  <button class="btn btn-ghost">Deny</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar you">Y</div>
+            <div>
+              <div class="msg-head"><span class="msg-author">You</span><span class="msg-time">10:28 AM</span></div>
+              <div class="msg-body"><p>Go ahead.</p></div>
+            </div>
+          </div>
+
+          <div class="msg" style="margin-bottom:0">
+            <div class="avatar orion">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="#fff"><path d="M8 0l1.6 4.6L14 6.2l-4.4 1.6L8 12.4 6.4 7.8 2 6.2l4.4-1.6z"/></svg>
+            </div>
+            <div>
+              <div class="msg-head"><span class="msg-author">Orion</span><span class="msg-time">10:28 AM</span></div>
+              <div class="msg-body"><p>Installing the package and then I'll implement the search functionality.</p></div>
+              <div class="tool-collapsed">
+                <svg class="chev" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6.5 4l4 4-4 4"/></svg>
+                <span class="ring active"></span>
+                <span>Running package manager…</span>
+                <span class="meta">10:28 AM</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="reading">
+          <div class="composer">
+            <button class="icon-btn" title="添加上下文" aria-label="添加上下文">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 3v10M3 8h10"/></svg>
+            </button>
+            <textarea id="composer" rows="1" placeholder="Ask Orion"></textarea>
+            <button class="send" id="send" disabled title="发送" aria-label="发送">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- 右侧：Task Inspector -->
+    <aside class="inspector">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-tab="files" aria-selected="false">Files</button>
+        <button class="tab" role="tab" data-tab="changes" aria-selected="true">Changes</button>
+        <button class="tab" role="tab" data-tab="review" aria-selected="false">Review</button>
+      </div>
+
+      <div class="insp-body">
+        <div class="pane" data-pane="files">
+          <div class="pane-head">工作树文件</div>
+          <div class="tree">
+            <div class="tree-row" data-depth="0">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--text-dim)" stroke-width="1.4"><path d="M2 4.5h4.2l1.2 1.5H14v6.5H2z"/></svg>
+              <span>docs</span>
+            </div>
+            <div class="tree-row" data-depth="1"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.4"><path d="M4 2h5l3 3v9H4z"/></svg><span>search.ts</span></div>
+            <div class="tree-row" data-depth="1"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.4"><path d="M4 2h5l3 3v9H4z"/></svg><span>config.ts</span></div>
+            <div class="tree-row" data-depth="1">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--text-dim)" stroke-width="1.4"><path d="M2 4.5h4.2l1.2 1.5H14v6.5H2z"/></svg>
+              <span>components</span>
+            </div>
+            <div class="tree-row" data-depth="2"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.4"><path d="M4 2h5l3 3v9H4z"/></svg><span>SearchBar.tsx</span></div>
+            <div class="tree-row" data-depth="1"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--text-dim)" stroke-width="1.4"><path d="M4 2h5l3 3v9H4z"/></svg><span>index.md</span></div>
+            <div class="tree-row" data-depth="0"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.4"><path d="M4 2h5l3 3v9H4z"/></svg><span>package.json</span></div>
+          </div>
+        </div>
+
+        <div class="pane" data-pane="changes" data-active="true">
+          <div class="pane-head">4 changed files</div>
+          <div class="file-row">
+            <span class="badge-a">+</span>
+            <span class="path">docs/search.ts</span>
+            <span class="delta"><span class="add">+120</span> <span class="del">−0</span></span>
+          </div>
+          <div class="file-row">
+            <span class="badge-a">+</span>
+            <span class="path">docs/components/SearchBar.tsx</span>
+            <span class="delta"><span class="add">+86</span> <span class="del">−2</span></span>
+          </div>
+          <div class="file-row">
+            <span class="badge-m">~</span>
+            <span class="path">docs/config.ts</span>
+            <span class="delta"><span class="add">+12</span> <span class="del">−4</span></span>
+          </div>
+          <div class="file-row">
+            <span class="badge-m">~</span>
+            <span class="path">package.json</span>
+            <span class="delta"><span class="add">+1</span> <span class="del">−0</span></span>
+          </div>
+
+          <div class="diff">
+            <div class="diff-head">docs/config.ts</div>
+            <div class="diff-line"><span class="ln">10</span><span class="ln">10</span><span class="code">export const config = {</span></div>
+            <div class="diff-line"><span class="ln">11</span><span class="ln">11</span><span class="code">  theme: 'default',</span></div>
+            <div class="diff-line del"><span class="ln">12</span><span class="ln"></span><span class="code">  search: false,</span></div>
+            <div class="diff-line add"><span class="ln"></span><span class="ln">12</span><span class="code">  search: true,</span></div>
+            <div class="diff-line"><span class="ln">13</span><span class="ln">13</span><span class="code">};</span></div>
+          </div>
+        </div>
+
+        <div class="pane" data-pane="review">
+          <div class="review-stat">
+            <div class="stat"><div class="n">4</div><div class="k">文件</div></div>
+            <div class="stat"><div class="n">219</div><div class="k">新增行</div></div>
+            <div class="stat"><div class="n">6</div><div class="k">删除行</div></div>
+          </div>
+          <div class="pane-head">按文件</div>
+          <div class="file-row">
+            <span class="badge-a">+</span><span class="path">docs/search.ts</span>
+            <span class="delta"><span class="add">+120</span></span>
+          </div>
+          <div class="file-row">
+            <span class="badge-a">+</span><span class="path">SearchBar.tsx</span>
+            <span class="delta"><span class="add">+86</span></span>
+          </div>
+          <div class="file-row">
+            <span class="badge-m">~</span><span class="path">config.ts</span>
+            <span class="delta"><span class="add">+12</span> <span class="del">−4</span></span>
+          </div>
+          <div class="file-row">
+            <span class="badge-m">~</span><span class="path">package.json</span>
+            <span class="delta"><span class="add">+1</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="insp-foot">
+        <button class="btn btn-primary" id="review-btn">Review</button>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  var app = document.getElementById('app');
+  var slider = document.getElementById('w-slider');
+  var wVal = document.getElementById('w-val');
+  var roCenter = document.getElementById('ro-center');
+  var roCol = document.getElementById('ro-col');
+  var roVerdict = document.getElementById('ro-verdict');
+  var mCenter = document.getElementById('m-center');
+  var mDock = document.getElementById('m-dock');
+  var tGuides = document.getElementById('t-guides');
+  var tEmpty = document.getElementById('t-empty');
+
+  var AVAIL = Math.min(window.innerWidth - 40, 1800);
+
+  function setWidth(px) {
+    var w = Math.min(px, AVAIL);
+    app.style.width = w + 'px';
+    wVal.textContent = w;
+    slider.value = px;
+    measure();
+  }
+
+  // 读数为真实测量值，判定逻辑对应计划 §7 的断言：
+  // 「Center 模式下实际宽度小于容器宽度且留白对称；铺满容器必须失败」
+  function measure() {
+    var center = app.querySelector('.center');
+    // Composer 的阅读列始终可见，用它做基准（空状态下 timeline 会被隐藏）
+    var reading = app.querySelector('.composer-wrap .reading');
+    if (!center || !reading) return;
+    var cw = Math.round(center.getBoundingClientRect().width);
+    var rw = Math.round(reading.getBoundingClientRect().width);
+    roCenter.textContent = cw + 'px';
+    roCol.textContent = rw + 'px';
+    var capped = rw <= cw - 80;
+    roVerdict.textContent = capped
+      ? '满足契约：有上限的居中列'
+      : '铺满容器 — 不满足契约';
+    roVerdict.className = capped ? 'verdict-ok' : 'verdict-bad';
+  }
+
+  function setSurface(mode) {
+    app.dataset.surface = mode;
+    mCenter.setAttribute('aria-pressed', String(mode === 'center'));
+    mDock.setAttribute('aria-pressed', String(mode === 'dock'));
+    measure();
+  }
+
+  mCenter.addEventListener('click', function () { setSurface('center'); });
+  mDock.addEventListener('click', function () { setSurface('dock'); });
+
+  slider.addEventListener('input', function () { setWidth(parseInt(slider.value, 10)); });
+
+  tGuides.addEventListener('click', function () {
+    var on = app.dataset.guides === 'on';
+    app.dataset.guides = on ? 'off' : 'on';
+    tGuides.setAttribute('aria-pressed', String(!on));
+  });
+
+  tEmpty.addEventListener('click', function () {
+    var on = app.dataset.empty === 'on';
+    app.dataset.empty = on ? 'off' : 'on';
+    tEmpty.setAttribute('aria-pressed', String(!on));
+    measure();
+  });
+
+  // 工具任务卡片折叠
+  var card = document.getElementById('task-card');
+  var cardHead = card.querySelector('.card-head');
+  var cardLabel = card.querySelector('.t-label');
+  function toggleCard() {
+    var open = card.dataset.open === 'true';
+    card.dataset.open = String(!open);
+    cardHead.setAttribute('aria-expanded', String(!open));
+    cardLabel.textContent = open ? 'Show more' : 'Show less';
+    measure();
+  }
+  cardHead.addEventListener('click', toggleCard);
+  cardHead.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(); }
+  });
+
+  // Inspector tabs
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var panes = Array.prototype.slice.call(document.querySelectorAll('.pane'));
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      tabs.forEach(function (t) { t.setAttribute('aria-selected', String(t === tab)); });
+      panes.forEach(function (p) { p.dataset.active = String(p.dataset.pane === tab.dataset.tab); });
+    });
+  });
+
+  // 线程选择：驱动中央任务身份（任务 header 由对话区自身承载）
+  var threads = Array.prototype.slice.call(document.querySelectorAll('.thread'));
+  var taskTitle = document.querySelector('.task-title');
+  var taskDot = document.getElementById('task-dot');
+  var taskState = document.getElementById('task-state');
+  var taskDesc = document.getElementById('task-desc');
+  var DESCRIPTIONS = {
+    'Working': 'Agent is implementing your request',
+    'Plan': 'Planning before making changes',
+    'Waiting': 'Waiting for your input',
+    'Idle': 'No active generation'
+  };
+
+  threads.forEach(function (th) {
+    th.addEventListener('click', function () {
+      threads.forEach(function (t) { t.setAttribute('aria-selected', String(t === th)); });
+      taskTitle.textContent = th.querySelector('.thread-name').textContent;
+      var state = th.querySelector('.thread-meta').textContent.split('·')[0].trim();
+      var dotState = th.querySelector('.dot').className.replace(/\bdot\b/, '').trim();
+      taskState.textContent = state;
+      taskDesc.textContent = DESCRIPTIONS[state] || '';
+      taskDot.className = 'dot' + (dotState ? ' ' + dotState : '');
+      measure();
+    });
+  });
+
+  // Composer：自适应高度 + 发送态
+  var composer = document.getElementById('composer');
+  var send = document.getElementById('send');
+  composer.addEventListener('input', function () {
+    composer.style.height = 'auto';
+    composer.style.height = Math.min(composer.scrollHeight, 96) + 'px';
+    send.disabled = composer.value.trim().length === 0;
+  });
+  composer.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); }
+  });
+
+  window.addEventListener('resize', function () {
+    AVAIL = Math.min(window.innerWidth - 40, 1800);
+    setWidth(parseInt(slider.value, 10));
+  });
+
+  setSurface('center');
+  setWidth(1280);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Orion Studio · AI Native v2 interactive specification</title>
+    <style>
+      :root {
+        /* Maps to Orion Studio's editor/panel/elevated/element theme layers. */
+        --canvas: #171819;
+        --surface: #1e1f21;
+        --surface-raised: #252628;
+        --surface-hover: #2c2d30;
+        --surface-selected: #30343a;
+        --line: #36373a;
+        --line-strong: #4b4d51;
+        --text: #e7e7e7;
+        --muted: #b0b1b4;
+        --faint: #85878c;
+        --accent: #77b7ff;
+        --accent-soft: rgba(119, 183, 255, 0.15);
+        --green: #79c17a;
+        --red: #ed8d8b;
+        --amber: #d8b56a;
+        --purple: #b49ad9;
+        --radius-sm: 3px;
+        --radius: 5px;
+        --radius-lg: 8px;
+        --shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+        --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+        --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; margin: 0; }
+      body {
+        min-width: 760px;
+        background: var(--canvas);
+        color: var(--text);
+        font: 13px/1.5 var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      button, input, textarea { font: inherit; }
+      button { color: inherit; }
+      button:focus-visible, input:focus-visible, textarea:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      [hidden] { display: none !important; }
+
+      .icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75; }
+      .icon.small { width: 14px; height: 14px; }
+      .icon.tiny { width: 12px; height: 12px; }
+      .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+      /* Non-product guide: it is intentionally separate from the app chrome. */
+      .spec-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        min-height: 38px;
+        padding: 7px 18px;
+        background: #18191b;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .spec-toolbar strong { color: var(--text); font-weight: 600; }
+      .spec-toolbar kbd {
+        padding: 1px 5px;
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        color: var(--text);
+        font: 10px var(--mono);
+      }
+      .spec-actions { display: flex; gap: 8px; align-items: center; }
+
+      .app-shell {
+        width: min(1540px, calc(100vw - 32px));
+        height: min(900px, calc(100vh - 72px));
+        min-height: 650px;
+        margin: 16px auto;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: 0 3px 14px rgba(0, 0, 0, 0.24);
+      }
+      .app-shell.sidebar-collapsed .app-grid { grid-template-columns: 64px minmax(430px, 1fr) 330px; }
+      .app-shell.environment-collapsed .app-grid { grid-template-columns: 272px minmax(430px, 1fr) 42px; }
+      .app-shell.sidebar-collapsed.environment-collapsed .app-grid { grid-template-columns: 64px minmax(430px, 1fr) 42px; }
+
+      .app-topbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 42px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-raised);
+      }
+      .window-dots { display: flex; gap: 7px; padding: 0 8px 0 1px; }
+      .window-dots i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+      .window-dots i:nth-child(1) { background: #ff5f57; }
+      .window-dots i:nth-child(2) { background: #febc2e; }
+      .window-dots i:nth-child(3) { background: #28c840; }
+      .toolbar-divider { width: 1px; height: 18px; background: var(--line); margin: 0 3px; }
+      .toolbar-spacer { flex: 1; }
+
+      .icon-button, .text-button, .new-button, .agent-choice, .thread, .environment-row, .file-row {
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+      }
+      .icon-button {
+        display: inline-grid;
+        place-items: center;
+        width: 29px;
+        height: 29px;
+        border-radius: var(--radius-sm);
+        color: var(--muted);
+      }
+      .icon-button:hover { background: var(--surface-hover); color: var(--text); }
+      .icon-button[disabled] { cursor: default; color: #46505e; }
+      .icon-button[disabled]:hover { background: transparent; }
+      .project-name {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        gap: 8px;
+        color: var(--text);
+        font-weight: 600;
+      }
+      .project-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .text-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 9px;
+        border-radius: var(--radius-sm);
+        color: var(--muted);
+      }
+      .text-button:hover { background: var(--surface-hover); color: var(--text); }
+
+      .app-grid {
+        display: grid;
+        grid-template-columns: 272px minmax(430px, 1fr) 330px;
+        height: calc(100% - 42px);
+        min-height: 0;
+        transition: grid-template-columns 180ms ease;
+      }
+
+      /* Task rail */
+      .task-rail {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        background: var(--surface-raised);
+        border-right: 1px solid var(--line);
+      }
+      .rail-header { padding: 14px 12px 10px; }
+      .rail-label { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 10px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; }
+      .new-button {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        padding: 9px 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--surface);
+        color: var(--text);
+        text-align: left;
+        font-weight: 600;
+      }
+      .new-button:hover { border-color: var(--accent); background: var(--surface-hover); }
+      .new-button .new-left { display: inline-flex; align-items: center; gap: 8px; }
+      .search-wrap { position: relative; margin: 0 12px 12px; }
+      .search-wrap .icon { position: absolute; left: 9px; top: 9px; color: var(--faint); pointer-events: none; }
+      .search-wrap input {
+        width: 100%;
+        height: 34px;
+        padding: 0 9px 0 31px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        background: var(--surface);
+        color: var(--text);
+      }
+      .search-wrap input::placeholder { color: var(--faint); }
+      .task-scroll { flex: 1; overflow: auto; padding: 0 8px 14px; }
+      .task-group { margin: 8px 0 15px; }
+      .task-group h2 { margin: 0 7px 6px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+      .thread {
+        display: grid;
+        grid-template-columns: 8px minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 8px;
+        width: 100%;
+        padding: 8px;
+        border-radius: var(--radius-sm);
+        color: var(--text);
+        text-align: left;
+      }
+      .thread:hover { background: var(--surface-hover); }
+      .thread[aria-selected="true"] { background: var(--surface-selected); }
+      .thread-dot { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--faint); }
+      .thread-dot.running { background: var(--green); }
+      .thread-dot.waiting { background: var(--amber); }
+      .thread-dot.plan { background: var(--purple); }
+      .thread-copy { min-width: 0; }
+      .thread-title { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+      .thread-meta { overflow: hidden; margin-top: 2px; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+      .thread-agent { color: var(--faint); }
+      .thread-badge { padding: 1px 5px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--muted); font-size: 10px; }
+      .account { display: flex; align-items: center; gap: 8px; padding: 12px; border-top: 1px solid var(--line); color: var(--muted); }
+      .account-avatar { display: grid; place-items: center; width: 25px; height: 25px; border-radius: var(--radius-sm); background: #3a6254; color: white; font-size: 10px; font-weight: 700; }
+      .account span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      .sidebar-collapsed .task-rail { align-items: center; }
+      .sidebar-collapsed .rail-header { padding: 14px 9px; }
+      .sidebar-collapsed .rail-label, .sidebar-collapsed .new-button .new-label,
+      .sidebar-collapsed .new-button .icon:last-child, .sidebar-collapsed .search-wrap,
+      .sidebar-collapsed .task-scroll, .sidebar-collapsed .account span { display: none; }
+      .sidebar-collapsed .new-button { width: 38px; height: 38px; justify-content: center; padding: 0; }
+      .sidebar-collapsed .account { padding: 12px 0; border: 0; }
+
+      /* Central conversation: it never contains a conventional editor tab row. */
+      .conversation { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+      .task-header { display: flex; align-items: center; min-height: 42px; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--surface-raised); }
+      .task-heading { min-width: 0; }
+      .task-heading h1 { overflow: hidden; margin: 0; color: var(--text); font-size: 14px; font-weight: 650; letter-spacing: -0.01em; text-overflow: ellipsis; white-space: nowrap; }
+      .task-subline { display: flex; align-items: center; gap: 7px; margin-top: 2px; color: var(--faint); font-size: 11px; }
+      .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+      .task-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+      .agent-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 170px;
+        padding: 4px 7px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+      }
+      .agent-chip:hover { border-color: var(--accent); background: var(--surface-hover); }
+      .agent-chip[disabled] { cursor: help; opacity: 0.75; }
+      .agent-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .timeline { flex: 1; min-height: 0; overflow: auto; scroll-behavior: smooth; }
+      .reading-column { width: min(100%, 812px); margin: 0 auto; padding: 28px 28px 22px; }
+      .turn { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; margin-bottom: 24px; }
+      .avatar { display: grid; place-items: center; width: 27px; height: 27px; border-radius: var(--radius-sm); color: white; font-size: 10px; font-weight: 750; }
+      .avatar.user { background: #555960; }
+      .avatar.orion { background: #568bd1; }
+      .turn-copy { min-width: 0; }
+      .turn-meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+      .turn-meta strong { font-size: 12px; }
+      .turn-meta time { color: var(--faint); font-size: 10px; }
+      .turn-body { color: #d6dce6; font-size: 13px; }
+      .turn-body p { margin: 0; }
+      .turn-body p + p { margin-top: 9px; }
+      .turn-body code { padding: 1px 4px; border-radius: var(--radius-sm); background: var(--surface-raised); color: #dce6f3; font: 11px var(--mono); }
+      .empty-thread { display: grid; min-height: 330px; place-items: center; text-align: center; }
+      .empty-thread-card { width: min(100%, 430px); padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-raised); }
+      .empty-thread-icon { display: grid; place-items: center; width: 38px; height: 38px; margin: 0 auto 12px; border-radius: var(--radius); background: #3d5574; color: #e4efff; }
+      .empty-thread-card h2 { margin: 0 0 6px; font-size: 15px; }
+      .empty-thread-card p { margin: 0; color: var(--muted); font-size: 12px; }
+      .inline-actions { display: flex; gap: 8px; margin-top: 12px; }
+      .small-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+        background: var(--surface-raised);
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .small-button:hover { border-color: var(--accent); background: var(--surface-hover); color: var(--text); }
+      .small-button.primary { border-color: rgba(110, 168, 254, 0.55); background: #1b3358; color: #d9e8ff; }
+      .small-button.danger { border-color: rgba(251, 109, 121, 0.45); color: #ffc7cd; }
+      .tool-card, .notice-card {
+        margin-top: 13px;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--surface-raised);
+      }
+      .tool-card summary, .notice-card-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        cursor: pointer;
+        list-style: none;
+        color: #dbe4f2;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .tool-card summary::-webkit-details-marker { display: none; }
+      .tool-card summary:hover { background: var(--surface-hover); }
+      .tool-card .summary-right { margin-left: auto; color: var(--faint); font-weight: 400; }
+      .tool-output { padding: 0 12px 12px; border-top: 1px solid var(--line); color: var(--muted); font: 11px/1.65 var(--mono); white-space: pre-wrap; }
+      .notice-card { border-color: rgba(255, 200, 87, 0.42); background: rgba(111, 79, 20, 0.15); }
+      .notice-card-head { color: #ffe6a8; cursor: default; }
+      .notice-card p { margin: 0; padding: 0 12px 12px; color: #dfcfaa; font-size: 12px; }
+      .notice-card .inline-actions { padding: 0 12px 12px; margin-top: 0; }
+
+      .composer-zone { padding: 9px 22px 13px; border-top: 1px solid var(--line); background: var(--surface-raised); }
+      .composer { width: min(100%, 812px); margin: 0 auto; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); }
+      .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+      .composer textarea { display: block; width: 100%; min-height: 58px; max-height: 130px; padding: 11px 12px 6px; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.45; }
+      .composer textarea::placeholder { color: var(--faint); }
+      .composer-footer { display: flex; align-items: center; gap: 6px; padding: 0 8px 8px; }
+      .composer-hint { margin-left: auto; color: var(--faint); font-size: 10px; }
+      .send-button { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-sm); background: var(--accent); color: #122235; cursor: pointer; }
+      .send-button:hover { filter: brightness(1.08); }
+      .send-button[disabled] { cursor: default; background: #303946; color: #728094; }
+
+      /* Right panel: a vertical, contextual environment—not an inspector with tabs. */
+      .environment { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface-raised); border-left: 1px solid var(--line); }
+      .environment-header { display: flex; align-items: center; min-height: 42px; padding: 0 10px 0 12px; border-bottom: 1px solid var(--line); }
+      .environment-header h2 { margin: 0; font-size: 12px; letter-spacing: 0.02em; }
+      .environment-header .header-actions { display: flex; margin-left: auto; gap: 2px; }
+      .environment-scroll { flex: 1; overflow: auto; padding: 0; }
+      .environment-group { margin: 0; overflow: hidden; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+      .environment-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 14px; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 0 11px; color: var(--text); text-align: left; }
+      .environment-row:hover { background: var(--surface-hover); }
+      .environment-row .row-label { overflow: hidden; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+      .environment-row .row-value { color: var(--muted); font-size: 11px; white-space: nowrap; }
+      .environment-row .row-value.add { color: var(--green); }
+      .environment-row .row-value.del { color: var(--red); margin-left: -5px; }
+      .environment-row .chevron { color: var(--faint); transition: transform 150ms ease; }
+      .environment-group[data-open="true"] .environment-row .chevron { transform: rotate(180deg); }
+      .environment-detail { display: none; padding: 0 11px 10px 36px; border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); }
+      .environment-group[data-open="true"] .environment-detail { display: block; }
+      .environment-detail p { margin: 9px 0; font-size: 11px; }
+      .env-path { overflow: hidden; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-raised); color: #d1d3d7; font: 10px/1.45 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+      .file-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 7px; width: 100%; padding: 6px 0; color: var(--muted); text-align: left; }
+      .file-row:hover { color: var(--text); }
+      .file-row span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .file-status { color: var(--green); font: 10px var(--mono); }
+      .diff-preview { margin-top: 5px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #18191b; font: 10px/1.65 var(--mono); }
+      .diff-preview div { padding: 1px 7px; white-space: pre; }
+      .diff-preview .add { background: rgba(78, 203, 113, 0.11); color: #99e0af; }
+      .diff-preview .del { background: rgba(251, 109, 121, 0.1); color: #ffadb5; }
+      .panel-cta { width: 100%; margin-top: 9px; justify-content: center; }
+      .environment-collapsed .environment-header h2, .environment-collapsed .environment-scroll, .environment-collapsed .header-actions { display: none; }
+      .environment-collapsed .environment { align-items: center; }
+      .environment-collapsed .environment-header { justify-content: center; padding: 0; }
+      .environment-collapsed .environment-header::after { content: "☰"; color: var(--muted); font-size: 15px; }
+
+      .popover {
+        position: fixed;
+        z-index: 15;
+        width: min(370px, calc(100vw - 30px));
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--surface-raised);
+        box-shadow: var(--shadow);
+      }
+      .popover-head { padding: 13px 14px 10px; border-bottom: 1px solid var(--line); }
+      .popover-head strong { display: block; font-size: 13px; }
+      .popover-head span { color: var(--muted); font-size: 11px; }
+      .agent-choice { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; padding: 10px 14px; color: var(--text); text-align: left; }
+      .agent-choice:hover { background: var(--surface-hover); }
+      .agent-choice[aria-selected="true"] { background: var(--accent-soft); }
+      .agent-choice[disabled] { cursor: not-allowed; opacity: 0.48; }
+      .agent-glyph { display: grid; place-items: center; width: 27px; height: 27px; border-radius: var(--radius-sm); background: #40556e; color: #e4efff; }
+      .agent-choice:nth-of-type(3) .agent-glyph { background: #373052; color: #e2d8ff; }
+      .agent-choice:nth-of-type(4) .agent-glyph { background: #254b45; color: #c3f6e9; }
+      .agent-choice:nth-of-type(5) .agent-glyph { background: #343b46; color: #dce5ef; }
+      .agent-copy { min-width: 0; }
+      .agent-copy strong { display: block; font-size: 12px; }
+      .agent-copy span { display: block; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .recommended { padding: 2px 5px; border-radius: var(--radius-sm); background: var(--accent-soft); color: #cbe1ff; font-size: 9px; }
+      .popover-footer { padding: 8px 14px; border-top: 1px solid var(--line); }
+      .popover-footer button { width: 100%; justify-content: center; }
+
+      .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 22px; background: rgba(2, 4, 7, 0.72); backdrop-filter: blur(3px); }
+      .modal { width: min(520px, 100%); border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-raised); box-shadow: var(--shadow); }
+      .modal header { display: flex; align-items: center; padding: 15px 16px; border-bottom: 1px solid var(--line); }
+      .modal h2 { margin: 0; font-size: 14px; }
+      .modal header .icon-button { margin-left: auto; }
+      .modal-body { padding: 16px; color: var(--muted); }
+      .modal-body p { margin: 0 0 12px; }
+      .modal-body ul { margin: 0; padding-left: 18px; font-size: 12px; }
+      .modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 0 16px 16px; }
+
+      .code-workspace { position: fixed; inset: 0; z-index: 25; display: flex; flex-direction: column; background: #0c1015; }
+      .code-topbar { display: flex; align-items: center; gap: 9px; height: 48px; padding: 0 14px; border-bottom: 1px solid var(--line); background: #11161d; }
+      .code-topbar strong { font-size: 12px; }
+      .code-layout { display: grid; grid-template-columns: 240px 1fr 270px; flex: 1; min-height: 0; }
+      .code-tree, .code-review { padding: 14px; border-right: 1px solid var(--line); color: var(--muted); }
+      .code-review { border-right: 0; border-left: 1px solid var(--line); }
+      .code-tree h2, .code-review h2 { margin: 0 0 10px; color: var(--text); font-size: 11px; }
+      .code-tree div { padding: 5px 7px; border-radius: 5px; font: 11px var(--mono); }
+      .code-tree div:first-of-type { background: var(--surface-selected); color: var(--text); }
+      .code-editor { min-width: 0; overflow: auto; padding: 18px 0; background: #0b0f14; }
+      .code-tabs { display: flex; gap: 2px; padding: 0 14px 12px; border-bottom: 1px solid var(--line); }
+      .code-tab { padding: 6px 9px; border-radius: 6px; background: #18202a; color: #d5e0ee; font: 11px var(--mono); }
+      .code-lines { padding: 14px 26px; color: #b9c6d8; font: 12px/1.8 var(--mono); white-space: pre; }
+      .code-lines .number { display: inline-block; width: 30px; color: #556174; user-select: none; }
+      .code-lines .added { display: inline-block; width: calc(100% - 30px); background: rgba(78, 203, 113, 0.08); color: #a5e9b8; }
+
+      .toast { position: fixed; z-index: 30; right: 22px; bottom: 20px; max-width: 360px; padding: 10px 12px; border: 1px solid #3f536f; border-radius: 9px; background: #172235; box-shadow: var(--shadow); color: #d9e9ff; transform: translateY(12px); opacity: 0; pointer-events: none; transition: transform 180ms ease, opacity 180ms ease; }
+      .toast.show { transform: translateY(0); opacity: 1; }
+
+      @media (max-width: 1180px) {
+        .app-shell { width: calc(100vw - 20px); }
+        .app-shell:not(.environment-collapsed) .app-grid { grid-template-columns: 244px minmax(400px, 1fr) 290px; }
+      }
+      @media (max-width: 980px) {
+        .app-shell { width: 100vw; height: calc(100vh - 38px); margin: 0; border-right: 0; border-left: 0; border-radius: 0; }
+        .app-shell:not(.environment-collapsed) .app-grid { grid-template-columns: 220px minmax(400px, 1fr) 42px; }
+        .environment { align-items: center; }
+        .environment-header h2, .environment-scroll, .environment-header .header-actions { display: none; }
+        .environment-header { justify-content: center; padding: 0; }
+        .environment-header::after { content: "☰"; color: var(--muted); font-size: 15px; }
+      }
+    </style>
+  </head>
+  <body>
+    <svg class="sr-only" aria-hidden="true">
+      <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+      <symbol id="i-left" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+      <symbol id="i-right" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-compose" viewBox="0 0 24 24"><path d="M12 20h8"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L9 17l-4 1 1-4z"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.35-4.35"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"/><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+      <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10a2 2 0 0 0 2 2h8M8 5h2a4 4 0 0 1 4 4v6"/></symbol>
+      <symbol id="i-plan" viewBox="0 0 24 24"><path d="M8 3h8l2 3v15H6V6z"/><path d="M9 10h6M9 14h6M9 18h4"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m4 12 16-8-5 16-3-6z"/><path d="m12 14 8-10"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    </svg>
+
+    <div class="spec-toolbar">
+      <span><strong>AI Native v2 交互规格</strong> · 非产品 UI：可点击验证任务、环境、Agent 与代码工作区回退。</span>
+      <div class="spec-actions">
+        <span><kbd>⌘ N</kbd> 新会话</span>
+        <span><kbd>⌘ ↵</kbd> 发送</span>
+        <button class="text-button" id="toggle-spec" aria-pressed="false">隐藏规格条</button>
+      </div>
+    </div>
+
+    <main class="app-shell" id="app-shell" aria-label="Orion Studio AI Native v2 interaction prototype">
+      <header class="app-topbar">
+        <div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+        <button class="icon-button" id="toggle-sidebar" aria-label="折叠任务列表" title="折叠任务列表"><svg class="icon"><use href="#i-panel"/></svg></button>
+        <button class="icon-button" id="go-back" aria-label="返回上一个任务" title="返回" disabled><svg class="icon"><use href="#i-left"/></svg></button>
+        <button class="icon-button" id="go-forward" aria-label="前进到下一个任务" title="前进" disabled><svg class="icon"><use href="#i-right"/></svg></button>
+        <span class="toolbar-divider" aria-hidden="true"></span>
+        <div class="project-name"><svg class="icon"><use href="#i-folder"/></svg><span>orion-studio</span></div>
+        <button class="icon-button" aria-label="项目操作" title="项目操作"><svg class="icon"><use href="#i-more"/></svg></button>
+        <span class="toolbar-spacer"></span>
+        <button class="text-button" id="return-to-task" title="从代码工作区返回任务"><svg class="icon small"><use href="#i-spark"/></svg>AI Native</button>
+        <button class="text-button" title="分享当前任务"><svg class="icon small"><use href="#i-external"/></svg>分享</button>
+        <button class="icon-button" id="toggle-environment" aria-label="折叠任务环境" title="折叠任务环境"><svg class="icon"><use href="#i-panel"/></svg></button>
+      </header>
+
+      <div class="app-grid">
+        <aside class="task-rail" aria-label="任务列表">
+          <div class="rail-header">
+            <div class="rail-label"><span>TASKS</span><button class="icon-button" id="rail-more" aria-label="任务列表操作"><svg class="icon small"><use href="#i-more"/></svg></button></div>
+            <button class="new-button" id="new-conversation" aria-haspopup="dialog">
+              <span class="new-left"><svg class="icon"><use href="#i-compose"/></svg><span class="new-label">新对话</span></span>
+              <svg class="icon small"><use href="#i-chevron"/></svg>
+            </button>
+          </div>
+          <label class="search-wrap"><span class="sr-only">搜索任务</span><svg class="icon small"><use href="#i-search"/></svg><input id="thread-search" type="search" placeholder="搜索任务" /></label>
+          <div class="task-scroll" id="thread-list" aria-live="polite"></div>
+          <div class="account"><span class="account-avatar">AT</span><span>andy Tien</span><button class="icon-button" aria-label="账户菜单"><svg class="icon small"><use href="#i-more"/></svg></button></div>
+        </aside>
+
+        <section class="conversation" aria-label="当前任务对话">
+          <header class="task-header">
+            <div class="task-heading"><h1 id="task-title">梳理 AI Native v2 交互规格</h1><div class="task-subline"><span class="status-dot" id="task-status-dot"></span><span id="task-status">正在运行</span><span>·</span><span id="task-worktree">orion-studio</span></div></div>
+            <div class="task-actions">
+              <button class="agent-chip" id="header-agent" aria-haspopup="dialog" title="新草稿可更换 Agent"><svg class="icon small"><use href="#i-spark"/></svg><span id="header-agent-name">Orion Code</span><svg class="icon tiny"><use href="#i-chevron"/></svg></button>
+              <button class="icon-button" aria-label="当前任务更多操作" title="更多操作"><svg class="icon"><use href="#i-more"/></svg></button>
+            </div>
+          </header>
+          <div class="timeline" id="timeline" tabindex="0"><div class="reading-column" id="timeline-content"></div></div>
+          <div class="composer-zone">
+            <div class="composer">
+              <textarea id="composer-input" aria-label="给 Agent 的消息" placeholder="描述要完成的工作，或添加上下文…"></textarea>
+              <div class="composer-footer">
+                <button class="icon-button" id="add-context" aria-label="添加上下文" title="添加上下文"><svg class="icon"><use href="#i-plus"/></svg></button>
+                <button class="agent-chip" id="composer-agent" aria-haspopup="dialog" title="选择本次新会话 Agent"><svg class="icon small"><use href="#i-spark"/></svg><span id="composer-agent-name">Orion Code</span><svg class="icon tiny"><use href="#i-chevron"/></svg></button>
+                <span class="composer-hint">⌘ ↵ 发送</span>
+                <button class="send-button" id="send-message" aria-label="发送消息" title="发送" disabled><svg class="icon"><use href="#i-send"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="environment" aria-label="任务环境">
+          <header class="environment-header"><h2>环境信息</h2><div class="header-actions"><button class="icon-button" id="environment-add-context" aria-label="添加来源" title="添加来源"><svg class="icon"><use href="#i-plus"/></svg></button><button class="icon-button" aria-label="环境操作"><svg class="icon"><use href="#i-more"/></svg></button></div></header>
+          <div class="environment-scroll" id="environment-content"></div>
+        </aside>
+      </div>
+    </main>
+
+    <section class="popover" id="agent-popover" role="dialog" aria-modal="true" aria-label="选择新会话 Agent" hidden>
+      <div class="popover-head"><strong>选择本次对话的 Agent</strong><span>选择仅绑定新草稿；已发送的任务不能无声切换 Agent。</span></div>
+      <div id="agent-choices"></div>
+      <div class="popover-footer"><button class="text-button" id="add-more-agents"><svg class="icon small"><use href="#i-plus"/></svg>添加更多 ACP Agent</button></div>
+    </section>
+
+    <div class="modal-backdrop" id="code-modal" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="code-modal-title">
+        <header><h2 id="code-modal-title">在代码工作区审查完整变更</h2><button class="icon-button" data-close-modal aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></header>
+        <div class="modal-body"><p>AI Native 保持当前对话在中央。完整 editor、Git 历史和 Agent Diff 会在明确的代码工作区打开。</p><ul><li>当前 thread、草稿、队列和滚动位置保持不变。</li><li>原有 code tabs 不会被关闭。</li><li>完成后用 <strong>Return to task</strong> 回到同一任务。</li></ul></div>
+        <footer><button class="small-button" data-close-modal>取消</button><button class="small-button primary" id="confirm-open-code"><svg class="icon small"><use href="#i-external"/></svg>打开代码工作区</button></footer>
+      </section>
+    </div>
+
+    <section class="code-workspace" id="code-workspace" aria-label="代码工作区示意" hidden>
+      <header class="code-topbar"><button class="text-button" id="leave-code"><svg class="icon small"><use href="#i-left"/></svg>Return to task</button><span class="toolbar-divider"></span><strong>Agentic · Orion Studio</strong><span class="toolbar-spacer"></span><span class="thread-badge">显式代码工作区</span></header>
+      <div class="code-layout"><aside class="code-tree"><h2>EXPLORER</h2><div>crates/agent_ui/src/task_environment.rs</div><div>crates/agent_ui/src/agent_panel.rs</div><div>docs/plan/evidence/v1.17.0-ai-native-v2.html</div></aside><main class="code-editor"><div class="code-tabs"><span class="code-tab">task_environment.rs</span><span class="code-tab">agent_panel.rs</span></div><div class="code-lines"><span class="number">118</span>fn render_environment_row(...) {
+<span class="number">119</span>    let task = active_task(workspace, cx)?;
+<span class="number">120</span><span class="added">+   // The right side never replaces the conversation surface.</span>
+<span class="number">121</span><span class="added">+   render_disclosure(task.changes())</span>
+<span class="number">122</span>}
+</div></main><aside class="code-review"><h2>REVIEW</h2><p>完整 diff、接受 / 拒绝和 Git 高级操作保留在此工作区。</p><button class="small-button primary" id="review-done">返回 AI Native</button></aside></div>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      const icons = (name, className = "icon") => `<svg class="${className}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+      const tasks = [
+        { id: "v2", group: "Pinned", title: "梳理 AI Native v2 交互规格", agent: "Orion Code", status: "running", statusText: "正在运行", worktree: "orion-studio", badge: "3", sources: ["v1.17.0-ai-native-v2.md", "AI Native reference"], changes: ["task_inspector.rs", "ai_native_conversation_item.rs", "conversation_view.rs"], plan: true, subagents: true },
+        { id: "release", group: "Pinned", title: "准备 Orion Studio 发布验收", agent: "Orion Code", status: "waiting", statusText: "等待审批", worktree: "orion-studio", badge: "!", sources: ["release-checklist.md"], changes: ["crates/zed/Cargo.toml"], plan: true },
+        { id: "research", group: "Recent", title: "评估 ACP Agent 更新通道", agent: "WorkBuddy", status: "plan", statusText: "计划中", worktree: "orion-code", badge: "", sources: ["sidecar-update-plan.md"], changes: [], plan: true },
+        { id: "docs", group: "Recent", title: "整理迁移和安装故障说明", agent: "Orion Agent", status: "idle", statusText: "空闲", worktree: "orion-studio", badge: "", sources: [], changes: [], plan: false }
+      ];
+      const agents = [
+        { id: "orion-code", label: "Orion Code", description: "受管 sidecar · 推荐默认", icon: "spark", recommended: true, available: true },
+        { id: "orion-agent", label: "Orion Agent", description: "Native agent session", icon: "spark", available: true },
+        { id: "workbuddy", label: "WorkBuddy", description: "External ACP agent", icon: "link", available: true },
+        { id: "terminal", label: "Terminal", description: "本地终端线程，不伪装为 chat", icon: "terminal", available: true },
+        { id: "cloud", label: "Cloud Research", description: "需要先完成认证", icon: "link", available: false }
+      ];
+      const state = { current: "v2", selectedAgent: "orion-code", history: [], forward: [], openRows: new Set(["changes"]), contextAdded: false, previewFile: "task_inspector.rs" };
+      const shell = document.getElementById("app-shell");
+      const popover = document.getElementById("agent-popover");
+      const toast = document.getElementById("toast");
+
+      function currentTask() { return tasks.find(task => task.id === state.current); }
+      function selectedAgent() { return agents.find(agent => agent.id === state.selectedAgent); }
+      function taskTimeline(task) {
+        if (task.id === "draft") return `<section class="empty-thread"><div class="empty-thread-card"><div class="empty-thread-icon">${icons("spark", "icon")}</div><h2>开始一个新任务</h2><p>此草稿将使用 <strong>${selectedAgent().label}</strong>。输入第一条消息后，才会启动真实 session。</p></div></section>`;
+        if (task.id === "v2") return `
+          <article class="turn"><div class="avatar user">AT</div><div class="turn-copy"><div class="turn-meta"><strong>你</strong><time>刚刚</time></div><div class="turn-body"><p>重新评估 v1.17.0 的 AI Native：中央必须是完整 AI 交互记录，右侧不要再用 Changes / Files / Review Tab。</p></div></div></article>
+          <article class="turn"><div class="avatar orion">O</div><div class="turn-copy"><div class="turn-meta"><strong>Orion Code</strong><time>正在执行</time></div><div class="turn-body"><p>已将目标收敛为一个任务工作台：左侧切换任务，中央持续呈现对话，右侧用可展开的环境信息提供证据。</p><details class="tool-card" open><summary>${icons("plan", "icon small")}生成改造计划 <span class="summary-right">3 项完成 ${icons("chevron", "icon tiny")}</span></summary><div class="tool-output">✓ 审计 TaskInspector 的三 Tab 结构
+✓ 复用 AgentPanel 的真实 Agent 发现能力
+✓ 定义 Open in Code Workspace 回退路径</div></details><section class="notice-card"><div class="notice-card-head">${icons("file", "icon small")}需要你的确认</div><p>完整 review 将在代码工作区打开；不会替换当前对话。</p><div class="inline-actions"><button class="small-button primary" data-open-code>查看代码工作区行为</button><button class="small-button" data-dismiss-notice>稍后</button></div></section></div></div></article>`;
+        if (task.id === "release") return `<article class="turn"><div class="avatar user">AT</div><div class="turn-copy"><div class="turn-meta"><strong>你</strong><time>9 分钟前</time></div><div class="turn-body"><p>检查发布前尚缺的签名、构建与 Dev App 验收。</p></div></div></article><article class="turn"><div class="avatar orion">O</div><div class="turn-copy"><div class="turn-meta"><strong>Orion Code</strong><time>等待审批</time></div><div class="turn-body"><p>构建已完成；等待你确认发布证据与签名配置。</p></div></div></article>`;
+        if (task.id === "research") return `<article class="turn"><div class="avatar orion">W</div><div class="turn-copy"><div class="turn-meta"><strong>WorkBuddy</strong><time>计划中</time></div><div class="turn-body"><p>正在对比 Stable、Beta 与 Manual 更新通道的安全边界。</p></div></div></article>`;
+        return `<article class="turn"><div class="avatar user">AT</div><div class="turn-copy"><div class="turn-meta"><strong>你</strong><time>昨天</time></div><div class="turn-body"><p>整理迁移冲突与本地安装说明。</p></div></div></article><article class="turn"><div class="avatar orion">O</div><div class="turn-copy"><div class="turn-meta"><strong>Orion Agent</strong><time>已完成</time></div><div class="turn-body"><p>已保留数据库，未覆盖已有 lock 文件。</p></div></div></article>`;
+      }
+      function renderThreads() {
+        const query = document.getElementById("thread-search").value.trim().toLowerCase();
+        const root = document.getElementById("thread-list");
+        root.innerHTML = ["Pinned", "Recent"].map(group => {
+          const groupTasks = tasks.filter(task => task.group === group && task.title.toLowerCase().includes(query));
+          if (!groupTasks.length) return "";
+          return `<section class="task-group"><h2>${group}</h2>${groupTasks.map(task => `<button class="thread" data-thread="${task.id}" aria-selected="${task.id === state.current}"><span class="thread-dot ${task.status}"></span><span class="thread-copy"><span class="thread-title">${task.title}</span><span class="thread-meta"><span class="thread-agent">${task.agent}</span> · ${task.statusText}</span></span>${task.badge ? `<span class="thread-badge">${task.badge}</span>` : ""}</button>`).join("")}</section>`;
+        }).join("") || `<p style="padding:16px;color:var(--faint)">没有匹配的任务</p>`;
+      }
+      function renderEnvironment() {
+        const task = currentTask();
+        const group = (id, icon, label, value, detail) => `<section class="environment-group" data-row="${id}" data-open="${state.openRows.has(id)}"><button class="environment-row" data-toggle-row="${id}" aria-expanded="${state.openRows.has(id)}">${icons(icon, "icon small")}<span class="row-label">${label}</span><span class="row-value">${value}</span>${icons("chevron", "icon tiny chevron")}</button><div class="environment-detail">${detail}</div></section>`;
+        const files = task.changes.length ? task.changes.map(file => `<button class="file-row" data-preview-file="${file}">${icons("file", "icon tiny")}<span>${file}</span><span class="file-status">M</span></button>`).join("") : `<p>此任务还没有关联变更。</p>`;
+        const preview = task.changes.length ? `<div class="diff-preview" aria-label="${state.previewFile} 局部差异"><div>@@ task environment @@</div><div class="del">- ToggleButtonGroup::single_row(...)</div><div class="add">+ EnvironmentDisclosure::new(...)</div><div class="add">+ // conversation remains central</div></div><button class="small-button panel-cta" data-open-code>${icons("external", "icon small")}在代码工作区审查完整 diff</button>` : "";
+        const sourceRows = [...task.sources, ...(state.contextAdded ? ["v1.17.0-ai-native-v2.html"] : [])].map(source => `<button class="file-row" data-source="${source}">${icons("link", "icon tiny")}<span>${source}</span>${icons("chevron", "icon tiny")}</button>`).join("") || `<p>尚未添加来源。</p>`;
+        document.getElementById("environment-content").innerHTML = [
+          group("changes", "file", "Changes", task.changes.length ? `<span class="add">+48</span> <span class="del">−7</span>` : "无", `<p>${task.changes.length ? "只显示当前任务相关的文件。点击文件在右侧展开局部预览。" : "当前任务没有 Git 变更。"}</p>${files}${preview}`),
+          group("local", "folder", "Local worktree", task.worktree, `<p>当前任务绑定的本地工作区</p><div class="env-path">/Users/hope/ai-project/${task.worktree}</div>`),
+          group("branch", "branch", "Branch", task.id === "v2" ? "release/orion-studio-v1.17.0" : "main", `<p>只显示当前 project 的真实分支与 dirty 摘要；无 Git project 时该项隐藏。</p><div class="env-path">release/orion-studio-v1.17.0 · 9 files changed</div>`),
+          group("commit", "branch", "Commit or push", "待处理", `<p>完整提交、历史和远端操作不在 AI Native 重做。</p><button class="small-button panel-cta" data-open-code>${icons("external", "icon small")}在代码工作区打开 Git</button>`),
+          task.plan ? group("plan", "plan", "Plan", "3 / 5", `<p>正在实现：去除右侧 Tab，固定中央对话，并接入新会话 Agent chooser。</p>`) : "",
+          task.subagents ? group("subagents", "spark", "Subagents", "1", `<p><strong>UI research</strong> · running · 正在核对窄窗口行为</p>`) : "",
+          group("sources", "link", "Sources", String(task.sources.length + (state.contextAdded ? 1 : 0)), `<p>附加到当前任务的上下文。</p>${sourceRows}`)
+        ].join("");
+      }
+      function renderTask() {
+        const task = currentTask();
+        document.getElementById("task-title").textContent = task.title;
+        document.getElementById("task-status").textContent = task.statusText;
+        document.getElementById("task-worktree").textContent = task.worktree;
+        document.getElementById("task-status-dot").style.background = task.status === "waiting" ? "var(--amber)" : task.status === "plan" ? "var(--purple)" : task.status === "idle" ? "var(--faint)" : "var(--green)";
+        const agent = task.id === "draft" ? selectedAgent() : agents.find(item => item.label === task.agent) || selectedAgent();
+        document.getElementById("header-agent-name").textContent = agent.label;
+        document.getElementById("composer-agent-name").textContent = agent.label;
+        const fixed = task.id !== "draft";
+        document.getElementById("header-agent").disabled = fixed;
+        document.getElementById("header-agent").title = fixed ? "已有消息的任务不能切换 Agent；请新建会话" : "选择本次会话的 Agent";
+        document.getElementById("timeline-content").innerHTML = taskTimeline(task);
+        renderThreads(); renderEnvironment();
+      }
+      function chooseTask(id, remember = true) {
+        if (id === state.current) return;
+        if (remember) { state.history.push(state.current); state.forward = []; }
+        state.current = id; renderTask(); updateHistoryButtons();
+      }
+      function updateHistoryButtons() { document.getElementById("go-back").disabled = !state.history.length; document.getElementById("go-forward").disabled = !state.forward.length; }
+      function positionPopover(anchor) {
+        const box = anchor.getBoundingClientRect();
+        popover.style.left = `${Math.min(window.innerWidth - 386, Math.max(15, box.left))}px`;
+        popover.style.top = `${Math.min(window.innerHeight - 380, box.bottom + 8)}px`;
+      }
+      function openAgentChooser(anchor) { renderAgentChoices(); positionPopover(anchor); popover.hidden = false; }
+      function closeAgentChooser() { popover.hidden = true; }
+      function renderAgentChoices() {
+        document.getElementById("agent-choices").innerHTML = agents.map(agent => `<button class="agent-choice" data-agent="${agent.id}" aria-selected="${agent.id === state.selectedAgent}" ${agent.available ? "" : "disabled"}><span class="agent-glyph">${icons(agent.icon, "icon small")}</span><span class="agent-copy"><strong>${agent.label}</strong><span>${agent.description}</span></span>${agent.recommended ? `<span class="recommended">推荐</span>` : agent.id === state.selectedAgent ? icons("check", "icon small") : ""}</button>`).join("");
+      }
+      function createDraft(agentId) {
+        state.selectedAgent = agentId;
+        let draft = tasks.find(task => task.id === "draft");
+        if (!draft) { draft = { id: "draft", group: "Recent", title: "新对话", agent: selectedAgent().label, status: "idle", statusText: "等待你的消息", worktree: "orion-studio", badge: "", sources: [], changes: [], plan: false }; tasks.push(draft); }
+        draft.agent = selectedAgent().label;
+        chooseTask("draft"); closeAgentChooser();
+        document.getElementById("composer-input").focus();
+        showToast(`已创建 ${selectedAgent().label} 草稿；首次发送才会启动 session。`);
+      }
+      function showToast(message) { toast.textContent = message; toast.classList.add("show"); clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.classList.remove("show"), 3200); }
+      function toggleRow(id) { state.openRows.has(id) ? state.openRows.delete(id) : state.openRows.add(id); renderEnvironment(); }
+      function addContext() { state.contextAdded = true; renderEnvironment(); showToast("已将 v1.17.0-ai-native-v2.html 添加为当前任务来源。"); }
+      function openCodeModal() { document.getElementById("code-modal").hidden = false; }
+      function closeCodeModal() { document.getElementById("code-modal").hidden = true; }
+      function openCodeWorkspace() { closeCodeModal(); document.getElementById("code-workspace").hidden = false; showToast("已显式进入代码工作区；当前任务状态保持不变。"); }
+      function leaveCodeWorkspace() { document.getElementById("code-workspace").hidden = true; document.getElementById("timeline").focus(); showToast("已回到 AI Native 的当前任务。"); }
+      function sendMessage() {
+        const input = document.getElementById("composer-input"); const text = input.value.trim(); if (!text) return;
+        const content = document.getElementById("timeline-content");
+        content.insertAdjacentHTML("beforeend", `<article class="turn"><div class="avatar user">AT</div><div class="turn-copy"><div class="turn-meta"><strong>你</strong><time>刚刚</time></div><div class="turn-body"><p>${text.replace(/[&<>]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;"})[char])}</p></div></div></article><article class="turn"><div class="avatar orion">O</div><div class="turn-copy"><div class="turn-meta"><strong>${selectedAgent().label}</strong><time>模拟响应</time></div><div class="turn-body"><p>已收到。真实实现将通过现有 ACP thread 发送，而不是由这个交互稿模拟状态。</p></div></div></article>`);
+        input.value = ""; document.getElementById("send-message").disabled = true; document.getElementById("timeline").scrollTop = document.getElementById("timeline").scrollHeight; showToast("消息已加入交互稿时间线。");
+      }
+
+      document.getElementById("new-conversation").addEventListener("click", event => openAgentChooser(event.currentTarget));
+      document.getElementById("composer-agent").addEventListener("click", event => openAgentChooser(event.currentTarget));
+      document.getElementById("header-agent").addEventListener("click", event => { if (!event.currentTarget.disabled) openAgentChooser(event.currentTarget); });
+      document.getElementById("thread-search").addEventListener("input", renderThreads);
+      document.getElementById("thread-list").addEventListener("click", event => { const button = event.target.closest("[data-thread]"); if (button) chooseTask(button.dataset.thread); });
+      document.getElementById("agent-choices").addEventListener("click", event => { const button = event.target.closest("[data-agent]"); if (button && !button.disabled) createDraft(button.dataset.agent); });
+      document.getElementById("add-more-agents").addEventListener("click", () => { closeAgentChooser(); showToast("示意：打开既有 ACP Registry，返回后重新读取可用 Agent。") });
+      document.getElementById("toggle-sidebar").addEventListener("click", () => shell.classList.toggle("sidebar-collapsed"));
+      document.getElementById("toggle-environment").addEventListener("click", () => shell.classList.toggle("environment-collapsed"));
+      document.getElementById("environment-content").addEventListener("click", event => { const toggle = event.target.closest("[data-toggle-row]"); const file = event.target.closest("[data-preview-file]"); const code = event.target.closest("[data-open-code]"); if (toggle) toggleRow(toggle.dataset.toggleRow); if (file) { state.previewFile = file.dataset.previewFile; state.openRows.add("changes"); renderEnvironment(); } if (code) openCodeModal(); });
+      document.getElementById("add-context").addEventListener("click", addContext);
+      document.getElementById("environment-add-context").addEventListener("click", addContext);
+      document.getElementById("timeline-content").addEventListener("click", event => { if (event.target.closest("[data-open-code]")) openCodeModal(); if (event.target.closest("[data-dismiss-notice]")) { event.target.closest(".notice-card").remove(); showToast("已保留任务上下文，稍后仍可从环境信息进入审查。") } });
+      document.querySelectorAll("[data-close-modal]").forEach(button => button.addEventListener("click", closeCodeModal));
+      document.getElementById("confirm-open-code").addEventListener("click", openCodeWorkspace);
+      document.getElementById("leave-code").addEventListener("click", leaveCodeWorkspace);
+      document.getElementById("review-done").addEventListener("click", leaveCodeWorkspace);
+      document.getElementById("return-to-task").addEventListener("click", leaveCodeWorkspace);
+      document.getElementById("composer-input").addEventListener("input", event => document.getElementById("send-message").disabled = !event.target.value.trim());
+      document.getElementById("composer-input").addEventListener("keydown", event => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); sendMessage(); } });
+      document.getElementById("send-message").addEventListener("click", sendMessage);
+      document.getElementById("go-back").addEventListener("click", () => { if (!state.history.length) return; state.forward.push(state.current); state.current = state.history.pop(); renderTask(); updateHistoryButtons(); });
+      document.getElementById("go-forward").addEventListener("click", () => { if (!state.forward.length) return; state.history.push(state.current); state.current = state.forward.pop(); renderTask(); updateHistoryButtons(); });
+      document.getElementById("toggle-spec").addEventListener("click", event => { document.querySelector(".spec-toolbar").hidden = true; event.currentTarget.setAttribute("aria-pressed", "true"); });
+      document.addEventListener("click", event => { if (!popover.hidden && !popover.contains(event.target) && !event.target.closest("#new-conversation, #composer-agent, #header-agent")) closeAgentChooser(); });
+      document.addEventListener("keydown", event => { if (event.key === "Escape") { closeAgentChooser(); closeCodeModal(); } if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") { event.preventDefault(); openAgentChooser(document.getElementById("new-conversation")); } });
+      renderTask(); updateHistoryButtons();
+    </script>
+  </body>
+</html>

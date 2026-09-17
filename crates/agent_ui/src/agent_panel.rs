@@ -17,7 +17,6 @@ use agent_servers::AgentServer;
 use agent_settings::UserAgentsMd;
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
-use itertools::Itertools;
 use project::agent_server_store::AllAgentServersSettings;
 use project::{AgentId, ProjectItem};
 use serde::{Deserialize, Serialize};
@@ -3991,6 +3990,14 @@ impl AgentPanel {
             .detach_and_log_err(cx);
     }
 
+    /// The workspace hosting this panel.
+    ///
+    /// Exposed so the AI Native chooser can route a pick back through the same
+    /// creation entry point the toolbar uses, instead of growing a second one.
+    pub(crate) fn workspace(&self) -> WeakEntity<Workspace> {
+        self.workspace.clone()
+    }
+
     pub fn workspace_id(&self) -> Option<WorkspaceId> {
         self.workspace_id
     }
@@ -5104,6 +5111,177 @@ impl Panel for AgentPanel {
     }
 }
 
+/// One selectable agent type for a new conversation.
+///
+/// Both the AgentPanel toolbar menu and the AI Native chooser render this model,
+/// so the two entry points cannot drift into different option sets, different
+/// icons or different availability rules. Building the list is side-effect free:
+/// it reads the agent server store and the ACP registry, and mutates nothing —
+/// which is what makes it safe to call while laying out a popover.
+#[derive(Clone, Debug)]
+pub(crate) enum NewThreadChoice {
+    /// The Native agent. Listing it never installs or authenticates anything; it
+    /// is simply the entry point the AI Native chooser recommends first.
+    Native { display_name: SharedString },
+    /// A configured external ACP agent.
+    External {
+        agent_id: AgentId,
+        display_name: SharedString,
+        icon_path: Option<SharedString>,
+    },
+    /// A local terminal thread. Never presented as an AI chat.
+    Terminal,
+}
+
+impl NewThreadChoice {
+    /// The label both entry points show for this choice.
+    pub(crate) fn label(&self) -> SharedString {
+        match self {
+            Self::Native { display_name } | Self::External { display_name, .. } => {
+                display_name.clone()
+            }
+            Self::Terminal => "Terminal".into(),
+        }
+    }
+}
+
+/// Applies a new-conversation choice through the owning panel.
+///
+/// `persist_selection` is `true` here: a toolbar pick is deliberate, so it keeps
+/// driving the panel's remembered agent. The AI Native chooser goes through the
+/// same creation entry point with `false`, so a one-off pick there cannot rewrite
+/// the global default or affect any other thread.
+fn start_new_thread_from_menu(
+    workspace: &gpui::WeakEntity<Workspace>,
+    choice: &NewThreadChoice,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    start_new_thread_with_persistence(workspace, choice, true, window, cx);
+}
+
+/// Applies a chooser pick through the owning panel.
+///
+/// `persist_selection` separates a deliberate toolbar pick — which should keep
+/// driving the panel's remembered agent — from a one-off pick in an AI Native
+/// chooser, which must not rewrite the global default or reach any other thread.
+pub(crate) fn start_new_thread_with_persistence(
+    workspace: &gpui::WeakEntity<Workspace>,
+    choice: &NewThreadChoice,
+    persist_selection: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(workspace) = workspace.upgrade() else {
+        return;
+    };
+    workspace.update(cx, |workspace, cx| {
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+            return;
+        };
+        panel.update(cx, |panel, cx| {
+            panel.start_new_thread(choice, persist_selection, Some(workspace), window, cx);
+        });
+    });
+}
+
+/// Builds the agent-chooser menu shared by every AI Native entry point — the empty
+/// state's `New conversation` button and the task header's agent badge both render
+/// this, so neither can disagree with the toolbar about which agents exist, what
+/// they are called, or which ones a collaboration workspace forbids.
+///
+/// `persist_selection` is the only thing the callers differ on: a toolbar pick is
+/// deliberate and persists, an AI Native pick is a one-off and does not.
+pub(crate) fn build_agent_choice_menu(
+    workspace: Option<&gpui::WeakEntity<Workspace>>,
+    persist_selection: bool,
+    focus_handle: FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ContextMenu> {
+    ContextMenu::build(window, cx, move |menu, _window, cx| {
+        // Without a panel there is no session host, so there is nothing to create a
+        // thread in. An empty chooser would be worse than none.
+        let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
+            return menu;
+        };
+        let choices = workspace
+            .read(cx)
+            .panel::<AgentPanel>(cx)
+            .map(|panel| panel.read(cx).available_new_thread_choices(cx))
+            .unwrap_or_default();
+        // A collaboration workspace only supports the native agent. The shared model
+        // reports what exists; this mirrors the toolbar's rule rather than silently
+        // substituting a different agent.
+        let is_via_collab = workspace.read(cx).project().read(cx).is_via_collab();
+        let workspace = workspace.downgrade();
+
+        let mut menu = menu.context(focus_handle);
+        for choice in &choices {
+            // A collaboration workspace only supports the native agent. Every other
+            // agent stays listed but disabled **with the reason on the label**, so the
+            // user is told why rather than left to guess — and nothing silently falls
+            // back to a different agent.
+            let unavailable_in_collab =
+                is_via_collab && !matches!(choice, NewThreadChoice::Native { .. });
+            let entry = match choice {
+                NewThreadChoice::Native { .. } => {
+                    ContextMenuEntry::new(choice.label()).icon(IconName::Sparkle)
+                }
+                NewThreadChoice::Terminal => {
+                    ContextMenuEntry::new(choice.label()).icon(IconName::Terminal)
+                }
+                NewThreadChoice::External { icon_path, .. } => {
+                    let mut entry = match icon_path {
+                        Some(icon_path) => {
+                            ContextMenuEntry::new(choice.label()).custom_icon_svg(icon_path.clone())
+                        }
+                        None => ContextMenuEntry::new(choice.label()).icon(IconName::Sparkle),
+                    };
+                    if unavailable_in_collab {
+                        entry = ContextMenuEntry::new(format!(
+                            "{} — only the native agent is available in this workspace",
+                            choice.label()
+                        ))
+                        .icon(IconName::Close);
+                    }
+                    entry
+                }
+            };
+
+            let choice = choice.clone();
+            let workspace = workspace.clone();
+            menu = menu.item(
+                entry
+                    .icon_color(Color::Muted)
+                    .disabled(unavailable_in_collab)
+                    .handler(move |window, cx| {
+                        start_new_thread_with_persistence(
+                            &workspace,
+                            &choice,
+                            persist_selection,
+                            window,
+                            cx,
+                        );
+                    }),
+            );
+        }
+        // The way to add more agents, from the same registry entry the toolbar
+        // already uses. It is a real route to the existing ACP configuration — not a
+        // fabricated agent entry, and it never installs or authenticates anything on
+        // its own.
+        menu = menu.separator().item(
+            ContextMenuEntry::new("Manage agents…")
+                .icon(IconName::Plus)
+                .icon_color(Color::Muted)
+                .handler(|window, cx| {
+                    window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx);
+                }),
+        );
+        menu
+    })
+}
+
 impl AgentPanel {
     fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.base_view, BaseView::Uninitialized) {
@@ -5823,13 +6001,107 @@ impl AgentPanel {
         })
     }
 
+    /// Every agent type a new conversation could start with, in the order both
+    /// entry points present them: the native agent, then external ACP agents by
+    /// display name, then a terminal when the workspace supports one.
+    ///
+    /// Availability is real rather than assumed — an agent appears only when the
+    /// agent server store actually has it, and its display name and icon come from
+    /// the same sources the toolbar already used. Nothing here installs,
+    /// authenticates or writes a selection.
+    pub(crate) fn available_new_thread_choices(&self, cx: &App) -> Vec<NewThreadChoice> {
+        let agent_server_store = self.project.read(cx).agent_server_store().clone();
+        let store = agent_server_store.read(cx);
+        let registry_store = project::AgentRegistryStore::try_global(cx);
+        let registry_store_ref = registry_store.as_ref().map(|store| store.read(cx));
+
+        let mut choices = vec![NewThreadChoice::Native {
+            display_name: Agent::NativeAgent.label(),
+        }];
+
+        let mut external: Vec<NewThreadChoice> = store
+            .external_agents()
+            .map(|agent_id| {
+                let display_name = store
+                    .agent_display_name(agent_id)
+                    .or_else(|| {
+                        registry_store_ref
+                            .as_ref()
+                            .and_then(|registry| registry.agent(agent_id))
+                            .map(|agent| agent.name().clone())
+                    })
+                    .unwrap_or_else(|| agent_id.0.clone());
+                let icon_path = store.agent_icon(agent_id).or_else(|| {
+                    registry_store_ref
+                        .as_ref()
+                        .and_then(|registry| registry.agent(agent_id))
+                        .and_then(|agent| agent.icon_path().cloned())
+                });
+                NewThreadChoice::External {
+                    agent_id: agent_id.clone(),
+                    display_name,
+                    icon_path,
+                }
+            })
+            .collect();
+        external.sort_by_key(|choice| choice.label().to_lowercase());
+        choices.append(&mut external);
+
+        if self.supports_terminal(cx) {
+            choices.push(NewThreadChoice::Terminal);
+        }
+
+        choices
+    }
+
+    /// Starts a new conversation of the given kind.
+    ///
+    /// `persist_selection` separates a deliberate toolbar choice — which should
+    /// keep driving the panel's remembered agent — from a one-off pick in the AI
+    /// Native chooser, which must not rewrite the global default or any other
+    /// thread. Collaboration restrictions are enforced downstream by
+    /// `new_external_agent_thread`, so both entry points inherit the same rule.
+    pub(crate) fn start_new_thread(
+        &mut self,
+        choice: &NewThreadChoice,
+        persist_selection: bool,
+        workspace: Option<&Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match choice {
+            NewThreadChoice::Terminal => {
+                self.new_terminal(workspace, AgentThreadSource::AgentPanel, window, cx);
+            }
+            NewThreadChoice::Native { .. } => {
+                if persist_selection {
+                    self.selected_agent = Agent::NativeAgent;
+                }
+                self.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
+            }
+            NewThreadChoice::External { agent_id, .. } => {
+                if persist_selection {
+                    self.selected_agent = Agent::Custom {
+                        id: agent_id.clone(),
+                    };
+                }
+                self.new_external_agent_thread(
+                    &NewExternalAgentThread {
+                        agent: agent_id.clone(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+        }
+    }
+
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
         let focus_handle = self.focus_handle(cx);
 
         let can_create_entries = self.has_open_project(cx);
-        let supports_terminal = self.supports_terminal(cx);
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
 
         let (selected_agent_custom_icon, selected_agent_label) = if showing_terminal {
@@ -5860,175 +6132,115 @@ impl AgentPanel {
                 .unwrap_or_default();
 
             let focus_handle = focus_handle.clone();
-            let agent_server_store = agent_server_store;
 
             Rc::new(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |menu, _window, cx| {
-                    menu.context(focus_handle.clone())
-                        .item(
-                            ContextMenuEntry::new("Orion Agent")
+                    // Render from the shared model so this menu and the AI Native
+                    // chooser can never disagree about which agents exist or what
+                    // they are called. The grouping and order below are the ones
+                    // this menu has always used, so Classic / Agentic behaviour is
+                    // unchanged.
+                    let Some(panel) = workspace
+                        .upgrade()
+                        .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+                    else {
+                        return menu.context(focus_handle.clone());
+                    };
+                    let choices = panel.read(cx).available_new_thread_choices(cx);
+                    let mut menu = menu.context(focus_handle.clone());
+
+                    for choice in choices
+                        .iter()
+                        .filter(|choice| matches!(choice, NewThreadChoice::Native { .. }))
+                    {
+                        let choice = choice.clone();
+                        let workspace = workspace.clone();
+                        menu = menu.item(
+                            ContextMenuEntry::new(choice.label())
                                 .when(
                                     !showing_terminal && is_agent_selected(Agent::NativeAgent),
                                     |this| this.action(Box::new(NewThread)),
                                 )
                                 .icon(IconName::Sparkle)
                                 .icon_color(Color::Muted)
-                                .handler({
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        if let Some(workspace) = workspace.upgrade() {
-                                            workspace.update(cx, |workspace, cx| {
-                                                if let Some(panel) =
-                                                    workspace.panel::<AgentPanel>(cx)
-                                                {
-                                                    panel.update(cx, |panel, cx| {
-                                                        panel.selected_agent = Agent::NativeAgent;
-                                                        panel.activate_new_thread(
-                                                            true,
-                                                            AgentThreadSource::AgentPanel,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    }
+                                .handler(move |window, cx| {
+                                    start_new_thread_from_menu(&workspace, &choice, window, cx);
                                 }),
-                        )
-                        .when(supports_terminal, |menu| {
-                            menu.item(
-                                ContextMenuEntry::new("Terminal")
-                                    .when(showing_terminal, |this| this.action(Box::new(NewThread)))
-                                    .when(!showing_terminal, |this| {
-                                        this.action(Box::new(NewTerminalThread))
-                                    })
-                                    .icon(IconName::Terminal)
-                                    .icon_color(Color::Muted)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        move |window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.new_terminal(
-                                                                Some(workspace),
-                                                                AgentThreadSource::AgentPanel,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    }),
-                            )
-                        })
-                        .map(|mut menu| {
-                            let agent_server_store = agent_server_store.read(cx);
-                            let registry_store = project::AgentRegistryStore::try_global(cx);
-                            let registry_store_ref = registry_store.as_ref().map(|s| s.read(cx));
+                        );
+                    }
 
-                            struct AgentMenuItem {
-                                id: AgentId,
-                                display_name: SharedString,
-                            }
-
-                            let agent_items = agent_server_store
-                                .external_agents()
-                                .map(|agent_id| {
-                                    let display_name = agent_server_store
-                                        .agent_display_name(agent_id)
-                                        .or_else(|| {
-                                            registry_store_ref
-                                                .as_ref()
-                                                .and_then(|store| store.agent(agent_id))
-                                                .map(|a| a.name().clone())
-                                        })
-                                        .unwrap_or_else(|| agent_id.0.clone());
-                                    AgentMenuItem {
-                                        id: agent_id.clone(),
-                                        display_name,
-                                    }
+                    for choice in choices
+                        .iter()
+                        .filter(|choice| matches!(choice, NewThreadChoice::Terminal))
+                    {
+                        let choice = choice.clone();
+                        let workspace = workspace.clone();
+                        menu = menu.item(
+                            ContextMenuEntry::new(choice.label())
+                                .when(showing_terminal, |this| this.action(Box::new(NewThread)))
+                                .when(!showing_terminal, |this| {
+                                    this.action(Box::new(NewTerminalThread))
                                 })
-                                .sorted_unstable_by_key(|e| e.display_name.to_lowercase())
-                                .collect::<Vec<_>>();
-
-                            if !agent_items.is_empty() {
-                                menu = menu.separator().header("External Agents");
-                            }
-                            for item in &agent_items {
-                                let mut entry = ContextMenuEntry::new(item.display_name.clone());
-
-                                let icon_path =
-                                    agent_server_store.agent_icon(&item.id).or_else(|| {
-                                        registry_store_ref
-                                            .as_ref()
-                                            .and_then(|store| store.agent(&item.id))
-                                            .and_then(|a| a.icon_path().cloned())
-                                    });
-
-                                if let Some(icon_path) = icon_path {
-                                    entry = entry.custom_icon_svg(icon_path);
-                                } else {
-                                    entry = entry.icon(IconName::Sparkle);
-                                }
-
-                                entry = entry
-                                    .when(
-                                        !showing_terminal
-                                            && is_agent_selected(Agent::Custom {
-                                                id: item.id.clone(),
-                                            }),
-                                        |this| this.action(Box::new(NewThread)),
-                                    )
-                                    .icon_color(Color::Muted)
-                                    .disabled(is_via_collab)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        let agent_id = item.id.clone();
-                                        move |window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.new_external_agent_thread(
-                                                                &NewExternalAgentThread {
-                                                                    agent: agent_id.clone(),
-                                                                },
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    });
-
-                                menu = menu.item(entry);
-                            }
-
-                            menu
-                        })
-                        .separator()
-                        .item(
-                            ContextMenuEntry::new("Add More Agents")
-                                .icon(IconName::Plus)
+                                .icon(IconName::Terminal)
                                 .icon_color(Color::Muted)
-                                .handler({
-                                    move |window, cx| {
-                                        window
-                                            .dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
-                                    }
+                                .handler(move |window, cx| {
+                                    start_new_thread_from_menu(&workspace, &choice, window, cx);
                                 }),
-                        )
+                        );
+                    }
+
+                    let external: Vec<NewThreadChoice> = choices
+                        .iter()
+                        .filter(|choice| matches!(choice, NewThreadChoice::External { .. }))
+                        .cloned()
+                        .collect();
+
+                    if !external.is_empty() {
+                        menu = menu.separator().header("External Agents");
+                    }
+                    for choice in &external {
+                        let NewThreadChoice::External {
+                            agent_id,
+                            display_name,
+                            icon_path,
+                        } = choice
+                        else {
+                            continue;
+                        };
+                        let mut entry = ContextMenuEntry::new(display_name.clone());
+                        match icon_path {
+                            Some(icon_path) => entry = entry.custom_icon_svg(icon_path.clone()),
+                            None => entry = entry.icon(IconName::Sparkle),
+                        }
+                        let choice = choice.clone();
+                        let workspace = workspace.clone();
+                        menu = menu.item(
+                            entry
+                                .when(
+                                    !showing_terminal
+                                        && is_agent_selected(Agent::Custom {
+                                            id: agent_id.clone(),
+                                        }),
+                                    |this| this.action(Box::new(NewThread)),
+                                )
+                                .icon_color(Color::Muted)
+                                .disabled(is_via_collab)
+                                .handler(move |window, cx| {
+                                    start_new_thread_from_menu(&workspace, &choice, window, cx);
+                                }),
+                        );
+                    }
+
+                    menu.separator().item(
+                        ContextMenuEntry::new("Add More Agents")
+                            .icon(IconName::Plus)
+                            .icon_color(Color::Muted)
+                            .handler({
+                                move |window, cx| {
+                                    window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
+                                }
+                            }),
+                    )
                 }))
             })
         };
@@ -9387,6 +9599,50 @@ mod tests {
         (panel, cx)
     }
 
+    /// The chooser model is the single source of truth for both new-conversation
+    /// entry points, and the toolbar now renders its menu from it. The data must
+    /// therefore be exactly what a menu needs: the native agent first, real labels,
+    /// and a terminal entry only when the project actually supports one.
+    #[gpui::test]
+    async fn test_available_new_thread_choices_offers_native_and_terminal(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let (choices, expected_terminal) = cx.update(|_, app| {
+            let panel = panel.read(app);
+            (
+                panel.available_new_thread_choices(app),
+                panel.supports_terminal(app),
+            )
+        });
+
+        assert!(
+            matches!(choices.first(), Some(NewThreadChoice::Native { .. })),
+            "the native agent must be the first new-conversation choice"
+        );
+        assert!(
+            choices.iter().all(|choice| !choice.label().is_empty()),
+            "every choice needs a label the menu can render"
+        );
+
+        assert_eq!(
+            choices
+                .iter()
+                .filter(|choice| matches!(choice, NewThreadChoice::Terminal))
+                .count(),
+            usize::from(expected_terminal),
+            "a terminal entry must appear exactly when the project supports one"
+        );
+
+        assert!(
+            choices
+                .iter()
+                .all(|choice| matches!(choice, NewThreadChoice::Terminal)
+                    || matches!(choice, NewThreadChoice::Native { .. })
+                    || matches!(choice, NewThreadChoice::External { .. })),
+            "every choice must be one of the three creatable kinds"
+        );
+    }
+
     async fn setup_visible_panel(
         cx: &mut TestAppContext,
     ) -> (Entity<AgentPanel>, VisualTestContext) {
@@ -11959,6 +12215,87 @@ mod tests {
             read_global_last_used_agent(&kvp),
             Some(expected_agent),
             "the selection should be persisted as the global last-used agent"
+        );
+    }
+
+    /// The AI Native chooser passes `persist_selection = false`, so a one-off pick
+    /// must leave the panel's remembered agent alone — that is what keeps a
+    /// temporary choice from becoming the global default. The toolbar's own pick
+    /// persists, which is exactly why the two paths take separate flags.
+    #[gpui::test]
+    async fn test_chooser_pick_persists_only_when_asked(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+        });
+
+        // Simulate the panel remembering a non-native agent from earlier use, so a
+        // native pick has something observable to *not* overwrite.
+        let remembered_agent = Agent::Custom {
+            id: "my-configured-agent".into(),
+        };
+        panel.update(cx, |panel, _cx| {
+            panel.selected_agent = remembered_agent.clone()
+        });
+
+        let native_choice = NewThreadChoice::Native {
+            display_name: Agent::NativeAgent.label(),
+        };
+
+        // A one-off AI Native pick goes through the shared entry point with
+        // `persist_selection = false`.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = workspace.panel::<AgentPanel>(cx).unwrap();
+            panel.update(cx, |panel, cx| {
+                panel.start_new_thread(&native_choice, false, Some(workspace), window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            panel.read_with(cx, |panel, _cx| panel.selected_agent.clone()),
+            remembered_agent,
+            "a one-off chooser pick must not rewrite the panel's remembered agent"
+        );
+
+        // The toolbar path persists, which is the behaviour that must not regress.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = workspace.panel::<AgentPanel>(cx).unwrap();
+            panel.update(cx, |panel, cx| {
+                panel.start_new_thread(&native_choice, true, Some(workspace), window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        assert!(
+            matches!(
+                panel.read_with(cx, |panel, _cx| panel.selected_agent.clone()),
+                Agent::NativeAgent
+            ),
+            "a deliberate toolbar pick should drive the remembered agent"
         );
     }
 

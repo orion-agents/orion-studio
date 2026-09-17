@@ -743,8 +743,12 @@ impl MessageEditor {
             .is_some_and(|menu| matches!(menu, CodeContextMenu::Completions(_)) && menu.visible())
     }
 
-    #[cfg(test)]
-    pub fn mention_set(&self) -> &Entity<MentionSet> {
+    /// The mentions currently attached to this editor.
+    ///
+    /// Exposed so the Task Environment panel can list this task's sources
+    /// read-only. Adding and removing stay here, so context ownership is never
+    /// duplicated.
+    pub(crate) fn mention_set(&self) -> &Entity<MentionSet> {
         &self.mention_set
     }
 

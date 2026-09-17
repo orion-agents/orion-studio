@@ -560,6 +560,7 @@ dependencies = [
  "vim",
  "watch",
  "workspace",
+ "worktree",
  "zed_actions",
 ]
 
@@ -12365,7 +12366,7 @@ dependencies = [
 
 [[package]]
 name = "orion-studio"
-version = "1.16.3"
+version = "1.17.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

@@ -6114,6 +6114,33 @@ impl ThreadView {
         .flex_grow_1()
     }
 
+    /// Wraps a timeline entry in the center-stage card shell.
+    ///
+    /// The dock presents agent activity as bare rows inside a narrow panel; the
+    /// center stage presents the same entries as cards in a task timeline, which
+    /// is what makes tool calls and approval prompts read as first-class objects
+    /// rather than incidental lines. State, actions and focus tracking are
+    /// untouched — only the surrounding chrome differs.
+    fn center_stage_card(
+        element: AnyElement,
+        surface: super::ConversationSurface,
+        cx: &App,
+    ) -> AnyElement {
+        if !surface.is_center() {
+            return element;
+        }
+        let colors = cx.theme().colors();
+        div()
+            .w_full()
+            .rounded_lg()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.panel_background)
+            .p_2()
+            .child(element)
+            .into_any()
+    }
+
     fn render_entry(
         &self,
         entry_ix: usize,
@@ -6122,6 +6149,7 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let surface = self.surface(cx);
         let is_indented = entry.is_indented();
         let is_first_indented = is_indented
             && self
@@ -6414,7 +6442,7 @@ impl ThreadView {
                     cx,
                 );
 
-                if let Some(handle) = self
+                let element = if let Some(handle) = self
                     .entry_view_state
                     .read(cx)
                     .entry(entry_ix)
@@ -6423,7 +6451,9 @@ impl ThreadView {
                     tool_call.track_focus(&handle).into_any()
                 } else {
                     tool_call.into_any()
-                }
+                };
+
+                Self::center_stage_card(element, surface, cx)
             }
             AgentThreadEntry::Elicitation(elicitation_id) => {
                 let thread = self.thread.read(cx);
@@ -6432,7 +6462,7 @@ impl ThreadView {
                 {
                     let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
 
-                    if let Some(handle) = self
+                    let element = if let Some(handle) = self
                         .entry_view_state
                         .read(cx)
                         .entry(entry_ix)
@@ -6441,7 +6471,9 @@ impl ThreadView {
                         elicitation.track_focus(&handle).into_any()
                     } else {
                         elicitation.into_any()
-                    }
+                    };
+
+                    Self::center_stage_card(element, surface, cx)
                 } else {
                     Empty.into_any()
                 }
@@ -12125,6 +12157,23 @@ impl ThreadView {
     }
 }
 
+impl ThreadView {
+    /// The rendering contract this thread is presented under, read from the
+    /// owning [`super::ConversationView`].
+    ///
+    /// Reading it from the owner rather than caching a copy means a thread can
+    /// never render under a stale contract, and no propagation bookkeeping is
+    /// needed when the active surface or thread changes. An unbound thread falls
+    /// back to [`super::ConversationSurface::Dock`], which is the presentation a
+    /// thread has whenever it is not the AI Native center surface.
+    pub(crate) fn surface(&self, cx: &App) -> super::ConversationSurface {
+        self.server_view
+            .upgrade()
+            .map(|server_view| server_view.read(cx).surface())
+            .unwrap_or_default()
+    }
+}
+
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Keep the message editor's local slash commands in sync with the
@@ -12135,7 +12184,16 @@ impl Render for ThreadView {
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
 
+        // The center stage reads as a document rather than a sidebar, so the
+        // conversation record gets more room between lines than the dock gives
+        // it. Both values are relative, so they track the user's UI font size
+        // instead of hard-coding a size; the dock path is untouched.
+        let surface = self.surface(cx);
         let conversation = v_flex()
+            .when(surface.is_center(), |this| {
+                this.text_size(gpui::rems(1.0))
+                    .line_height(gpui::relative(1.6))
+            })
             .when(self.resumed_without_history, |this| {
                 this.child(Self::render_resume_notice(cx))
             })

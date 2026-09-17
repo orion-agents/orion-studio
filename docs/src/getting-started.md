@@ -46,6 +46,8 @@ The command palette (`Cmd+Shift+P`) is your gateway to every action in Orion Stu
 
 Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout.
 
+Use **Panel Layout > AI Native** (or the {#action workspace::UseAiNativeLayout} action) for a conversation-first workspace: the Threads Sidebar moves to the left, the current task's conversation fills the center, and a tab-free **Task Environment** panel docks on the right. The Agent Panel keeps running your threads but stays out of the way; file previews stay on the right, and **Open review in Code Workspace** with **Return to task** are the explicit way in and out of full editing.
+
 ### 3. Configure Your Editor
 
 Open the Settings Editor with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows). Search for any setting and change it directly.

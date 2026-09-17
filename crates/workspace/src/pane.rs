@@ -835,6 +835,14 @@ impl Pane {
         self.should_display_tab_bar = Rc::new(should_display_tab_bar);
     }
 
+    /// Evaluates the pane's tab bar visibility predicate.
+    ///
+    /// The predicate is a closure, so the answer is only meaningful for the
+    /// window and settings it is evaluated against.
+    pub fn should_display_tab_bar(&self, window: &Window, cx: &mut Context<Self>) -> bool {
+        (self.should_display_tab_bar)(window, cx)
+    }
+
     pub fn set_should_display_welcome_page(&mut self, should_display_welcome_page: bool) {
         self.should_display_welcome_page = should_display_welcome_page;
     }

@@ -1399,7 +1399,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             workspace.show_toast(
                                 Toast::new(
                                     NotificationId::unique::<()>(),
-                                    "Channels and shared notes are unavailable in Orion Studio Preview.",
+                                    "Channels and shared notes are unavailable in Orion Studio.",
                                 ),
                                 cx,
                             );

@@ -51,7 +51,8 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    AccessibleMode, FocusAiNativeConversation, MultiWorkspace, ReturnToAiNativeTask,
+    ToggleWorktreeSecurity, UseAgenticLayout, UseAiNativeLayout, UseClassicLayout, Workspace,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -74,16 +75,6 @@ actions!(
         SwitchBranch,
         /// A debug action to simulate an update being available to test the update banner UI.
         SimulateUpdateAvailable
-    ]
-);
-
-actions!(
-    workspace,
-    [
-        /// Switches to the classic, editor-focused panel layout.
-        UseClassicLayout,
-        /// Switches to the agentic panel layout.
-        UseAgenticLayout,
     ]
 );
 
@@ -110,6 +101,11 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|_workspace, _: &UseAgenticLayout, _window, cx| {
             set_window_layout(WindowLayout::Agent(None), cx);
         });
+
+        // `UseAiNativeLayout` is deliberately not handled here. Its sequence is
+        // not a plain settings write — it also opens the Threads sidebar, binds
+        // the center conversation surface and stands down the dock-hosted Agent
+        // panel — so `agent_ui` registers the handler that owns those steps.
 
         workspace.register_action(|workspace, _: &SimulateUpdateAvailable, _window, cx| {
             if let Some(titlebar) = workspace
@@ -178,6 +174,10 @@ fn update_layout_action_filter(cx: &mut App) {
     let layout_actions = [
         TypeId::of::<UseClassicLayout>(),
         TypeId::of::<UseAgenticLayout>(),
+        TypeId::of::<UseAiNativeLayout>(),
+        // The way back to the task is as AI Native-only as the layout action
+        // itself: without AI there is no center conversation to focus.
+        TypeId::of::<FocusAiNativeConversation>(),
     ];
     CommandPaletteFilter::update_global(cx, |filter, _| {
         if disable_ai {
@@ -1254,7 +1254,9 @@ impl TitleBar {
                 let current_layout = AgentSettings::get_layout(cx);
                 let is_editor = matches!(current_layout, WindowLayout::Editor(_));
                 let is_agent = matches!(current_layout, WindowLayout::Agent(_));
+                let is_ai_native = matches!(current_layout, WindowLayout::AiNative(_));
                 let is_custom = matches!(current_layout, WindowLayout::Custom(_));
+                let ai_native_trip = workspace::ai_native_trip_active(cx);
 
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     menu.when(hosted_services_available && is_signed_in, |this| {
@@ -1400,6 +1402,15 @@ impl TitleBar {
                                         window.dispatch_action(UseAgenticLayout.boxed_clone(), cx);
                                     },
                                 )
+                                .toggleable_entry(
+                                    "AI Native",
+                                    is_ai_native,
+                                    IconPosition::Start,
+                                    Some(UseAiNativeLayout.boxed_clone()),
+                                    move |window, cx| {
+                                        window.dispatch_action(UseAiNativeLayout.boxed_clone(), cx);
+                                    },
+                                )
                                 .when(is_custom, |menu| {
                                     menu.item(
                                         ContextMenuEntry::new("Custom")
@@ -1407,6 +1418,20 @@ impl TitleBar {
                                             .disabled(true),
                                     )
                                 })
+                                // The way back from a code-workspace trip. Only
+                                // meaningful once the user has left AI Native, so it
+                                // The way back from a code-workspace trip. Only shown
+                                // while a trip is actually in progress: a user who
+                                // switched layouts directly has no task to return to.
+                                .when(
+                                    ai_enabled && !is_ai_native && ai_native_trip,
+                                    |menu| {
+                                        menu.separator().action(
+                                            "Return to task",
+                                            ReturnToAiNativeTask.boxed_clone(),
+                                        )
+                                    },
+                                )
                             })
                     })
                     .when(hosted_services_available && is_signed_in, |this| {

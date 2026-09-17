@@ -9,7 +9,9 @@ Parallel Agents lets you run multiple agent threads and Terminal Threads at once
 
 Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar}.
 
-Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) to place the Agent Panel and Threads Sidebar on the left, with the Project Panel, Git Panel, and other panels on the right. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout. You can still rearrange individual panels by right-clicking any panel icon.
+Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) to place the Agent Panel and Threads Sidebar on the left, with the Project Panel, Git Panel, and other panels on the right. Use **Panel Layout > Classic** (or the {#action workspace::UseClassicLayout}) to restore the editor-oriented layout. You can still rearrange individual panels by right-clicking any panel icon.
+
+Use **Panel Layout > AI Native** (or the {#action workspace::UseAiNativeLayout} action) when the threads themselves are the work. The Threads Sidebar moves to the left, the current thread's conversation becomes the center surface, and a tab-free **Task Environment** panel docks on the right. Selecting a thread in the sidebar switches the center conversation immediately, and switching between agent threads and Terminal Threads swaps the center surface to match — a Terminal Thread is shown as a terminal, not as a transcript. See [AI Native Layout](./agent-panel.md#ai-native).
 
 ## Threads Sidebar {#threads-sidebar}
 

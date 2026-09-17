@@ -6,20 +6,21 @@
 [![CI](https://github.com/orion-agents/orion-studio/actions/workflows/run_tests.yml/badge.svg)](https://github.com/orion-agents/orion-studio/actions/workflows/run_tests.yml)
 
 > [!IMPORTANT]
-> Orion Studio is currently a **Preview**. The supported downloadable build is
-> limited to **macOS 11.0 or later on Apple Silicon (arm64)** and is not a
-> Stable release.
+> Orion Studio v1.17.0 is released for **macOS 11.0 or later on Apple Silicon
+> (arm64)**. The AI Native workspace is available as an initial, optional
+> conversation-first layout and will continue to receive UI refinements.
 
 Orion Studio is an open-source code editor derived from
 [Zed](https://github.com/zed-industries/zed) and its GPUI foundation. Zed and
 Zed Industries are referenced for upstream code and attribution; Zed's hosted
 services and legal policies are not Orion Studio services or policies.
 
-## Download the Preview
+## Download Orion Studio
 
 Download Orion Studio only from
-[GitHub Releases](https://github.com/orion-agents/orion-studio/releases). Select
-a release marked **Pre-release** and download `Orion-Studio-aarch64.dmg`.
+[GitHub Releases](https://github.com/orion-agents/orion-studio/releases). For a
+Stable release, select an exact version tag such as `v1.17.0` (not a release
+marked **Pre-release**) and download `Orion-Studio-aarch64.dmg`.
 
 GitHub Releases is the only supported download channel. There is currently no
 package manager installation, Intel Mac build, Linux build, or Windows build.
@@ -29,14 +30,16 @@ digest or if macOS Gatekeeper rejects the installed app.
 Before installing, read:
 
 - [macOS Apple Silicon installation](./docs/installation.md)
+- [release policy and trust gates](./docs/releases/release-policy.md)
 - [Preview scope, migration notes, and known limitations](./docs/releases/preview-macos-arm64.md)
+  when evaluating a pre-release build
 
-## Preview Boundaries
+## Product Boundaries
 
 - Orion Studio does not offer an Orion-operated account, subscription, or
-  hosted online service as part of this Preview.
-- An Orion extension marketplace is not in the supported Preview scope.
-- Automatic updates are not supported; install later Preview versions manually
+  hosted online service as part of the current distribution.
+- An Orion extension marketplace is not currently supported.
+- Automatic updates are not supported; install later versions manually
   from GitHub Releases and verify each new artifact.
 - Inherited or user-configured third-party integrations may have their own
   availability, data handling, and terms. Do not assume they are operated or
@@ -51,12 +54,12 @@ Before installing, read:
 - [Build on Linux](./docs/src/development/linux.md)
 - [Build on Windows](./docs/src/development/windows.md)
 
-These are source-development guides. They do not mean downloadable Preview
+These are source-development guides. They do not mean downloadable
 packages are available for every development platform.
 
 ## Contributing and Support
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) before proposing a change. For Preview
+See [CONTRIBUTING.md](./CONTRIBUTING.md) before proposing a change. For release
 help or reproducible bugs, use [SUPPORT.md](./SUPPORT.md). Report security
 vulnerabilities privately as described in [SECURITY.md](./SECURITY.md).
 
@@ -70,4 +73,4 @@ generated during packaging and included in the application bundle.
 This fork preserves attribution to Zed Industries, Inc. and other upstream
 contributors. The presence of upstream code or names does not make Zed's
 privacy policy, terms of service, subprocessor list, sponsorship program, or
-support channels applicable to the Orion Studio Preview.
+support channels applicable to Orion Studio.
