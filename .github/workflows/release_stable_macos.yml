@@ -1,0 +1,149 @@
+name: Release macOS Apple Silicon Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed tag in the form vMAJOR.MINOR.PATCH
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-stable-macos-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate_release:
+    runs-on: ubuntu-24.04
+    environment: production
+    outputs:
+      tag_commit: ${{ steps.source.outputs.tag_commit }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Verify immutable Stable source
+        id: source
+        env:
+          ALLOWED_SIGNERS_BASE64: ${{ vars.ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == orion-agents/orion-studio ]]
+          [[ "${GITHUB_REF}" == refs/heads/main ]]
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ -n "${ALLOWED_SIGNERS_BASE64}" ]]
+          allowed_signers="${RUNNER_TEMP}/allowed-signers"
+          printf '%s' "${ALLOWED_SIGNERS_BASE64}" | base64 --decode > "${allowed_signers}"
+          git config --local gpg.format ssh
+          git config --local gpg.ssh.allowedSignersFile "${allowed_signers}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          [[ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" == tag ]]
+          git verify-tag "${RELEASE_TAG}"
+          tag_commit=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          git merge-base --is-ancestor "${tag_commit}" origin/main
+          [[ "$(git show "${tag_commit}:crates/zed/RELEASE_CHANNEL")" == stable ]]
+          [[ "$(git show "${tag_commit}:crates/zed/Cargo.toml" | sed -n '/^\[package\]/,/^\[/p' | sed -n 's/^version = "\([^"]*\)"/\1/p')" == "${RELEASE_TAG#v}" ]]
+          echo "tag_commit=${tag_commit}" >> "$GITHUB_OUTPUT"
+
+  build_release:
+    needs: validate_release
+    runs-on: [self-hosted, macOS, ARM64, orion-studio-macos-release]
+    timeout-minutes: 180
+    environment: production
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
+      ORION_STUDIO_REQUIRE_SENTRY: '0'
+    steps:
+      - name: Verify runner capacity
+        run: |
+          set -euo pipefail
+          [[ "$(uname -m)" == arm64 ]]
+          available_kib=$(LC_ALL=C df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
+          (( available_kib >= 100 * 1024 * 1024 ))
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ needs.validate_release.outputs.tag_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Run source gates
+        run: |
+          set -euo pipefail
+          bash -n script/bundle-mac
+          ./script/test-orion-brand
+          ./script/check-orion-brand
+          ./script/check-secrets
+          ./script/check-macos-entitlements
+          ./script/test-uninstall
+          cargo fmt --all -- --check
+          git diff --check
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          check-latest: true
+          package-manager-cache: false
+      - name: Build, sign, notarize, and staple
+        env:
+          APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+          APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+          APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
+          ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: env GITHUB_REF_TYPE=tag GITHUB_REF_NAME="$RELEASE_TAG" ./script/bundle-mac aarch64-apple-darwin
+      - name: Verify signed and stapled DMG
+        env:
+          DMG_PATH: target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg
+          ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
+          ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          [[ -f "$DMG_PATH" ]]
+          codesign --verify --deep --strict --verbose=2 "$DMG_PATH"
+          codesign -d --verbose=4 "$DMG_PATH" 2>&1 | grep -F "Authority=${ORION_STUDIO_MACOS_SIGNING_IDENTITY}"
+          codesign -d --verbose=4 "$DMG_PATH" 2>&1 | grep -F "TeamIdentifier=${ORION_STUDIO_MACOS_TEAM_ID}"
+          stapler validate "$DMG_PATH"
+          (cd target/aarch64-apple-darwin/release && shasum -a 256 Orion-Studio-aarch64.dmg > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: stable-macos-aarch64-${{ inputs.tag }}
+          path: |
+            target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg
+            target/aarch64-apple-darwin/release/SHA256SUMS
+          compression-level: 0
+
+  create_draft:
+    needs: [validate_release, build_release]
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: stable-macos-aarch64-${{ inputs.tag }}
+          path: release-artifacts
+      - name: Verify assets and create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          (cd release-artifacts && shasum -a 256 -c SHA256SUMS)
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            [[ "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" == true ]]
+          else
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "Orion Studio ${RELEASE_TAG}" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber release-artifacts/Orion-Studio-aarch64.dmg release-artifacts/SHA256SUMS
