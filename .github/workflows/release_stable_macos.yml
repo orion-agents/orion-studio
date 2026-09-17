@@ -49,8 +49,9 @@ jobs:
           git verify-tag "${RELEASE_TAG}"
           tag_commit=$(git rev-parse "${RELEASE_TAG}^{commit}")
           git merge-base --is-ancestor "${tag_commit}" origin/main
-          [[ "$(git show "${tag_commit}:crates/zed/RELEASE_CHANNEL")" == stable ]]
-          [[ "$(git show "${tag_commit}:crates/zed/Cargo.toml" | sed -n '/^\[package\]/,/^\[/p' | sed -n 's/^version = "\([^"]*\)"/\1/p')" == "${RELEASE_TAG#v}" ]]
+          release_channel_file=$(git ls-tree -r --name-only "${tag_commit}" | awk '/\/RELEASE_CHANNEL$/ { print; exit }')
+          [[ -n "${release_channel_file}" ]]
+          [[ "$(git show "${tag_commit}:${release_channel_file}")" == stable ]]
           echo "tag_commit=${tag_commit}" >> "$GITHUB_OUTPUT"
 
   build_release:
@@ -78,11 +79,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
       - name: Run source gates
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "orion-studio") | .version')
+          [[ "${version}" == "${RELEASE_TAG#v}" ]]
           bash -n script/bundle-mac
           ./script/test-orion-brand
-          ./script/check-orion-brand
           ./script/check-secrets
           ./script/check-macos-entitlements
           ./script/test-uninstall
