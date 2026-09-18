@@ -49,7 +49,7 @@ jobs:
           git verify-tag "${RELEASE_TAG}"
           tag_commit=$(git rev-parse "${RELEASE_TAG}^{commit}")
           git merge-base --is-ancestor "${tag_commit}" origin/main
-          release_channel_file=$(git ls-tree -r --name-only "${tag_commit}" | awk '/\/RELEASE_CHANNEL$/ { print; exit }')
+          release_channel_file=$(git ls-tree -r --name-only "${tag_commit}" | awk '/\/RELEASE_CHANNEL$/ && !found { print; found = 1 }')
           [[ -n "${release_channel_file}" ]]
           [[ "$(git show "${tag_commit}:${release_channel_file}")" == stable ]]
           echo "tag_commit=${tag_commit}" >> "$GITHUB_OUTPUT"
