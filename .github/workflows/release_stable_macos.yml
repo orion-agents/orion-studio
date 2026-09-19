@@ -87,6 +87,20 @@ jobs:
           [[ "${version}" == "${RELEASE_TAG#v}" ]]
           bash -n script/bundle-mac
           ./script/test-orion-brand
+          # The v1.17.0 tag predates the current fixture fingerprints. These exact
+          # entries cover fake filesystem credentials and the public AWS CLI package key.
+          if [[ "${RELEASE_TAG}" == v1.17.0 ]]; then
+            cat >> .gitleaksignore <<'EOF'
+          0d36638173451aad2d36931490d0c028e2819ae2:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1031
+          0d36638173451aad2d36931490d0c028e2819ae2:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1548
+          0d36638173451aad2d36931490d0c028e2819ae2:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1610
+          0d36638173451aad2d36931490d0c028e2819ae2:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1664
+          0d36638173451aad2d36931490d0c028e2819ae2:crates/agent/src/tools/grep_tool.rs:generic-api-key:1048
+          0d36638173451aad2d36931490d0c028e2819ae2:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:559
+          0d36638173451aad2d36931490d0c028e2819ae2:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:884
+          0d36638173451aad2d36931490d0c028e2819ae2:crates/dev_container/src/devcontainer_manifest.rs:generic-api-key:9540
+          EOF
+          fi
           ./script/check-secrets
           ./script/check-macos-entitlements
           ./script/test-uninstall
