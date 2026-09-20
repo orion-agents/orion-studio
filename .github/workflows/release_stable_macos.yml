@@ -82,6 +82,7 @@ jobs:
           [[ -d "${RELEASE_SOURCE_REPOSITORY}/.git" ]]
           git -C "${RELEASE_SOURCE_REPOSITORY}" cat-file -e "${RELEASE_COMMIT}^{commit}"
           git init "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" remote remove release-source 2>/dev/null || true
           git -C "$GITHUB_WORKSPACE" remote add release-source "$RELEASE_SOURCE_REPOSITORY"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 release-source "$RELEASE_COMMIT"
           git -C "$GITHUB_WORKSPACE" checkout --detach FETCH_HEAD
