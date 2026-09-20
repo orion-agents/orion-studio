@@ -73,11 +73,19 @@ jobs:
           [[ "$(uname -m)" == arm64 ]]
           available_kib=$(LC_ALL=C df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
           (( available_kib >= 100 * 1024 * 1024 ))
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-        with:
-          ref: ${{ needs.validate_release.outputs.tag_commit }}
-          fetch-depth: 1
-          persist-credentials: false
+      - name: Check out validated release source
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          RELEASE_SOURCE_REPOSITORY: /Users/hope/ai-project/orion-studio
+        run: |
+          set -euo pipefail
+          [[ -d "${RELEASE_SOURCE_REPOSITORY}/.git" ]]
+          git -C "${RELEASE_SOURCE_REPOSITORY}" cat-file -e "${RELEASE_COMMIT}^{commit}"
+          git init "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" remote add release-source "$RELEASE_SOURCE_REPOSITORY"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 release-source "$RELEASE_COMMIT"
+          git -C "$GITHUB_WORKSPACE" checkout --detach FETCH_HEAD
+          [[ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" == "${RELEASE_COMMIT}" ]]
       - name: Run source gates
         env:
           RELEASE_TAG: ${{ inputs.tag }}
