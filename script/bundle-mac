@@ -867,12 +867,14 @@ GIT_VERSION="v2.43.3"
 GIT_VERSION_SHA="fa29823"
 GIT_MACOS_ARM64_SHA256="f014b290f36d121bbc47b29b556044c4f6a2f6494cf78ed2eacfa501b77363b6"
 GIT_MACOS_X64_SHA256="02fb29a47a07e9a7f841888661f32ebc80a56930864dd19b674d80ffc429c96d"
+bundled_git_archive="${ORION_STUDIO_BUNDLED_GIT_ARCHIVE:-}"
 
 function download_and_unpack() {
     local url=$1
     local expected_sha256=$2
     local path_to_unpack=$3
     local target_path=$4
+    local cached_archive=${5:-}
     local archive_file
     local actual_sha256
     local temporary_directory
@@ -882,12 +884,20 @@ function download_and_unpack() {
     archive_file="${session_directory}/download-${download_sequence}.tar.gz"
     mkdir -m 700 "${temporary_directory}"
 
-    if ! command -v curl &> /dev/null; then
-        echo "curl is not installed. Please install curl to continue."
-        exit 1
-    fi
+    if [[ -n "${cached_archive}" ]]; then
+        if [[ ! -f "${cached_archive}" ]]; then
+            echo "Configured cached archive is missing: ${cached_archive}" >&2
+            exit 1
+        fi
+        cp "${cached_archive}" "${archive_file}"
+    else
+        if ! command -v curl &> /dev/null; then
+            echo "curl is not installed. Please install curl to continue."
+            exit 1
+        fi
 
-    curl --silent --show-error --fail --location --output "${archive_file}" "${url}"
+        curl --silent --show-error --fail --location --output "${archive_file}" "${url}"
+    fi
     actual_sha256=$(sha256_file "${archive_file}")
     if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
         echo "Checksum verification failed for ${url}." >&2
@@ -908,10 +918,10 @@ function download_git() {
 
     case "$architecture" in
         aarch64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" "${GIT_MACOS_ARM64_SHA256}" bin/git "${temporary_directory}/git"
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" "${GIT_MACOS_ARM64_SHA256}" bin/git "${temporary_directory}/git" "${bundled_git_archive}"
             ;;
         x86_64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" "${GIT_MACOS_X64_SHA256}" bin/git "${temporary_directory}/git"
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" "${GIT_MACOS_X64_SHA256}" bin/git "${temporary_directory}/git" "${bundled_git_archive}"
             ;;
         *)
             echo "Unsupported architecture: $architecture"
