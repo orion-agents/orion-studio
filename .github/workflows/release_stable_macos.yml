@@ -9,7 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-stable-macos-${{ inputs.tag }}
@@ -18,13 +18,15 @@ concurrency:
 jobs:
   validate_release:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     environment: production
     outputs:
       tag_commit: ${{ steps.source.outputs.tag_commit }}
+      support_script_sha256: ${{ steps.support.outputs.sha256 }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
@@ -32,11 +34,13 @@ jobs:
         id: source
         env:
           ALLOWED_SIGNERS_BASE64: ${{ vars.ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 }}
+          RELEASE_ENABLED: ${{ vars.ORION_STUDIO_RELEASE_ENABLED }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           [[ "${GITHUB_REPOSITORY}" == orion-agents/orion-studio ]]
           [[ "${GITHUB_REF}" == refs/heads/main ]]
+          [[ "${RELEASE_ENABLED}" == true ]]
           [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ -n "${ALLOWED_SIGNERS_BASE64}" ]]
           allowed_signers="${RUNNER_TEMP}/allowed-signers"
@@ -53,6 +57,24 @@ jobs:
           [[ -n "${release_channel_file}" ]]
           [[ "$(git show "${tag_commit}:${release_channel_file}")" == stable ]]
           echo "tag_commit=${tag_commit}" >> "$GITHUB_OUTPUT"
+      - name: Stage release support script
+        id: support
+        run: |
+          set -euo pipefail
+          support_directory="${RUNNER_TEMP}/release-support"
+          mkdir -p "${support_directory}"
+          install -m 755 script/bundle-mac "${support_directory}/bundle-mac"
+          bash -n "${support_directory}/bundle-mac"
+          support_sha256=$(shasum -a 256 "${support_directory}/bundle-mac" | awk '{print $1}')
+          echo "sha256=${support_sha256}" >> "$GITHUB_OUTPUT"
+          echo "Release support script SHA-256: ${support_sha256}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: stable-macos-release-support-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-support/bundle-mac
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   build_release:
     needs: validate_release
@@ -66,32 +88,56 @@ jobs:
       CARGO_PROFILE_RELEASE_STRIP: symbols
       ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
       ORION_STUDIO_REQUIRE_SENTRY: '0'
+      ORION_STUDIO_BUNDLED_GIT_ARCHIVE: ${{ vars.ORION_STUDIO_BUNDLED_GIT_ARCHIVE }}
+      RELEASE_SOURCE_REPOSITORY: ${{ vars.ORION_STUDIO_RELEASE_SOURCE_REPOSITORY }}
     steps:
       - name: Verify runner capacity
         run: |
           set -euo pipefail
           [[ "$(uname -m)" == arm64 ]]
+          command -v cargo >/dev/null
+          command -v jq >/dev/null
+          command -v shasum >/dev/null
+          xcrun --find notarytool >/dev/null
+          xcrun --find stapler >/dev/null
+          [[ -n "${RELEASE_SOURCE_REPOSITORY}" ]]
+          [[ -d "${RELEASE_SOURCE_REPOSITORY}/.git" ]]
+          [[ -f "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" ]]
+          [[ "$(shasum -a 256 "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" | awk '{print $1}')" == f014b290f36d121bbc47b29b556044c4f6a2f6494cf78ed2eacfa501b77363b6 ]]
+          tar -tzf "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" | awk '$0 == "./bin/git" { found = 1 } END { exit !found }'
           available_kib=$(LC_ALL=C df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
           (( available_kib >= 100 * 1024 * 1024 ))
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: stable-macos-release-support-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-support
       - name: Check out validated release source
         env:
           RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
-          RELEASE_SOURCE_REPOSITORY: /Users/hope/ai-project/orion-studio
-          RELEASE_SUPPORT_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ -d "${RELEASE_SOURCE_REPOSITORY}/.git" ]]
           git -C "${RELEASE_SOURCE_REPOSITORY}" cat-file -e "${RELEASE_COMMIT}^{commit}"
-          git -C "${RELEASE_SOURCE_REPOSITORY}" cat-file -e "${RELEASE_SUPPORT_COMMIT}:script/bundle-mac"
           git init "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" remote remove release-source 2>/dev/null || true
+          git -C "$GITHUB_WORKSPACE" clean -ffdx -e target/
+          if git -C "$GITHUB_WORKSPACE" remote get-url release-source >/dev/null 2>&1; then
+            git -C "$GITHUB_WORKSPACE" remote remove release-source
+          fi
           git -C "$GITHUB_WORKSPACE" remote add release-source "$RELEASE_SOURCE_REPOSITORY"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 release-source "$RELEASE_COMMIT"
-          git -C "$GITHUB_WORKSPACE" checkout --detach FETCH_HEAD
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
           [[ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" == "${RELEASE_COMMIT}" ]]
-          git -C "${RELEASE_SOURCE_REPOSITORY}" show "${RELEASE_SUPPORT_COMMIT}:script/bundle-mac" > "$GITHUB_WORKSPACE/script/bundle-mac"
-          chmod 755 "$GITHUB_WORKSPACE/script/bundle-mac"
-          echo "Using release support script from ${RELEASE_SUPPORT_COMMIT}: $(shasum -a 256 "$GITHUB_WORKSPACE/script/bundle-mac" | awk '{print $1}')"
+      - name: Apply verified release support script
+        env:
+          EXPECTED_SUPPORT_SHA256: ${{ needs.validate_release.outputs.support_script_sha256 }}
+        run: |
+          set -euo pipefail
+          support_script="${RUNNER_TEMP}/release-support/bundle-mac"
+          [[ -f "${support_script}" ]]
+          [[ ! -L "${support_script}" ]]
+          actual_sha256=$(shasum -a 256 "${support_script}" | awk '{print $1}')
+          [[ "${actual_sha256}" == "${EXPECTED_SUPPORT_SHA256}" ]]
+          install -m 755 "${support_script}" "$GITHUB_WORKSPACE/script/bundle-mac"
+          echo "Applied verified release support script: ${actual_sha256}"
       - name: Run source gates
         env:
           RELEASE_TAG: ${{ inputs.tag }}
@@ -122,8 +168,8 @@ jobs:
           git diff --check
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '24'
-          check-latest: true
+          node-version: '24.21.0'
+          check-latest: false
           package-manager-cache: false
       - name: Build, sign, notarize, and staple
         env:
@@ -134,7 +180,6 @@ jobs:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
           ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
-          ORION_STUDIO_BUNDLED_GIT_ARCHIVE: ${{ vars.ORION_STUDIO_BUNDLED_GIT_ARCHIVE }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: env GITHUB_REF_TYPE=tag GITHUB_REF_NAME="$RELEASE_TAG" ./script/bundle-mac aarch64-apple-darwin
       - name: Verify signed and stapled DMG
@@ -161,7 +206,10 @@ jobs:
   create_draft:
     needs: [validate_release, build_release]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     environment: production
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
