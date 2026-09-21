@@ -544,7 +544,7 @@ if [[ "${require_signed_release}" == "1" || "$cargo_bundle_version" != "cargo-bu
         --rev 2be2669972dff3ddd4daf89a2cb29d2d06cad7c7
     )
     if [[ "${require_signed_release}" == "1" ]]; then
-        cargo_bundle_install_args+=(--force)
+        cargo_bundle_install_args+=(--force --offline)
     fi
     cargo "${cargo_bundle_install_args[@]}"
 fi
