@@ -129,6 +129,7 @@ jobs:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
           ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
+          ORION_STUDIO_BUNDLED_GIT_ARCHIVE: ${{ vars.ORION_STUDIO_BUNDLED_GIT_ARCHIVE }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: env GITHUB_REF_TYPE=tag GITHUB_REF_NAME="$RELEASE_TAG" ./script/bundle-mac aarch64-apple-darwin
       - name: Verify signed and stapled DMG
