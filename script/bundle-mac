@@ -876,7 +876,7 @@ if [[ ${#missing_signing_variables[@]} -eq 0 ]]; then
         exit 1
     fi
     chmod 600 "${certificate_file}"
-    /usr/bin/security import "${certificate_file}" -k "${signing_keychain}" -P "${MACOS_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
+    /usr/bin/security import "${certificate_file}" -k "${signing_keychain}" -P "${MACOS_CERTIFICATE_PASSWORD}" -A
     /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${MACOS_CERTIFICATE_PASSWORD}" "${signing_keychain}"
     if ! capture_user_keychains; then
         exit 1
