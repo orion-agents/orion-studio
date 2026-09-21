@@ -1210,7 +1210,7 @@ function sign_app_binaries() {
             verify_signed_item "${dmg_file_path}" dmg
             printf '%s' "${APPLE_NOTARIZATION_KEY}" > "${notarization_key_file}"
             chmod 600 "${notarization_key_file}"
-            "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
+            "${xcode_bin_dir_path}/notarytool" submit --wait --timeout 5h --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
             rm -f "$notarization_key_file"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
             "${xcode_bin_dir_path}/stapler" validate "${dmg_file_path}"
