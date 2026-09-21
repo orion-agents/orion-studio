@@ -844,7 +844,7 @@ if [[ ${#missing_signing_variables[@]} -eq 0 ]]; then
         exit 1
     fi
     /usr/bin/security unlock-keychain -p "${MACOS_CERTIFICATE_PASSWORD}" "${signing_keychain}"
-    /usr/bin/security set-keychain-settings "${signing_keychain}"
+    /usr/bin/security set-keychain-settings -lut 21600 "${signing_keychain}"
     if ! printf '%s' "${MACOS_CERTIFICATE}" | /usr/bin/base64 -D > "${certificate_file}"; then
         echo "MACOS_CERTIFICATE is not valid base64." >&2
         exit 1
