@@ -42,6 +42,8 @@ provisioning_profile_plist="${session_directory}/provisioning-profile.plist"
 notarization_key_file="${session_directory}/notarization-key.p8"
 signing_keychain=""
 signing_keychain_created=false
+original_user_keychains=()
+keychain_search_list_changed=false
 dmg_license_tool=""
 dmg_terms_file=""
 download_sequence=0
@@ -50,6 +52,26 @@ remote_server_entitlements="${repository_root}/crates/zed/resources/orion-studio
 
 sha256_file() {
     shasum -a 256 "$1" | awk '{print $1}'
+}
+
+capture_user_keychains() {
+    local keychain_path
+
+    while IFS= read -r keychain_path; do
+        original_user_keychains+=("${keychain_path}")
+    done < <(/usr/bin/security list-keychains -d user | sed -n 's/^[[:space:]]*"\(.*\)"$/\1/p')
+
+    if [[ ${#original_user_keychains[@]} -eq 0 ]]; then
+        echo "Could not capture the current user keychain search list." >&2
+        return 1
+    fi
+}
+
+restore_user_keychains() {
+    if [[ "${keychain_search_list_changed}" == true ]] && ! /usr/bin/security list-keychains -d user -s "${original_user_keychains[@]}"; then
+        echo "Failed to restore the user keychain search list." >&2
+        return 1
+    fi
 }
 
 atomic_swap_files() {
@@ -190,6 +212,10 @@ cleanup() {
     trap '' HUP INT TERM
 
     if ! restore_cargo_manifest; then
+        cleanup_status=1
+    fi
+
+    if ! restore_user_keychains; then
         cleanup_status=1
     fi
 
@@ -852,6 +878,14 @@ if [[ ${#missing_signing_variables[@]} -eq 0 ]]; then
     chmod 600 "${certificate_file}"
     /usr/bin/security import "${certificate_file}" -k "${signing_keychain}" -P "${MACOS_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
     /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${MACOS_CERTIFICATE_PASSWORD}" "${signing_keychain}"
+    if ! capture_user_keychains; then
+        exit 1
+    fi
+    if ! /usr/bin/security list-keychains -d user -s "${signing_keychain}" "${original_user_keychains[@]}"; then
+        echo "Failed to register the isolated signing keychain for code signing." >&2
+        exit 1
+    fi
+    keychain_search_list_changed=true
     verify_imported_signing_identity
     can_code_sign=true
 elif [[ ${present_signing_input_count} -gt 0 ]]; then
