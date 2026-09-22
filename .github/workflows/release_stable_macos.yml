@@ -79,7 +79,7 @@ jobs:
   build_release:
     needs: validate_release
     runs-on: [self-hosted, macOS, ARM64, orion-studio-macos-release]
-    timeout-minutes: 180
+    timeout-minutes: 360
     environment: production
     env:
       CARGO_BUILD_JOBS: '2'
