@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orion.dev/schemas/platform-manifest.schema.json",
+  "title": "Orion Studio platform manifest",
+  "description": "Emitted by one platform build job. The release assembly job re-reads every manifest and re-hashes every artifact, so the digests recorded here are claims, not trust.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tag",
+    "commit",
+    "version",
+    "channel",
+    "platform",
+    "architecture",
+    "artifact",
+    "sha256",
+    "signed"
+  ],
+  "properties": {
+    "tag": {
+      "description": "Immutable release tag the artifact was built from.",
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "commit": {
+      "description": "Full commit SHA resolved once by validate_release. Every platform must report the same value.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "version": {
+      "description": "Cargo package version. Must equal the tag without its leading v.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "channel": {
+      "description": "Release channel the artifact was built for. Stable artifacts must report stable.",
+      "type": "string",
+      "enum": ["stable", "preview", "dev"]
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["macos", "windows", "linux", "freebsd"]
+    },
+    "architecture": {
+      "type": "string",
+      "enum": ["aarch64", "x86_64"]
+    },
+    "artifact": {
+      "description": "File name of the distributable. Must be listed in the assembly job's allowlist.",
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256": {
+      "description": "Lowercase SHA-256 of the artifact. The assembly job recomputes this value.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "signed": {
+      "description": "Whether the platform's native signature gate passed. Unsigned artifacts can never be promoted to Stable.",
+      "type": "boolean"
+    }
+  }
+}
