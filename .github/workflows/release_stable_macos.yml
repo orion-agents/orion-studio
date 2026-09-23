@@ -7,6 +7,19 @@ on:
         description: Existing signed tag in the form vMAJOR.MINOR.PATCH
         required: true
         type: string
+      build_only:
+        description: Build, sign, notarize and staple without creating or updating a GitHub Release
+        required: false
+        type: boolean
+        default: false
+      runner_mode:
+        description: Runner that performs the build. self-hosted is the dedicated Mac; hosted is the GitHub-hosted macOS ARM image.
+        required: false
+        type: choice
+        options:
+          - self-hosted
+          - hosted
+        default: self-hosted
 
 permissions:
   contents: read
@@ -78,7 +91,11 @@ jobs:
 
   build_release:
     needs: validate_release
-    runs-on: [self-hosted, macOS, ARM64, orion-studio-macos-release]
+    # `hosted` is the GitHub-hosted macOS ARM image; the self-hosted label stays
+    # available as the controlled fallback until the hosted path has proven itself
+    # twice. A pinned label is used rather than `macos-latest` so the image cannot
+    # drift under the release pipeline.
+    runs-on: ${{ inputs.runner_mode == 'hosted' && 'macos-15' || fromJSON('["self-hosted", "macOS", "ARM64", "orion-studio-macos-release"]') }}
     timeout-minutes: 360
     environment: production
     env:
@@ -88,10 +105,14 @@ jobs:
       CARGO_PROFILE_RELEASE_STRIP: symbols
       ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
       ORION_STUDIO_REQUIRE_SENTRY: '0'
-      ORION_STUDIO_BUNDLED_GIT_ARCHIVE: ${{ vars.ORION_STUDIO_BUNDLED_GIT_ARCHIVE }}
-      RELEASE_SOURCE_REPOSITORY: ${{ vars.ORION_STUDIO_RELEASE_SOURCE_REPOSITORY }}
+      # The archive cache lives on the self-hosted machine. A hosted runner has no
+      # such path, so the variable is only offered there; `bundle-mac` then downloads
+      # the pinned archive and verifies the same SHA-256.
+      ORION_STUDIO_BUNDLED_GIT_ARCHIVE: ${{ inputs.runner_mode == 'self-hosted' && vars.ORION_STUDIO_BUNDLED_GIT_ARCHIVE || '' }}
     steps:
       - name: Verify runner capacity
+        env:
+          RUNNER_MODE: ${{ inputs.runner_mode }}
         run: |
           set -euo pipefail
           [[ "$(uname -m)" == arm64 ]]
@@ -100,13 +121,27 @@ jobs:
           command -v shasum >/dev/null
           xcrun --find notarytool >/dev/null
           xcrun --find stapler >/dev/null
-          [[ -n "${RELEASE_SOURCE_REPOSITORY}" ]]
-          [[ -d "${RELEASE_SOURCE_REPOSITORY}/.git" ]]
-          [[ -f "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" ]]
-          [[ "$(shasum -a 256 "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" | awk '{print $1}')" == f014b290f36d121bbc47b29b556044c4f6a2f6494cf78ed2eacfa501b77363b6 ]]
-          tar -tzf "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" | awk '$0 == "./bin/git" { found = 1 } END { exit !found }'
+          # The dugite-native archive is an optional cache, not a required input.
+          # Hosted runners leave it unset and `bundle-mac` downloads the pinned
+          # archive itself; a self-hosted runner may point at a local copy. Either
+          # way the same pinned hash is enforced, and a configured-but-missing cache
+          # fails here instead of silently falling back to a different Git binary.
+          if [[ -n "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE:-}" ]]; then
+            [[ -f "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" ]]
+            [[ "$(shasum -a 256 "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" | awk '{print $1}')" == f014b290f36d121bbc47b29b556044c4f6a2f6494cf78ed2eacfa501b77363b6 ]]
+            tar -tzf "${ORION_STUDIO_BUNDLED_GIT_ARCHIVE}" | awk '$0 == "./bin/git" { found = 1 } END { exit !found }'
+          fi
           available_kib=$(LC_ALL=C df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
-          (( available_kib >= 100 * 1024 * 1024 ))
+          # The dedicated Mac is expected to keep enough headroom for a from-scratch
+          # build, so it fails closed. The hosted path is here to be *measured*: an
+          # early disk rejection would make the "only the disk is inadequate"
+          # conclusion unreachable, and the recorded resource step reports the real
+          # numbers either way.
+          if [[ "${RUNNER_MODE}" == "self-hosted" ]]; then
+            (( available_kib >= 100 * 1024 * 1024 ))
+          else
+            echo "Hosted runner available disk: ${available_kib} KiB"
+          fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: stable-macos-release-support-${{ github.run_id }}-${{ github.run_attempt }}
@@ -116,16 +151,21 @@ jobs:
           RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
         run: |
           set -euo pipefail
-          git -C "${RELEASE_SOURCE_REPOSITORY}" cat-file -e "${RELEASE_COMMIT}^{commit}"
+          # The release source comes from the repository itself, never from a
+          # runner-local path: a local checkout is mutable state the workflow cannot
+          # verify, and a hosted runner has none. The repository is public, so this
+          # needs no credential in `.git/config`. The HEAD equality check is what
+          # actually proves the tree is the validated commit.
           git init "$GITHUB_WORKSPACE"
           git -C "$GITHUB_WORKSPACE" clean -ffdx -e target/
           if git -C "$GITHUB_WORKSPACE" remote get-url release-source >/dev/null 2>&1; then
             git -C "$GITHUB_WORKSPACE" remote remove release-source
           fi
-          git -C "$GITHUB_WORKSPACE" remote add release-source "$RELEASE_SOURCE_REPOSITORY"
-          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 release-source "$RELEASE_COMMIT"
+          git -C "$GITHUB_WORKSPACE" remote add release-source "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 release-source "${RELEASE_COMMIT}"
           git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
           [[ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" == "${RELEASE_COMMIT}" ]]
+          [[ -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain)" ]]
       - name: Apply verified release support script
         env:
           EXPECTED_SUPPORT_SHA256: ${{ needs.validate_release.outputs.support_script_sha256 }}
@@ -181,7 +221,59 @@ jobs:
           ORION_STUDIO_MACOS_SIGNING_IDENTITY: ${{ vars.ORION_STUDIO_MACOS_SIGNING_IDENTITY }}
           ORION_STUDIO_MACOS_TEAM_ID: ${{ vars.ORION_STUDIO_MACOS_TEAM_ID }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: env GITHUB_REF_TYPE=tag GITHUB_REF_NAME="$RELEASE_TAG" ./script/bundle-mac aarch64-apple-darwin
+          BUILD_LOG: ${{ runner.temp }}/release-build.log
+        run: |
+          set -euo pipefail
+          # `/usr/bin/time -l` reports peak resident set size, which the hosted-runner
+          # sizing decision in the cross-platform remediation plan depends on. Its
+          # output goes to stderr, so `tee` keeps the build's own log and the
+          # measurement in one file.
+          /usr/bin/time -l env GITHUB_REF_TYPE=tag GITHUB_REF_NAME="$RELEASE_TAG" \
+            ./script/bundle-mac aarch64-apple-darwin 2>&1 | tee "${BUILD_LOG}"
+      - name: Record build resources
+        if: always()
+        env:
+          BUILD_LOG: ${{ runner.temp }}/release-build.log
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          dmg_path="target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg"
+          available_kib=$(LC_ALL=C df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
+          target_bytes=$(du -sk target 2>/dev/null | awk '{ print $1 * 1024 }')
+          peak_rss_bytes=$(awk '/maximum resident set size/ { print $1 }' "${BUILD_LOG}" 2>/dev/null | tail -1)
+          elapsed_seconds=$(awk '/^[[:space:]]*[0-9]+\.[0-9]+ real/ { print $1 }' "${BUILD_LOG}" 2>/dev/null | tail -1)
+          artifact_bytes=$(stat -f%z "$dmg_path" 2>/dev/null || echo 0)
+
+          jq -n \
+            --arg tag "$RELEASE_TAG" \
+            --arg commit "$RELEASE_COMMIT" \
+            --argjson available_kib "${available_kib:-0}" \
+            --argjson target_bytes "${target_bytes:-0}" \
+            --argjson peak_rss_bytes "${peak_rss_bytes:-0}" \
+            --argjson elapsed_seconds "${elapsed_seconds:-0}" \
+            --argjson artifact_bytes "${artifact_bytes:-0}" \
+            '{
+              tag: $tag,
+              commit: $commit,
+              available_disk_bytes_after_build: ($available_kib * 1024),
+              target_bytes: $target_bytes,
+              peak_rss_bytes: $peak_rss_bytes,
+              elapsed_seconds: $elapsed_seconds,
+              artifact_bytes: $artifact_bytes
+            }' > "${RUNNER_TEMP}/build-resources.json"
+          cat "${RUNNER_TEMP}/build-resources.json"
+          {
+            echo '### Build resources'
+            echo ''
+            echo '| Metric | Value |'
+            echo '| --- | --- |'
+            echo "| available disk after build | ${available_kib} KiB |"
+            echo "| target size | ${target_bytes} bytes |"
+            echo "| peak RSS | ${peak_rss_bytes} bytes |"
+            echo "| build elapsed | ${elapsed_seconds} s |"
+            echo "| DMG size | ${artifact_bytes} bytes |"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Verify signed and stapled DMG
         env:
           DMG_PATH: target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg
@@ -195,16 +287,64 @@ jobs:
           codesign -d --verbose=4 "$DMG_PATH" 2>&1 | grep -F "TeamIdentifier=${ORION_STUDIO_MACOS_TEAM_ID}"
           stapler validate "$DMG_PATH"
           (cd target/aarch64-apple-darwin/release && shasum -a 256 Orion-Studio-aarch64.dmg > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+      - name: Write platform manifest
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          dmg_path="target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg"
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "orion-studio") | .version')
+          sha256=$(shasum -a 256 "$dmg_path" | awk '{ print $1 }')
+          manifest="${RUNNER_TEMP}/platform-manifest.json"
+          jq -n \
+            --arg tag "$RELEASE_TAG" \
+            --arg commit "$RELEASE_COMMIT" \
+            --arg version "$version" \
+            --arg artifact "Orion-Studio-aarch64.dmg" \
+            --arg sha256 "$sha256" \
+            '{
+              tag: $tag,
+              commit: $commit,
+              version: $version,
+              channel: "stable",
+              platform: "macos",
+              architecture: "aarch64",
+              artifact: $artifact,
+              sha256: $sha256,
+              signed: true
+            }' > "$manifest"
+          # Structural assertions mirroring tooling/release/platform-manifest.schema.json.
+          # The assembly job re-hashes every artifact, so these only reject a malformed
+          # manifest — they never establish trust in the recorded digest.
+          jq -e '
+            (.tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+            (.commit | test("^[0-9a-f]{40}$")) and
+            (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+            (.channel == "stable") and
+            (.platform == "macos") and
+            (.architecture == "aarch64") and
+            (.artifact | length > 0) and
+            (.sha256 | test("^[0-9a-f]{64}$")) and
+            (.signed == true)
+          ' "$manifest" > /dev/null
+          [[ "${version}" == "${RELEASE_TAG#v}" ]]
+          cat "$manifest"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: stable-macos-aarch64-${{ inputs.tag }}
           path: |
             target/aarch64-apple-darwin/release/Orion-Studio-aarch64.dmg
             target/aarch64-apple-darwin/release/SHA256SUMS
+            ${{ runner.temp }}/build-resources.json
+            ${{ runner.temp }}/platform-manifest.json
           compression-level: 0
 
   create_draft:
     needs: [validate_release, build_release]
+    # Build-only runs stop before this job: they exist so a tag can be rebuilt and
+    # measured repeatedly without touching a public Release.
+    if: ${{ !inputs.build_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: production
