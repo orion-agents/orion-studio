@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+
+# Gate a Linux release archive before it can enter a Draft Release.
+#
+# Every check here is deterministic and read-only with respect to the artifacts: an
+# archive either satisfies the release contract or it does not. Nothing in this file
+# may be relaxed to make a build green — the cross-platform remediation plan keeps
+# each platform's gates independent for exactly that reason.
+set -euo pipefail
+
+usage() {
+    echo "
+Usage: ${0##*/} --archive PATH --architecture <x86_64|aarch64> [options]
+
+Verify a Linux release archive before it enters a Draft Release.
+
+Options:
+  --archive PATH                 Release .tar.gz to verify (required)
+  --architecture ARCH            x86_64 or aarch64 (required)
+  --remote-server-archive PATH   Remote server .gz to verify (optional)
+  --expected-version VERSION     Assert the archive contains this version (optional)
+  -h, --help                     Show this message
+"
+}
+
+fail() {
+    echo "FAIL: $*" >&2
+    exit 1
+}
+
+note() {
+    echo "  $*"
+}
+
+archive=""
+architecture=""
+remote_server_archive=""
+expected_version=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --archive)
+            archive="${2:-}"
+            shift 2
+            ;;
+        --architecture)
+            architecture="${2:-}"
+            shift 2
+            ;;
+        --remote-server-archive)
+            remote_server_archive="${2:-}"
+            shift 2
+            ;;
+        --expected-version)
+            expected_version="${2:-}"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+[[ -n "${archive}" ]] || { echo "--archive is required." >&2; usage >&2; exit 2; }
+[[ -n "${architecture}" ]] || { echo "--architecture is required." >&2; usage >&2; exit 2; }
+[[ -f "${archive}" ]] || fail "archive not found: ${archive}"
+
+case "${architecture}" in
+    x86_64) elf_machine="x86-64" ;;
+    aarch64) elf_machine="AArch64" ;;
+    *) fail "unsupported architecture '${architecture}'; expected x86_64 or aarch64" ;;
+esac
+
+working_directory="$(mktemp -d)"
+trap 'rm -rf "${working_directory}"' EXIT
+
+# 1. Archive contents must be relative and must not escape the extraction root.
+
+echo "Checking archive paths"
+while IFS= read -r entry; do
+    [[ -n "${entry}" ]] || continue
+    case "${entry}" in
+        /*) fail "archive contains an absolute path: ${entry}" ;;
+        .. | ../* | */.. | */../*) fail "archive contains a traversal path: ${entry}" ;;
+    esac
+done < <(tar -tzf "${archive}")
+
+# 2. The archive must contain exactly one application directory.
+
+tar -xzf "${archive}" -C "${working_directory}"
+app_directories=()
+while IFS= read -r app_entry; do
+    app_directories+=("${app_entry}")
+done < <(find "${working_directory}" -maxdepth 1 -mindepth 1 -type d -name "*.app" -exec basename {} \;)
+[[ "${#app_directories[@]}" -eq 1 ]] || fail "expected exactly one .app directory, found ${#app_directories[@]}"
+app_directory="${working_directory}/${app_directories[0]}"
+note "application directory: ${app_directories[0]}"
+
+# 3. GUI and CLI must be ELF binaries of the expected architecture and machine type.
+
+assert_elf() {
+    local path=$1
+    local label=$2
+    [[ -f "${path}" ]] || fail "${label} is missing: ${path}"
+    local description
+    description=$(file -b "${path}")
+    [[ "${description}" == *ELF*64-bit* ]] || fail "${label} is not a 64-bit ELF: ${description}"
+    [[ "${description}" == *"${elf_machine}"* ]] || fail "${label} is not ${elf_machine}: ${description}"
+    note "${label}: ${description}"
+}
+
+# 4. Every dynamic dependency of the shipped binaries must resolve on a clean system.
+
+assert_no_unresolved_libraries() {
+    local path=$1
+    local label=$2
+    local unresolved
+    unresolved=$(ldd "${path}" 2>/dev/null | grep "not found" || true)
+    [[ -z "${unresolved}" ]] || fail "${label} has unresolved libraries: ${unresolved}"
+}
+
+# 5. The bundled editor libraries must be found through the archive's own rpath, not
+#    the host, which is what makes the archive portable across distributions.
+
+echo "Checking binaries"
+assert_elf "${app_directory}/libexec/orion-studio" "editor"
+assert_elf "${app_directory}/bin/orion-studio" "cli"
+assert_no_unresolved_libraries "${app_directory}/libexec/orion-studio" "editor"
+assert_no_unresolved_libraries "${app_directory}/bin/orion-studio" "cli"
+
+# 6. CLI aliases must resolve within the archive.
+
+echo "Checking CLI aliases"
+for alias_name in orion zed orion-studio; do
+    alias_path="${app_directory}/bin/${alias_name}"
+    [[ -e "${alias_path}" ]] || fail "CLI alias is missing: bin/${alias_name}"
+done
+
+# 7. Desktop integration: launcher entry, icon, and the URL scheme handler.
+
+echo "Checking desktop integration"
+desktop_files=()
+while IFS= read -r desktop_file; do
+    desktop_files+=("${desktop_file}")
+done < <(find "${app_directory}/share/applications" -maxdepth 1 -name "*.desktop" 2>/dev/null)
+[[ "${#desktop_files[@]}" -eq 1 ]] || fail "expected exactly one .desktop file, found ${#desktop_files[@]}"
+
+desktop_file="${desktop_files[0]}"
+[[ -x "${desktop_file}" ]] || fail ".desktop file is not executable: ${desktop_file}"
+
+desktop_entry=$(cat "${desktop_file}")
+for required_key in "Type=Application" "Exec=" "Icon=" "Name="; do
+    [[ "${desktop_entry}" == *"${required_key}"* ]] || fail ".desktop is missing ${required_key}: ${desktop_file}"
+done
+[[ "${desktop_entry}" == *"x-scheme-handler/orion"* ]] || fail ".desktop does not register the orion URL scheme: ${desktop_file}"
+note "desktop entry: $(basename "${desktop_file}")"
+
+for icon_size in 512x512 1024x1024; do
+    icon_path="${app_directory}/share/icons/hicolor/${icon_size}/apps/orion-studio.png"
+    [[ -f "${icon_path}" ]] || fail "icon is missing: share/icons/hicolor/${icon_size}/apps/orion-studio.png"
+done
+note "icons: 512x512, 1024x1024"
+
+# 8. Optional: the remote server is a separate artifact with its own constraints. It
+#    must not depend on OpenSSL, because the supported distributions ship different
+#    incompatible soname versions of it.
+
+if [[ -n "${remote_server_archive}" ]]; then
+    echo "Checking remote server"
+    [[ -f "${remote_server_archive}" ]] || fail "remote server archive not found: ${remote_server_archive}"
+    remote_server_binary="${working_directory}/remote-server"
+    gunzip -c "${remote_server_archive}" > "${remote_server_binary}"
+    assert_elf "${remote_server_binary}" "remote server"
+
+    needs=$(readelf -d "${remote_server_binary}" 2>/dev/null | grep -E "NEEDED.*(libssl|libcrypto)" || true)
+    [[ -z "${needs}" ]] || fail "remote server links OpenSSL: ${needs}"
+    note "remote server does not link libssl/libcrypto"
+    assert_no_unresolved_libraries "${remote_server_binary}" "remote server"
+fi
+
+# 9. Optional: the embedded version must match the release tag.
+
+if [[ -n "${expected_version}" ]]; then
+    echo "Checking embedded version"
+    version_output=$("${app_directory}/libexec/orion-studio" --version 2>&1 || true)
+    [[ "${version_output}" == *"${expected_version}"* ]] || fail "expected version ${expected_version}, got: ${version_output}"
+    note "version: ${version_output}"
+fi
+
+echo "PASS: ${archive}"

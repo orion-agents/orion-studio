@@ -57,6 +57,60 @@ function Get-VSArch {
     }
 }
 
+function Get-VsInstallationPath {
+    # The install path is discovered rather than assumed. A hosted image may carry any
+    # edition, so a hardcoded "Community" path fails on every machine that differs.
+    # vswhere ships with every Visual Studio 2017+ installer at a fixed location.
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere)) {
+        throw "vswhere.exe was not found at '$vswhere'. Visual Studio 2017 or later with the MSVC toolset is required."
+    }
+
+    $installationPath = & $vswhere `
+        -latest `
+        -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath
+
+    if (-not $installationPath) {
+        throw "No Visual Studio installation with the MSVC C++ toolset was found."
+    }
+
+    return $installationPath.Trim()
+}
+
+function Initialize-VsDevShell {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Architecture,
+        [Parameter(Mandatory = $true)]
+        [string]$HostArchitecture
+    )
+
+    $installationPath = Get-VsInstallationPath
+    $devShell = Join-Path $installationPath "Common7\Tools\Launch-VsDevShell.ps1"
+    if (-not (Test-Path -LiteralPath $devShell)) {
+        throw "Launch-VsDevShell.ps1 was not found under '$installationPath'."
+    }
+
+    Write-Host "Using Visual Studio at $installationPath"
+    Push-Location
+    try {
+        & $devShell -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $HostArchitecture)
+    }
+    finally {
+        Pop-Location
+    }
+
+    # The developer shell must actually put the toolchain on PATH. Checking here turns a
+    # late and confusing linker failure into an immediate, specific one.
+    foreach ($tool in @("cl.exe", "link.exe", "rc.exe")) {
+        if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+            throw "$tool is not available after initializing the Visual Studio developer shell for $Architecture."
+        }
+    }
+}
+
 $target = "$Architecture-pc-windows-msvc"
 
 if ($Help) {
@@ -69,9 +123,7 @@ if ($Help) {
     exit 0
 }
 
-Push-Location
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
-Pop-Location
+Initialize-VsDevShell -Architecture $Architecture -HostArchitecture $OSArchitecture
 
 Push-Location -Path crates/zed
 $channel = (Get-Content "RELEASE_CHANNEL" -Raw).Trim()
@@ -586,6 +638,23 @@ function BuildInstaller {
     # Currently, we are using Windows 2022 runner.
     # Windows runner 2025 doesn't have iscc in PATH for now, https://github.com/actions/runner-images/issues/11228
     $innoSetupPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+    if (-not (Test-Path -LiteralPath $innoSetupPath)) {
+        $innoSetupPath = (Get-Command "ISCC.exe" -ErrorAction SilentlyContinue).Source
+    }
+    if (-not $innoSetupPath) {
+        throw "Inno Setup 6 (ISCC.exe) was not found. Install it on the runner or add it to PATH."
+    }
+
+    # The compiler's own version is the only reliable statement of which Inno Setup
+    # major version will process the script, so it is recorded rather than assumed.
+    $innoSetupVersion = (Get-Item -LiteralPath $innoSetupPath).VersionInfo.ProductVersion
+    if (-not $innoSetupVersion) {
+        throw "Could not read the Inno Setup version from '$innoSetupPath'."
+    }
+    if (-not $innoSetupVersion.StartsWith("6.")) {
+        throw "Inno Setup 6 is required, but '$innoSetupPath' reports version '$innoSetupVersion'."
+    }
+    Write-Host "Using Inno Setup $innoSetupVersion at $innoSetupPath"
 
     $definitions = @{
         "AppId"                = $appId

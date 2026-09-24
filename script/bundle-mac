@@ -535,7 +535,15 @@ export ZED_BUNDLE=true
 prepare_provisioning_profile
 prepare_dmg_license_tool
 
-cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
+# Presence and version are tracked separately. `cargo bundle --help` prints a version
+# line when the tool exists and an error line when it does not, so the raw output
+# cannot be used as a presence test — and presence is what decides whether an offline
+# install can succeed at all.
+if cargo -q bundle --help >/dev/null 2>&1; then
+    cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1)
+else
+    cargo_bundle_version=""
+fi
 if [[ "${require_signed_release}" == "1" || "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]]; then
     cargo_bundle_install_args=(
         install cargo-bundle
@@ -543,7 +551,13 @@ if [[ "${require_signed_release}" == "1" || "$cargo_bundle_version" != "cargo-bu
         --git https://github.com/zed-industries/cargo-bundle.git
         --rev 2be2669972dff3ddd4daf89a2cb29d2d06cad7c7
     )
-    if [[ "${require_signed_release}" == "1" ]]; then
+    # A signed release must not pick up an unreviewed toolchain, so the source is
+    # pinned to an exact revision and the graph to a lockfile. `--offline` additionally
+    # requires the revision to already be present, which only holds on a machine that
+    # has built before; forcing it makes a clean runner unable to produce a release at
+    # all. It is therefore requested only when the install is genuinely available
+    # locally, and a clean machine fetches the same pinned revision instead.
+    if [[ "${require_signed_release}" == "1" && -n "${cargo_bundle_version}" ]]; then
         cargo_bundle_install_args+=(--force --offline)
     fi
     cargo "${cargo_bundle_install_args[@]}"
