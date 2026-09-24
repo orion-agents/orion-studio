@@ -80,7 +80,9 @@ jobs:
           install -m 755 script/verify-linux-release "${support_directory}/verify-linux-release"
           bash -n "${support_directory}/bundle-linux"
           bash -n "${support_directory}/verify-linux-release"
-          support_sha256=$(shasum -a 256 "${support_directory}/bundle-linux" "${support_directory}/verify-linux-release" | shasum -a 256 | awk '{print $1}')
+          # The digest covers the script *contents*, in a fixed order, so it is
+          # independent of where each job happens to have staged them.
+          support_sha256=$(cat "${support_directory}/bundle-linux" "${support_directory}/verify-linux-release" | shasum -a 256 | awk '{print $1}')
           echo "sha256=${support_sha256}" >> "$GITHUB_OUTPUT"
           echo "Release support scripts SHA-256: ${support_sha256}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -139,7 +141,7 @@ jobs:
             [[ ! -L "${staged}" ]]
             install -m 755 "${staged}" "$GITHUB_WORKSPACE/script/${support_script}"
           done
-          actual_sha256=$(shasum -a 256 "$GITHUB_WORKSPACE/script/bundle-linux" "$GITHUB_WORKSPACE/script/verify-linux-release" | shasum -a 256 | awk '{print $1}')
+          actual_sha256=$(cat "$GITHUB_WORKSPACE/script/bundle-linux" "$GITHUB_WORKSPACE/script/verify-linux-release" | shasum -a 256 | awk '{print $1}')
           [[ "${actual_sha256}" == "${EXPECTED_SUPPORT_SHA256}" ]]
           echo "Applied verified release support scripts: ${actual_sha256}"
       - name: Run source gates
