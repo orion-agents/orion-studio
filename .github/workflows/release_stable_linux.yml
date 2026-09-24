@@ -1,0 +1,278 @@
+name: Release Linux Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed tag in the form vMAJOR.MINOR.PATCH
+        required: true
+        type: string
+      architecture:
+        description: Target architecture.
+        required: false
+        type: choice
+        options:
+          - x86_64
+          - aarch64
+        default: x86_64
+      build_only:
+        description: Build and verify without creating or updating a GitHub Release
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-stable-linux-${{ inputs.tag }}-${{ inputs.architecture }}
+  cancel-in-progress: false
+
+jobs:
+  validate_release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    outputs:
+      tag_commit: ${{ steps.source.outputs.tag_commit }}
+      support_script_sha256: ${{ steps.support.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Verify immutable Stable source
+        id: source
+        env:
+          ALLOWED_SIGNERS_BASE64: ${{ vars.ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 }}
+          RELEASE_ENABLED: ${{ vars.ORION_STUDIO_RELEASE_ENABLED }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == orion-agents/orion-studio ]]
+          [[ "${GITHUB_REF}" == refs/heads/main ]]
+          [[ "${RELEASE_ENABLED}" == true ]]
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ -n "${ALLOWED_SIGNERS_BASE64}" ]]
+          allowed_signers="${RUNNER_TEMP}/allowed-signers"
+          printf '%s' "${ALLOWED_SIGNERS_BASE64}" | base64 --decode > "${allowed_signers}"
+          git config --local gpg.format ssh
+          git config --local gpg.ssh.allowedSignersFile "${allowed_signers}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          [[ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" == tag ]]
+          git verify-tag "${RELEASE_TAG}"
+          tag_commit=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          git merge-base --is-ancestor "${tag_commit}" origin/main
+          release_channel_file=$(git ls-tree -r --name-only "${tag_commit}" | awk '/\/RELEASE_CHANNEL$/ && !found { print; found = 1 }')
+          [[ -n "${release_channel_file}" ]]
+          [[ "$(git show "${tag_commit}:${release_channel_file}")" == stable ]]
+          echo "tag_commit=${tag_commit}" >> "$GITHUB_OUTPUT"
+      - name: Stage release support script
+        id: support
+        run: |
+          set -euo pipefail
+          support_directory="${RUNNER_TEMP}/release-support"
+          mkdir -p "${support_directory}"
+          install -m 755 script/bundle-linux "${support_directory}/bundle-linux"
+          install -m 755 script/verify-linux-release "${support_directory}/verify-linux-release"
+          bash -n "${support_directory}/bundle-linux"
+          bash -n "${support_directory}/verify-linux-release"
+          support_sha256=$(shasum -a 256 "${support_directory}/bundle-linux" "${support_directory}/verify-linux-release" | shasum -a 256 | awk '{print $1}')
+          echo "sha256=${support_sha256}" >> "$GITHUB_OUTPUT"
+          echo "Release support scripts SHA-256: ${support_sha256}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: stable-linux-release-support-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-support/bundle-linux
+            ${{ runner.temp }}/release-support/verify-linux-release
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  build_release:
+    needs: validate_release
+    # A pinned image rather than ubuntu-latest, so the toolchain cannot drift under a
+    # release. The architecture is part of the label because the gates below are
+    # architecture-specific.
+    runs-on: ${{ inputs.architecture == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 360
+    environment: production
+    env:
+      CARGO_INCREMENTAL: '0'
+      # Pinned so the C++ toolchain used for the release cannot change between runs.
+      CC: clang-18
+      CXX: clang++-18
+      ORION_STUDIO_REQUIRE_SENTRY: '0'
+      ORION_STUDIO_RELEASE_CHANNEL: stable
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: stable-linux-release-support-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-support
+      - name: Check out validated release source
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+        run: |
+          set -euo pipefail
+          # The release source comes from the repository itself, never from a
+          # runner-local path, and the HEAD equality check is what proves the tree is
+          # the validated commit.
+          git init "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" remote add release-source "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 release-source "${RELEASE_COMMIT}"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          [[ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" == "${RELEASE_COMMIT}" ]]
+          [[ -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain)" ]]
+      - name: Apply verified release support scripts
+        env:
+          EXPECTED_SUPPORT_SHA256: ${{ needs.validate_release.outputs.support_script_sha256 }}
+        run: |
+          set -euo pipefail
+          support_directory="${RUNNER_TEMP}/release-support"
+          for support_script in bundle-linux verify-linux-release; do
+            staged="${support_directory}/${support_script}"
+            [[ -f "${staged}" ]]
+            [[ ! -L "${staged}" ]]
+            install -m 755 "${staged}" "$GITHUB_WORKSPACE/script/${support_script}"
+          done
+          actual_sha256=$(shasum -a 256 "$GITHUB_WORKSPACE/script/bundle-linux" "$GITHUB_WORKSPACE/script/verify-linux-release" | shasum -a 256 | awk '{print $1}')
+          [[ "${actual_sha256}" == "${EXPECTED_SUPPORT_SHA256}" ]]
+          echo "Applied verified release support scripts: ${actual_sha256}"
+      - name: Run source gates
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "orion-studio") | .version')
+          [[ "${version}" == "${RELEASE_TAG#v}" ]]
+          [[ "$(tr -d '\r\n' < crates/zed/RELEASE_CHANNEL)" == stable ]]
+          bash -n script/bundle-linux
+          bash -n script/verify-linux-release
+          ./script/test-orion-brand
+          ./script/check-secrets
+          ./script/check-macos-entitlements
+          ./script/test-uninstall
+          cargo fmt --all -- --check
+          git diff --check
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24.21.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Build and package
+        env:
+          BUILD_LOG: ${{ runner.temp }}/release-build.log
+        run: |
+          set -euo pipefail
+          # Peak resident set size and elapsed time are recorded the same way the macOS
+          # job records them, so runner sizing decisions have comparable data.
+          /usr/bin/time -v ./script/linux 2>&1 | tee -a "${BUILD_LOG}"
+          ./script/download-wasi-sdk 2>&1 | tee -a "${BUILD_LOG}"
+          /usr/bin/time -v ./script/bundle-linux 2>&1 | tee -a "${BUILD_LOG}"
+      - name: Verify release archive
+        env:
+          ARCHITECTURE: ${{ inputs.architecture }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          archive="target/release/orion-studio-linux-${ARCHITECTURE}.tar.gz"
+          remote_server_archive="target/orion-studio-remote-server-linux-${ARCHITECTURE}.gz"
+          ./script/verify-linux-release \
+            --archive "${archive}" \
+            --architecture "${ARCHITECTURE}" \
+            --remote-server-archive "${remote_server_archive}" \
+            --expected-version "${RELEASE_TAG#v}"
+      - name: Record build resources
+        if: always()
+        env:
+          BUILD_LOG: ${{ runner.temp }}/release-build.log
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          ARCHITECTURE: ${{ inputs.architecture }}
+        run: |
+          set -euo pipefail
+          archive="target/release/orion-studio-linux-${ARCHITECTURE}.tar.gz"
+          available_kib=$(LC_ALL=C df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
+          target_bytes=$(du -sk target 2>/dev/null | awk '{ print $1 * 1024 }')
+          peak_rss_kib=$(awk '/Maximum resident set size/ { print $NF }' "${BUILD_LOG}" 2>/dev/null | sort -n | tail -1)
+          # `/usr/bin/time -v` reports elapsed as h:mm:ss or m:ss, not a plain number,
+          # so the raw string is recorded rather than run through a fragile parser.
+          elapsed_reported=$(awk '/Elapsed \(wall clock\)/ { print $NF }' "${BUILD_LOG}" 2>/dev/null | tail -1)
+          artifact_bytes=$(stat -c%s "${archive}" 2>/dev/null || echo 0)
+
+          jq -n \
+            --arg tag "$RELEASE_TAG" \
+            --arg commit "$RELEASE_COMMIT" \
+            --arg architecture "${ARCHITECTURE}" \
+            --arg elapsed "${elapsed_reported:-}" \
+            --argjson available_kib "${available_kib:-0}" \
+            --argjson target_bytes "${target_bytes:-0}" \
+            --argjson peak_rss_bytes "${peak_rss_kib:-0}" \
+            --argjson artifact_bytes "${artifact_bytes:-0}" \
+            '{
+              tag: $tag,
+              commit: $commit,
+              architecture: $architecture,
+              elapsed_reported: $elapsed,
+              available_disk_bytes_after_build: ($available_kib * 1024),
+              target_bytes: $target_bytes,
+              peak_rss_bytes: $peak_rss_bytes,
+              artifact_bytes: $artifact_bytes
+            }' > "${RUNNER_TEMP}/build-resources.json"
+          cat "${RUNNER_TEMP}/build-resources.json"
+      - name: Write platform manifest
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          ARCHITECTURE: ${{ inputs.architecture }}
+        run: |
+          set -euo pipefail
+          archive="target/release/orion-studio-linux-${ARCHITECTURE}.tar.gz"
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "orion-studio") | .version')
+          sha256=$(sha256sum "${archive}" | awk '{ print $1 }')
+          manifest="${RUNNER_TEMP}/platform-manifest.json"
+          jq -n \
+            --arg tag "$RELEASE_TAG" \
+            --arg commit "$RELEASE_COMMIT" \
+            --arg version "$version" \
+            --arg architecture "${ARCHITECTURE}" \
+            --arg artifact "orion-studio-linux-${ARCHITECTURE}.tar.gz" \
+            --arg sha256 "$sha256" \
+            '{
+              tag: $tag,
+              commit: $commit,
+              version: $version,
+              channel: "stable",
+              platform: "linux",
+              architecture: $architecture,
+              artifact: $artifact,
+              sha256: $sha256,
+              signed: true
+            }' > "$manifest"
+          jq -e '
+            (.tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+            (.commit | test("^[0-9a-f]{40}$")) and
+            (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+            (.channel == "stable") and
+            (.platform == "linux") and
+            (.architecture == "x86_64" or .architecture == "aarch64") and
+            (.artifact | length > 0) and
+            (.sha256 | test("^[0-9a-f]{64}$")) and
+            (.signed == true)
+          ' "$manifest" > /dev/null
+          [[ "${version}" == "${RELEASE_TAG#v}" ]]
+          cat "$manifest"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: stable-linux-${{ inputs.architecture }}-${{ inputs.tag }}
+          path: |
+            target/release/orion-studio-linux-${{ inputs.architecture }}.tar.gz
+            target/orion-studio-remote-server-linux-${{ inputs.architecture }}.gz
+            ${{ runner.temp }}/build-resources.json
+            ${{ runner.temp }}/platform-manifest.json
+          if-no-files-found: error
+          compression-level: 0
