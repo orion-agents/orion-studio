@@ -201,7 +201,11 @@ fi
 
 if [[ -n "${expected_version}" ]]; then
     echo "Checking embedded version"
-    version_output=$("${app_directory}/libexec/orion-studio" --version 2>&1 || true)
+    # The editor and CLI binaries both disable clap's version flag, so
+    # `--version` is rejected by the argument parser. `--system-specs` prints
+    # the version baked in at compile time (CARGO_PKG_VERSION) and exits before
+    # any platform/GPUI initialization, which keeps the check headless-safe.
+    version_output=$("${app_directory}/libexec/orion-studio" --system-specs 2>&1 || true)
     [[ "${version_output}" == *"${expected_version}"* ]] || fail "expected version ${expected_version}, got: ${version_output}"
     note "version: ${version_output}"
 fi
