@@ -83,7 +83,7 @@ jobs:
           echo "Release support script SHA-256: ${support_sha256}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: stable-macos-x86_64-release-support-${{ github.run_id }}-${{ github.run_attempt }}
+          name: stable-macos-x86_64-release-support-${{ github.run_id }}
           path: ${{ runner.temp }}/release-support/bundle-mac
           if-no-files-found: error
           retention-days: 1
@@ -149,7 +149,7 @@ jobs:
           fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: stable-macos-x86_64-release-support-${{ github.run_id }}-${{ github.run_attempt }}
+          name: stable-macos-x86_64-release-support-${{ github.run_id }}
           path: ${{ runner.temp }}/release-support
       - name: Check out validated release source
         env:
