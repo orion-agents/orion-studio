@@ -1,0 +1,254 @@
+name: Assemble Stable Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed tag in the form vMAJOR.MINOR.PATCH
+        required: true
+        type: string
+      macos_aarch64_run_id:
+        description: Run ID of a successful "Release macOS Apple Silicon Stable" build for this tag (build_only recommended)
+        required: false
+        type: string
+      macos_x86_64_run_id:
+        description: Run ID of a successful "Release macOS Intel Stable" build for this tag (build_only recommended)
+        required: false
+        type: string
+      linux_x86_64_run_id:
+        description: Run ID of a successful "Release Linux Stable" x86_64 build for this tag
+        required: false
+        type: string
+      linux_aarch64_run_id:
+        description: Run ID of a successful "Release Linux Stable" aarch64 build for this tag
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-stable-assemble-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    # This is the only job that writes release assets for a multi-platform Stable
+    # release (plan §7.2): the platform workflows are run with build_only so they
+    # only produce Actions Artifacts and platform manifests, and this job is the
+    # single writer. It never publishes — the Release stays a draft until the
+    # explicit release gate is passed by a human.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Verify tag and inputs
+        env:
+          ALLOWED_SIGNERS_BASE64: ${{ vars.ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 }}
+          RELEASE_ENABLED: ${{ vars.ORION_STUDIO_RELEASE_ENABLED }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          MACOS_AARCH64_RUN_ID: ${{ inputs.macos_aarch64_run_id }}
+          MACOS_X86_64_RUN_ID: ${{ inputs.macos_x86_64_run_id }}
+          LINUX_X86_64_RUN_ID: ${{ inputs.linux_x86_64_run_id }}
+          LINUX_AARCH64_RUN_ID: ${{ inputs.linux_aarch64_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == orion-agents/orion-studio ]]
+          [[ "${GITHUB_REF}" == refs/heads/main ]]
+          [[ "${RELEASE_ENABLED}" == true ]]
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ -n "${ALLOWED_SIGNERS_BASE64}" ]]
+          [[ -n "${MACOS_AARCH64_RUN_ID}${MACOS_X86_64_RUN_ID}${LINUX_X86_64_RUN_ID}${LINUX_AARCH64_RUN_ID}" ]]
+          for run_id in "${MACOS_AARCH64_RUN_ID}" "${MACOS_X86_64_RUN_ID}" "${LINUX_X86_64_RUN_ID}" "${LINUX_AARCH64_RUN_ID}"; do
+            if [[ -n "${run_id}" ]]; then
+              [[ "${run_id}" =~ ^[0-9]+$ ]]
+            fi
+          done
+          allowed_signers="${RUNNER_TEMP}/allowed-signers"
+          printf '%s' "${ALLOWED_SIGNERS_BASE64}" | base64 --decode > "${allowed_signers}"
+          git config --local gpg.format ssh
+          git config --local gpg.ssh.allowedSignersFile "${allowed_signers}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          [[ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" == tag ]]
+          git verify-tag "${RELEASE_TAG}"
+          tag_commit=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          git merge-base --is-ancestor "${tag_commit}" origin/main
+          release_channel_file=$(git ls-tree -r --name-only "${tag_commit}" | awk '/\/RELEASE_CHANNEL$/ && !found { print; found = 1 }')
+          [[ -n "${release_channel_file}" ]]
+          [[ "$(git show "${tag_commit}:${release_channel_file}")" == stable ]]
+          echo "tag_commit=${tag_commit}" >> "$GITHUB_ENV"
+      - name: Download platform artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          MACOS_AARCH64_RUN_ID: ${{ inputs.macos_aarch64_run_id }}
+          MACOS_X86_64_RUN_ID: ${{ inputs.macos_x86_64_run_id }}
+          LINUX_X86_64_RUN_ID: ${{ inputs.linux_x86_64_run_id }}
+          LINUX_AARCH64_RUN_ID: ${{ inputs.linux_aarch64_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p assembly
+          download() {
+            local run_id="$1" workflow_name="$2" artifact_name="$3" destination="$4"
+            # The run must be a completed, successful run of the exact platform
+            # workflow. What it produced is verified afterwards against the signed
+            # tag, so a green run of the wrong workflow cannot slip through.
+            local conclusion name
+            conclusion=$(gh run view "${run_id}" --repo "${GITHUB_REPOSITORY}" --json conclusion --jq .conclusion)
+            name=$(gh run view "${run_id}" --repo "${GITHUB_REPOSITORY}" --json workflowName --jq .workflowName)
+            [[ "${conclusion}" == success ]]
+            [[ "${name}" == "${workflow_name}" ]]
+            mkdir -p "${destination}"
+            gh run download "${run_id}" --repo "${GITHUB_REPOSITORY}" --name "${artifact_name}" --dir "${destination}"
+          }
+          if [[ -n "${MACOS_AARCH64_RUN_ID}" ]]; then
+            download "${MACOS_AARCH64_RUN_ID}" "Release macOS Apple Silicon Stable" \
+              "stable-macos-aarch64-${RELEASE_TAG}" assembly/macos-aarch64
+          fi
+          if [[ -n "${MACOS_X86_64_RUN_ID}" ]]; then
+            download "${MACOS_X86_64_RUN_ID}" "Release macOS Intel Stable" \
+              "stable-macos-x86_64-${RELEASE_TAG}" assembly/macos-x86_64
+          fi
+          if [[ -n "${LINUX_X86_64_RUN_ID}" ]]; then
+            download "${LINUX_X86_64_RUN_ID}" "Release Linux Stable" \
+              "stable-linux-x86_64-${RELEASE_TAG}" assembly/linux-x86_64
+          fi
+          if [[ -n "${LINUX_AARCH64_RUN_ID}" ]]; then
+            download "${LINUX_AARCH64_RUN_ID}" "Release Linux Stable" \
+              "stable-linux-aarch64-${RELEASE_TAG}" assembly/linux-aarch64
+          fi
+          find assembly -type f | sort
+      - name: Reject unsafe or unexpected files
+        run: |
+          set -euo pipefail
+          # No symlinks: an artifact symlink could point outside the staging area.
+          [[ -z "$(find assembly -type l -print -quit)" ]]
+          # No empty files.
+          [[ -z "$(find assembly -type f -size 0 -print -quit)" ]]
+          # Every file must be on the allowlist for its platform directory. The
+          # per-platform SHA256SUMS is allowed in but never uploaded: the unified
+          # SHA256SUMS written below supersedes it.
+          while IFS= read -r file; do
+            case "${file}" in
+              assembly/macos-aarch64/Orion-Studio-aarch64.dmg) ;;
+              assembly/macos-x86_64/Orion-Studio-x86_64.dmg) ;;
+              assembly/linux-x86_64/orion-studio-linux-x86_64.tar.gz) ;;
+              assembly/linux-aarch64/orion-studio-linux-aarch64.tar.gz) ;;
+              assembly/linux-x86_64/orion-studio-remote-server-linux-x86_64.gz) ;;
+              assembly/linux-aarch64/orion-studio-remote-server-linux-aarch64.gz) ;;
+              assembly/*/SHA256SUMS) ;;
+              assembly/*/platform-manifest.json) ;;
+              assembly/*/build-resources.json) ;;
+              *) echo "file not on the release allowlist: ${file}" >&2; exit 1 ;;
+            esac
+          done < <(find assembly -type f | sort)
+          # Each downloaded platform directory must contain its primary artifact.
+          for directory in assembly/*/; do
+            case "${directory}" in
+              assembly/macos-aarch64/) [[ -f "${directory}Orion-Studio-aarch64.dmg" ]] ;;
+              assembly/macos-x86_64/) [[ -f "${directory}Orion-Studio-x86_64.dmg" ]] ;;
+              assembly/linux-x86_64/) [[ -f "${directory}orion-studio-linux-x86_64.tar.gz" ]] ;;
+              assembly/linux-aarch64/) [[ -f "${directory}orion-studio-linux-aarch64.tar.gz" ]] ;;
+            esac
+          done
+          # Primary artifacts must have unique names across platforms (they are
+          # uploaded to one flat Release asset namespace).
+          find assembly -mindepth 2 -maxdepth 2 -type f \
+            ! -name SHA256SUMS ! -name platform-manifest.json ! -name build-resources.json \
+            -printf '%f\n' | sort | uniq -d | grep . && exit 1 || true
+      - name: Validate manifests and re-hash artifacts
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          validate_platform() {
+            local directory="$1" platform="$2" architecture="$3"
+            local manifest="${directory}/platform-manifest.json"
+            [[ -f "${manifest}" ]]
+            jq -e \
+              --arg tag "${RELEASE_TAG}" \
+              --arg commit "${tag_commit}" \
+              --arg version "${RELEASE_TAG#v}" \
+              --arg platform "${platform}" \
+              --arg architecture "${architecture}" \
+              '(.tag == $tag) and
+               (.commit == $commit) and
+               (.version == $version) and
+               (.channel == "stable") and
+               (.platform == $platform) and
+               (.architecture == $architecture) and
+               (.artifact | length > 0) and
+               (.sha256 | test("^[0-9a-f]{64}$")) and
+               (.signed == true)' "${manifest}" > /dev/null
+            # The manifest digest is a claim, never trust: re-hash the artifact and
+            # compare. This also ties the artifact to the signed tag, because the
+            # manifest commit was asserted equal to the verified tag commit.
+            local artifact recorded actual
+            artifact=$(jq -r .artifact "${manifest}")
+            recorded=$(jq -r .sha256 "${manifest}")
+            [[ -f "${directory}/${artifact}" ]]
+            actual=$(sha256sum "${directory}/${artifact}" | awk '{ print $1 }')
+            [[ "${actual}" == "${recorded}" ]]
+            echo "${platform}/${architecture}: ${artifact} sha256 verified (${actual})"
+          }
+          for directory in assembly/*/; do
+            case "${directory}" in
+              assembly/macos-aarch64/) validate_platform "${directory}" macos aarch64 ;;
+              assembly/macos-x86_64/) validate_platform "${directory}" macos x86_64 ;;
+              assembly/linux-x86_64/) validate_platform "${directory}" linux x86_64 ;;
+              assembly/linux-aarch64/) validate_platform "${directory}" linux aarch64 ;;
+            esac
+          done
+      - name: Stage assets and write unified SHA256SUMS
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          while IFS= read -r file; do
+            install -m 644 "${file}" staging/
+          done < <(find assembly -mindepth 2 -maxdepth 2 -type f \
+            ! -name SHA256SUMS ! -name platform-manifest.json ! -name build-resources.json | sort)
+          (cd staging && sha256sum * > SHA256SUMS && sha256sum -c SHA256SUMS)
+          ls -l staging
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # Never overwrite a public Release: if one exists for the tag it must be
+          # a draft, and this job only ever uploads to drafts. Publishing is a
+          # separate, explicit human gate.
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            [[ "$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)" == true ]]
+          else
+            gh release create "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft \
+              --title "Orion Studio ${RELEASE_TAG}" --generate-notes
+          fi
+          gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --clobber staging/*
+          gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}"
+      - name: Summarize assembly
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Stable release assembly: ${RELEASE_TAG}"
+            echo ''
+            echo "| Asset | SHA-256 |"
+            echo '| --- | --- |'
+            while read -r digest name; do
+              echo "| ${name} | \`${digest}\` |"
+            done < staging/SHA256SUMS
+            echo ''
+            echo 'Release left as **draft**; publish only after the explicit release gate.'
+          } >> "$GITHUB_STEP_SUMMARY"
