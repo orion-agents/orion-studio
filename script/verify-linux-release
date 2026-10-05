@@ -111,7 +111,20 @@ assert_elf() {
     local description
     description=$(file -b "${path}")
     [[ "${description}" == *ELF*64-bit* ]] || fail "${label} is not a 64-bit ELF: ${description}"
-    [[ "${description}" == *"${elf_machine}"* ]] || fail "${label} is not ${elf_machine}: ${description}"
+    # `file`'s machine naming drifts across libmagic versions ("ARM aarch64"
+    # vs "AArch64"), which silently broke the substring match on ubuntu-24.04.
+    # The ELF header's Machine field is a stable enumeration, so that is what
+    # gates the architecture; `file` only sanity-checks the ELF class. The
+    # comparison is lowercased on both sides because binutils writes
+    # "Advanced Micro Devices X86-64" and "AArch64" with differing case.
+    local machine expected_machine
+    expected_machine=$(printf '%s' "${elf_machine}" | tr '[:upper:]' '[:lower:]')
+    machine=$(readelf -h "${path}" 2>/dev/null \
+        | awk '/Machine:/ { sub(/^[[:space:]]*Machine:[[:space:]]*/, ""); print; exit }' \
+        | tr '[:upper:]' '[:lower:]')
+    [[ -n "${machine}" ]] || fail "${label} ELF header machine could not be read: ${path}"
+    [[ "${machine}" == *"${expected_machine}"* ]] \
+        || fail "${label} is not ${elf_machine}: ELF header reports machine '${machine}' (${description})"
     note "${label}: ${description}"
 }
 
