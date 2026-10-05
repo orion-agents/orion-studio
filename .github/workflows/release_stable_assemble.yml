@@ -128,6 +128,40 @@ jobs:
               "stable-linux-aarch64-${RELEASE_TAG}" assembly/linux-aarch64
           fi
           find assembly -type f | sort
+      - name: Flatten platform artifacts
+        run: |
+          set -euo pipefail
+          # upload-artifact preserves the platform workspace's directory layout
+          # (target/... and _temp/... under nested repo directories), but every
+          # later step expects files directly in the platform directory. Move
+          # the known release files up and drop the now-empty scaffolding; any
+          # file that is not moved stays behind and is rejected by the allowlist
+          # check that follows.
+          flatten() {
+            local destination="$1" name found count
+            shift
+            if [[ ! -d "${destination}" ]]; then
+              return 0
+            fi
+            for name in "$@"; do
+              count=$(find "${destination}" -type f -name "${name}" | wc -l)
+              [[ "${count}" -eq 1 ]] || { echo "expected exactly one ${name} under ${destination}, found ${count}" >&2; exit 1; }
+              found=$(find "${destination}" -type f -name "${name}" -print -quit)
+              mv "${found}" "${destination}/"
+            done
+            find "${destination}" -mindepth 1 -type d -empty -delete
+          }
+          flatten assembly/macos-aarch64 \
+            Orion-Studio-aarch64.dmg SHA256SUMS platform-manifest.json build-resources.json
+          flatten assembly/macos-x86_64 \
+            Orion-Studio-x86_64.dmg SHA256SUMS platform-manifest.json build-resources.json
+          flatten assembly/linux-x86_64 \
+            orion-studio-linux-x86_64.tar.gz orion-studio-remote-server-linux-x86_64.gz \
+            platform-manifest.json build-resources.json
+          flatten assembly/linux-aarch64 \
+            orion-studio-linux-aarch64.tar.gz orion-studio-remote-server-linux-aarch64.gz \
+            platform-manifest.json build-resources.json
+          find assembly -type f | sort
       - name: Reject unsafe or unexpected files
         run: |
           set -euo pipefail
