@@ -309,8 +309,10 @@ jobs:
           (cd target/x86_64-apple-darwin/release && shasum -a 256 Orion-Studio-x86_64.dmg > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
           # Cross-compiled output must actually be Intel: the bundle executable has
           # to be an x86_64 Mach-O, never an ARM slice that would fail at install
-          # time on Intel hardware.
-          app_binary="target/x86_64-apple-darwin/release/bundle/osx/Orion Studio.app/Contents/MacOS/orion-studio"
+          # time on Intel hardware. `bundle-mac` moves the .app from
+          # bundle/osx into release/dmg before creating the DMG, so the post-move
+          # location is what exists (and is the exact payload of the DMG).
+          app_binary="target/x86_64-apple-darwin/release/dmg/Orion Studio.app/Contents/MacOS/orion-studio"
           [[ -f "$app_binary" ]]
           file "$app_binary" | grep -F "Mach-O 64-bit executable x86_64"
       - name: Write platform manifest
