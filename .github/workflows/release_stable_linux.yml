@@ -172,6 +172,21 @@ jobs:
           0d36638173451aad2d36931490d0c028e2819ae2:crates/dev_container/src/devcontainer_manifest.rs:generic-api-key:9540
           EOF
           fi
+          # Same fixtures, re-pinned to the v1.17.1 tag commit: with a depth=1
+          # checkout gitleaks attributes every finding to the tag commit, so each
+          # tag needs its own block.
+          if [[ "${RELEASE_TAG}" == v1.17.1 ]]; then
+            cat >> .gitleaksignore <<'EOF'
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1031
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1548
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1610
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1664
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/grep_tool.rs:generic-api-key:1048
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:559
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:884
+          7986331633204422a2b48f1386cbea9aff81204f:crates/dev_container/src/devcontainer_manifest.rs:generic-api-key:9540
+          EOF
+          fi
           ./script/check-secrets
           ./script/check-macos-entitlements
           ./script/test-uninstall
