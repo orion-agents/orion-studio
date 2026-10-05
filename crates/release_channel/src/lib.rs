@@ -41,11 +41,15 @@ pub static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
 fn compile_time_release_channel_name() -> String {
     // Canonical first; the legacy `ZED_RELEASE_CHANNEL` is retained as a
     // fallback. The build script only enables this `cfg` when at least one of
-    // the two env vars is present, so this `or` is always hit.
-    match option_env!("ORION_STUDIO_RELEASE_CHANNEL") {
-        Some(channel) => channel.trim().to_string(),
-        None => env!("ZED_RELEASE_CHANNEL").trim().to_string(),
-    }
+    // the two env vars is present, so the `expect` never fires. Both reads
+    // must go through `option_env!`: an `env!("ZED_RELEASE_CHANNEL")` fallback
+    // arm would be macro-expanded unconditionally and fail the build whenever
+    // only the canonical variable is set.
+    option_env!("ORION_STUDIO_RELEASE_CHANNEL")
+        .or(option_env!("ZED_RELEASE_CHANNEL"))
+        .expect("build script enables this cfg only when a channel env var is set")
+        .trim()
+        .to_string()
 }
 
 #[cfg(not(__do_not_set_zed_release_channel))]
@@ -353,8 +357,11 @@ mod tests {
             std::env::remove_var("ZED_RELEASE_CHANNEL");
             std::env::remove_var("ORION_STUDIO_RELEASE_CHANNEL");
         }
-        // No env override -> falls back to the compile-time `RELEASE_CHANNEL` file ("dev").
-        assert_eq!(release_channel_name_from_env(), "dev");
+        // No env override -> falls back to the compile-time `RELEASE_CHANNEL`
+        // file. Read the expectation from the file itself so the test stays
+        // correct when the checked-in channel changes (e.g. dev -> stable).
+        let file_channel = include_str!("../../zed/RELEASE_CHANNEL").trim();
+        assert_eq!(release_channel_name_from_env(), file_channel);
 
         unsafe {
             std::env::set_var("ZED_RELEASE_CHANNEL", "nightly");
