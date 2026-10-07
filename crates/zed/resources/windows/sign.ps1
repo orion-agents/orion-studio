@@ -50,4 +50,4 @@ if (-Not [string]::IsNullOrWhiteSpace($trace)) {
     }
 }
 
-Invoke-TrustedSigning @params
+Invoke-ArtifactSigning @params
