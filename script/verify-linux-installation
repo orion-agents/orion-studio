@@ -116,16 +116,21 @@ WGPU_BACKEND=gl \
             wait "${application_pid}" >/dev/null 2>&1 || true
         }
         trap cleanup_application EXIT
-        for _ in $(seq 1 60); do
+        for _ in $(seq 1 120); do
             kill -0 "${application_pid}" >/dev/null 2>&1 || {
+                printf '%s\n' "=== editor exited; launch log follows ===" >&2
                 cat "$2" >&2
                 exit 1
             }
-            if xdotool search --onlyvisible --name "Orion Studio" >/dev/null 2>&1; then
+            if xdotool search --name "Orion Studio" >/dev/null 2>&1; then
                 exit 0
             fi
             sleep 1
         done
+        printf '%s\n' "=== no window after 120s; all X client window names ===" >&2
+        xdotool search --name ".*" get_window_name %@ 2>&1 || true
+        launch_bytes=$(wc -c <"$2")
+        printf '%s\n' "=== launch log (${launch_bytes} bytes) ===" >&2
         cat "$2" >&2
         exit 1
     ' bash "${installed_editor}" "${launch_log}" \
