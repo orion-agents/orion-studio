@@ -129,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl file git perl python3 sudo time
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl file git lsb-release perl python3 sudo time
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: stable-linux-release-support-${{ github.run_id }}
@@ -259,7 +259,7 @@ jobs:
             --remote-server-archive "${remote_server_archive}" \
             --expected-version "${RELEASE_TAG#v}"
       - name: Record build resources
-        if: ${{ always() && steps.package.outcome != '' }}
+        if: ${{ always() && (steps.package.outcome == 'success' || steps.package.outcome == 'failure') }}
         env:
           BUILD_LOG: ${{ runner.temp }}/release-build.log
           RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
@@ -269,7 +269,7 @@ jobs:
           set -euo pipefail
           archive="target/release/orion-studio-linux-${ARCHITECTURE}.tar.gz"
           available_kib=$(LC_ALL=C df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
-          target_bytes=$(du -sk target 2>/dev/null | awk '{ print $1 * 1024 }')
+          target_bytes=$(du -sk target 2>/dev/null | awk '{ print $1 * 1024 }' || true)
           peak_rss_kib=$(awk '/Maximum resident set size/ { print $NF }' "${BUILD_LOG}" 2>/dev/null | sort -n | tail -1)
           # `/usr/bin/time -v` reports elapsed as h:mm:ss or m:ss, not a plain number,
           # so the raw string is recorded rather than run through a fragile parser.
