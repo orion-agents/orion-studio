@@ -414,6 +414,34 @@ function Assert-AppxLogo {
     }
 }
 
+function Get-MakeAppxPath {
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:WindowsSdkDir) -and
+        -not [string]::IsNullOrWhiteSpace($env:WindowsSDKVersion)) {
+        $sdkVersion = $env:WindowsSDKVersion.TrimEnd('\')
+        $candidates += Join-Path $env:WindowsSdkDir "bin\$sdkVersion\x64\makeappx.exe"
+    }
+
+    $sdkBinRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+    if (Test-Path -LiteralPath $sdkBinRoot) {
+        $versionDirectories = Get-ChildItem -LiteralPath $sdkBinRoot -Directory |
+            Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]$_.Name } -Descending
+        foreach ($versionDirectory in $versionDirectories) {
+            $candidates += Join-Path $versionDirectory.FullName "x64\makeappx.exe"
+        }
+    }
+
+    foreach ($candidate in $candidates | Select-Object -Unique) {
+        if (Test-Path -LiteralPath $candidate) {
+            Write-Host "Using MakeAppx at $candidate"
+            return $candidate
+        }
+    }
+
+    throw "makeappx.exe was not found in the Visual Studio developer environment or an installed Windows 10 SDK."
+}
+
 function MakeAppx {
     if ($unsignedDevBuild) {
         Write-Output "Skipping the AppX package for the unsigned dev installer; classic context-menu registration will be used."
@@ -463,10 +491,8 @@ function MakeAppx {
     }
     [System.IO.File]::WriteAllText($stagedManifest, $manifestContent, [System.Text.UTF8Encoding]::new($false))
 
-    # Add makeAppx.exe to Path
-    $sdk = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64"
-    $env:Path += ';' + $sdk
-    makeAppx.exe pack /d "$innoDir\make_appx" /p "$innoDir\orion_studio_explorer_command_injector.appx" /nv
+    $makeAppxPath = Get-MakeAppxPath
+    & $makeAppxPath pack /d "$innoDir\make_appx" /p "$innoDir\orion_studio_explorer_command_injector.appx" /nv
     if ($LASTEXITCODE -ne 0) {
         throw "makeAppx.exe failed with exit code $LASTEXITCODE."
     }
@@ -485,6 +511,9 @@ function Assert-SignedByConfiguredPublisher {
         }
         if ($null -eq $signature.SignerCertificate -or $signature.SignerCertificate.Subject -ne $appxPublisher) {
             throw "The signer for '$file' does not match ORION_STUDIO_WINDOWS_APPX_PUBLISHER."
+        }
+        if ($null -eq $signature.TimeStamperCertificate) {
+            throw "The signature for '$file' has no trusted timestamp."
         }
     }
 }

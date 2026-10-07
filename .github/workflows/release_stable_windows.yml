@@ -1,0 +1,290 @@
+name: Release Windows Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed tag in the form vMAJOR.MINOR.PATCH
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-stable-windows-x86_64-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate_release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    outputs:
+      tag_commit: ${{ steps.source.outputs.tag_commit }}
+      support_script_sha256: ${{ steps.support.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Verify immutable Stable source
+        id: source
+        env:
+          ALLOWED_SIGNERS_BASE64: ${{ vars.ORION_STUDIO_RELEASE_SSH_ALLOWED_SIGNERS_BASE64 }}
+          RELEASE_ENABLED: ${{ vars.ORION_STUDIO_RELEASE_ENABLED }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == orion-agents/orion-studio ]]
+          [[ "${GITHUB_REF}" == refs/heads/main ]]
+          [[ "${RELEASE_ENABLED}" == true ]]
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ -n "${ALLOWED_SIGNERS_BASE64}" ]]
+          allowed_signers="${RUNNER_TEMP}/allowed-signers"
+          printf '%s' "${ALLOWED_SIGNERS_BASE64}" | base64 --decode > "${allowed_signers}"
+          git config --local gpg.format ssh
+          git config --local gpg.ssh.allowedSignersFile "${allowed_signers}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          [[ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" == tag ]]
+          git verify-tag "${RELEASE_TAG}"
+          tag_commit=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          git merge-base --is-ancestor "${tag_commit}" origin/main
+          release_channel_file=$(git ls-tree -r --name-only "${tag_commit}" | awk '/\/RELEASE_CHANNEL$/ && !found { print; found = 1 }')
+          [[ -n "${release_channel_file}" ]]
+          [[ "$(git show "${tag_commit}:${release_channel_file}")" == stable ]]
+          echo "tag_commit=${tag_commit}" >> "$GITHUB_OUTPUT"
+      - name: Stage release support script
+        id: support
+        run: |
+          set -euo pipefail
+          support_directory="${RUNNER_TEMP}/release-support"
+          mkdir -p "${support_directory}"
+          install -m 644 script/bundle-windows.ps1 "${support_directory}/bundle-windows.ps1"
+          support_sha256=$(sha256sum "${support_directory}/bundle-windows.ps1" | awk '{ print $1 }')
+          echo "sha256=${support_sha256}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: stable-windows-release-support-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-support/bundle-windows.ps1
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  build_release:
+    needs: validate_release
+    runs-on: windows-2022
+    timeout-minutes: 360
+    environment: production
+    env:
+      CARGO_INCREMENTAL: '0'
+      ORION_STUDIO_RELEASE_CHANNEL: stable
+      ORION_STUDIO_REQUIRE_SENTRY: '0'
+      ORION_STUDIO_REQUIRE_SIGNED_RELEASE: '1'
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: stable-windows-release-support-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-support
+      - name: Check out validated release source
+        shell: pwsh
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          git init $env:GITHUB_WORKSPACE
+          git -C $env:GITHUB_WORKSPACE remote add release-source "https://github.com/$env:GITHUB_REPOSITORY.git"
+          git -C $env:GITHUB_WORKSPACE fetch --no-tags --depth=1 release-source $env:RELEASE_COMMIT
+          git -C $env:GITHUB_WORKSPACE checkout --detach --force FETCH_HEAD
+          if ((git -C $env:GITHUB_WORKSPACE rev-parse HEAD) -ne $env:RELEASE_COMMIT) {
+              throw "The checkout does not match the validated release commit."
+          }
+          if (git -C $env:GITHUB_WORKSPACE status --porcelain) {
+              throw "The validated release checkout is dirty."
+          }
+      - name: Apply verified release support script
+        shell: pwsh
+        env:
+          EXPECTED_SUPPORT_SHA256: ${{ needs.validate_release.outputs.support_script_sha256 }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $staged = Join-Path $env:RUNNER_TEMP "release-support\bundle-windows.ps1"
+          $actual = (Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:EXPECTED_SUPPORT_SHA256) {
+              throw "The Windows support script digest does not match validation."
+          }
+          Copy-Item -LiteralPath $staged -Destination "$env:GITHUB_WORKSPACE\script\bundle-windows.ps1" -Force
+      - name: Run source gates
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "orion-studio") | .version')
+          [[ "${version}" == "${RELEASE_TAG#v}" ]]
+          [[ "$(tr -d '\r\n' < crates/zed/RELEASE_CHANNEL)" == stable ]]
+          ./script/test-orion-brand
+          if [[ "${RELEASE_TAG}" == v1.17.1 ]]; then
+            cat >> .gitleaksignore <<'EOF'
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1031
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1548
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1610
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1664
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/grep_tool.rs:generic-api-key:1048
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:559
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:884
+          7986331633204422a2b48f1386cbea9aff81204f:crates/dev_container/src/devcontainer_manifest.rs:generic-api-key:9540
+          EOF
+          fi
+          ./script/check-secrets
+          cargo fmt --all -- --check
+          git diff --check
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24.21.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Install Azure Artifact Signing module
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module ArtifactSigning -RequiredVersion 0.1.20 -Scope CurrentUser -Force
+          Import-Module ArtifactSigning -RequiredVersion 0.1.20 -Force
+          Get-Command Invoke-TrustedSigning -ErrorAction Stop
+      - name: Build and sign installer
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.tag }}
+          ORION_STUDIO_CLIENT_CHECKSUM_SEED: ${{ secrets.ORION_STUDIO_CLIENT_CHECKSUM_SEED }}
+          ORION_STUDIO_MINIDUMP_ENDPOINT: ${{ secrets.ORION_STUDIO_SENTRY_MINIDUMP_ENDPOINT }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+          ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+          CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+          ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          FILE_DIGEST: SHA256
+          TIMESTAMP_DIGEST: SHA256
+          TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+          ORION_STUDIO_WINDOWS_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_PUBLISHER }}
+          ORION_STUDIO_WINDOWS_APPX_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_APPX_PUBLISHER }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:RELEASE_VERSION = $env:RELEASE_VERSION.TrimStart("v")
+          script/bundle-windows.ps1 -Architecture x86_64
+      - name: Record build resources
+        if: always()
+        shell: pwsh
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $targetBytes = if (Test-Path target) {
+              (Get-ChildItem target -Recurse -File | Measure-Object Length -Sum).Sum
+          } else { 0 }
+          $artifactBytes = if (Test-Path "target\Orion-Studio-x86_64.exe") {
+              (Get-Item "target\Orion-Studio-x86_64.exe").Length
+          } else { 0 }
+          $resources = @{
+              tag = $env:RELEASE_TAG
+              commit = $env:RELEASE_COMMIT
+              architecture = "x86_64"
+              available_disk_bytes_after_build = (Get-PSDrive -Name C).Free
+              target_bytes = $targetBytes
+              artifact_bytes = $artifactBytes
+          }
+          $resources | ConvertTo-Json | Set-Content -LiteralPath "$env:RUNNER_TEMP\build-resources.json" -Encoding utf8
+      - name: Verify install, upgrade, launch, and uninstall
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          EXPECTED_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_APPX_PUBLISHER }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Resolve-Path "target\Orion-Studio-x86_64.exe"
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -ne $env:EXPECTED_PUBLISHER) {
+              throw "The Stable installer signature is invalid or has an unexpected publisher."
+          }
+          if ($null -eq $signature.TimeStamperCertificate) {
+              throw "The Stable installer signature has no trusted timestamp."
+          }
+
+          $installDirectory = Join-Path $env:RUNNER_TEMP "Orion Studio Stable"
+          $installerArguments = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=$installDirectory")
+          $install = Start-Process -FilePath $installer -ArgumentList $installerArguments -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Initial install failed with exit code $($install.ExitCode)." }
+
+          $editor = Join-Path $installDirectory "orion-studio.exe"
+          foreach ($relativePath in @("orion-studio.exe", "bin\orion-studio.exe", "bin\orion.exe", "bin\zed.exe")) {
+              if (-not (Test-Path -LiteralPath (Join-Path $installDirectory $relativePath))) {
+                  throw "The installed package is missing $relativePath."
+              }
+          }
+          $versionOutput = & $editor --system-specs 2>&1 | Out-String
+          if (-not $versionOutput.Contains($env:RELEASE_TAG.TrimStart("v"))) {
+              throw "The installed editor does not report the expected version."
+          }
+          if (-not (Test-Path "HKCU:\Software\Classes\orion")) {
+              throw "The Orion URL scheme was not registered."
+          }
+
+          $settingsDirectory = Join-Path $env:APPDATA "Orion Studio"
+          New-Item -ItemType Directory -Path $settingsDirectory -Force | Out-Null
+          $settingsSentinel = Join-Path $settingsDirectory "release-acceptance-sentinel"
+          Set-Content -LiteralPath $settingsSentinel -Value "preserve"
+          $upgrade = Start-Process -FilePath $installer -ArgumentList $installerArguments -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $settingsSentinel)) {
+              throw "Upgrade failed or removed user data."
+          }
+
+          $application = Start-Process -FilePath $editor -ArgumentList "--foreground" -PassThru
+          Start-Sleep -Seconds 15
+          if ($application.HasExited) {
+              throw "The installed editor exited during the launch smoke test with code $($application.ExitCode)."
+          }
+          Stop-Process -Id $application.Id -Force
+          $application.WaitForExit()
+
+          $uninstaller = Join-Path $installDirectory "unins000.exe"
+          if (-not (Test-Path -LiteralPath $uninstaller)) { throw "The uninstaller is missing." }
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART") -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstall failed with exit code $($uninstall.ExitCode)." }
+          if (Test-Path -LiteralPath $installDirectory) { throw "Uninstall left the application directory behind." }
+          if (-not (Test-Path -LiteralPath $settingsSentinel)) { throw "Uninstall removed user data." }
+      - name: Write platform manifest
+        shell: pwsh
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Resolve-Path "target\Orion-Studio-x86_64.exe"
+          $sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifest = @{
+              tag = $env:RELEASE_TAG
+              commit = $env:RELEASE_COMMIT
+              version = $env:RELEASE_TAG.TrimStart("v")
+              channel = "stable"
+              platform = "windows"
+              architecture = "x86_64"
+              artifact = "Orion-Studio-x86_64.exe"
+              sha256 = $sha256
+              signed = $true
+          }
+          $manifest | ConvertTo-Json | Set-Content -LiteralPath "$env:RUNNER_TEMP\platform-manifest.json" -Encoding utf8
+          Get-Content "$env:RUNNER_TEMP\platform-manifest.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: stable-windows-x86_64-${{ inputs.tag }}
+          path: |
+            target/Orion-Studio-x86_64.exe
+            target/orion-studio-remote-server-windows-x86_64.zip
+            ${{ runner.temp }}/platform-manifest.json
+            ${{ runner.temp }}/build-resources.json
+          if-no-files-found: error
+          compression-level: 0
