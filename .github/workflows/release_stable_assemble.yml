@@ -23,6 +23,10 @@ on:
         description: Run ID of a successful "Release Linux Stable" aarch64 build for this tag
         required: false
         type: string
+      windows_x86_64_run_id:
+        description: Run ID of a successful "Release Windows Stable" x86_64 build for this tag
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -60,6 +64,7 @@ jobs:
           MACOS_X86_64_RUN_ID: ${{ inputs.macos_x86_64_run_id }}
           LINUX_X86_64_RUN_ID: ${{ inputs.linux_x86_64_run_id }}
           LINUX_AARCH64_RUN_ID: ${{ inputs.linux_aarch64_run_id }}
+          WINDOWS_X86_64_RUN_ID: ${{ inputs.windows_x86_64_run_id }}
         run: |
           set -euo pipefail
           [[ "${GITHUB_REPOSITORY}" == orion-agents/orion-studio ]]
@@ -67,8 +72,8 @@ jobs:
           [[ "${RELEASE_ENABLED}" == true ]]
           [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ -n "${ALLOWED_SIGNERS_BASE64}" ]]
-          [[ -n "${MACOS_AARCH64_RUN_ID}${MACOS_X86_64_RUN_ID}${LINUX_X86_64_RUN_ID}${LINUX_AARCH64_RUN_ID}" ]]
-          for run_id in "${MACOS_AARCH64_RUN_ID}" "${MACOS_X86_64_RUN_ID}" "${LINUX_X86_64_RUN_ID}" "${LINUX_AARCH64_RUN_ID}"; do
+          [[ -n "${MACOS_AARCH64_RUN_ID}${MACOS_X86_64_RUN_ID}${LINUX_X86_64_RUN_ID}${LINUX_AARCH64_RUN_ID}${WINDOWS_X86_64_RUN_ID}" ]]
+          for run_id in "${MACOS_AARCH64_RUN_ID}" "${MACOS_X86_64_RUN_ID}" "${LINUX_X86_64_RUN_ID}" "${LINUX_AARCH64_RUN_ID}" "${WINDOWS_X86_64_RUN_ID}"; do
             if [[ -n "${run_id}" ]]; then
               [[ "${run_id}" =~ ^[0-9]+$ ]]
             fi
@@ -95,6 +100,7 @@ jobs:
           MACOS_X86_64_RUN_ID: ${{ inputs.macos_x86_64_run_id }}
           LINUX_X86_64_RUN_ID: ${{ inputs.linux_x86_64_run_id }}
           LINUX_AARCH64_RUN_ID: ${{ inputs.linux_aarch64_run_id }}
+          WINDOWS_X86_64_RUN_ID: ${{ inputs.windows_x86_64_run_id }}
         run: |
           set -euo pipefail
           mkdir -p assembly
@@ -126,6 +132,10 @@ jobs:
           if [[ -n "${LINUX_AARCH64_RUN_ID}" ]]; then
             download "${LINUX_AARCH64_RUN_ID}" "Release Linux Stable" \
               "stable-linux-aarch64-${RELEASE_TAG}" assembly/linux-aarch64
+          fi
+          if [[ -n "${WINDOWS_X86_64_RUN_ID}" ]]; then
+            download "${WINDOWS_X86_64_RUN_ID}" "Release Windows Stable" \
+              "stable-windows-x86_64-${RELEASE_TAG}" assembly/windows-x86_64
           fi
           find assembly -type f | sort
       - name: Flatten platform artifacts
@@ -161,6 +171,9 @@ jobs:
           flatten assembly/linux-aarch64 \
             orion-studio-linux-aarch64.tar.gz orion-studio-remote-server-linux-aarch64.gz \
             platform-manifest.json build-resources.json
+          flatten assembly/windows-x86_64 \
+            Orion-Studio-x86_64.exe orion-studio-remote-server-windows-x86_64.zip \
+            platform-manifest.json build-resources.json
           find assembly -type f | sort
       - name: Reject unsafe or unexpected files
         run: |
@@ -180,6 +193,8 @@ jobs:
               assembly/linux-aarch64/orion-studio-linux-aarch64.tar.gz) ;;
               assembly/linux-x86_64/orion-studio-remote-server-linux-x86_64.gz) ;;
               assembly/linux-aarch64/orion-studio-remote-server-linux-aarch64.gz) ;;
+              assembly/windows-x86_64/Orion-Studio-x86_64.exe) ;;
+              assembly/windows-x86_64/orion-studio-remote-server-windows-x86_64.zip) ;;
               assembly/*/SHA256SUMS) ;;
               assembly/*/platform-manifest.json) ;;
               assembly/*/build-resources.json) ;;
@@ -193,6 +208,7 @@ jobs:
               assembly/macos-x86_64/) [[ -f "${directory}Orion-Studio-x86_64.dmg" ]] ;;
               assembly/linux-x86_64/) [[ -f "${directory}orion-studio-linux-x86_64.tar.gz" ]] ;;
               assembly/linux-aarch64/) [[ -f "${directory}orion-studio-linux-aarch64.tar.gz" ]] ;;
+              assembly/windows-x86_64/) [[ -f "${directory}Orion-Studio-x86_64.exe" ]] ;;
             esac
           done
           # Primary artifacts must have unique names across platforms (they are
@@ -247,6 +263,7 @@ jobs:
               assembly/macos-x86_64/) validate_platform "${directory}" macos x86_64 ;;
               assembly/linux-x86_64/) validate_platform "${directory}" linux x86_64 ;;
               assembly/linux-aarch64/) validate_platform "${directory}" linux aarch64 ;;
+              assembly/windows-x86_64/) validate_platform "${directory}" windows x86_64 ;;
             esac
           done
       - name: Stage assets and write unified SHA256SUMS
