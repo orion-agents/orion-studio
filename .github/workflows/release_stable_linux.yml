@@ -184,6 +184,25 @@ jobs:
           rustc --version
           "${CC}" --version
           "${CXX}" --version
+      - name: Install pinned CMake on the Ubuntu 20.04 build container
+        if: ${{ inputs.architecture == 'x86_64' }}
+        env:
+          CMAKE_VERSION: '3.30.5'
+          CMAKE_SHA256: 'f747d9b23e1a252a8beafb4ed2bc2ddf78cff7f04a8e4de19f4ff88e9b51dc9d'
+        run: |
+          set -euo pipefail
+          # wasmtime-c-api-impl's install-headers.cmake uses the file(CONFIGURE)
+          # sub-command, which needs CMake >= 3.18; ubuntu:20.04 ships 3.16.3 and
+          # the build dies in the wasmtime build script (run 37642989772). The
+          # official Kitware Linux binary is built against an old glibc baseline,
+          # so it runs inside this container.
+          archive="${RUNNER_TEMP}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 --output "${archive}" \
+            "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
+          echo "${CMAKE_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" -C /usr/local --strip-components=1
+          hash -r
+          cmake --version | head -n 1
       - name: Install ARM SME runtime compatible with Ubuntu 22.04
         if: ${{ inputs.architecture == 'aarch64' }}
         env:
@@ -298,6 +317,11 @@ jobs:
         env:
           ARCHITECTURE: ${{ inputs.architecture }}
           RELEASE_TAG: ${{ inputs.tag }}
+          # The verification runs inside the build container, where the effective
+          # user is root. The app refuses to start as root unless explicitly
+          # allowed; this switch covers only the version probe, in a throwaway
+          # checkout, on the runner.
+          ORION_STUDIO_ALLOW_ROOT: 'true'
         run: |
           set -euo pipefail
           archive="target/release/orion-studio-linux-${ARCHITECTURE}.tar.gz"
