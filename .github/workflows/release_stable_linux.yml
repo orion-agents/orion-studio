@@ -78,11 +78,17 @@ jobs:
           mkdir -p "${support_directory}"
           install -m 755 script/bundle-linux "${support_directory}/bundle-linux"
           install -m 755 script/verify-linux-release "${support_directory}/verify-linux-release"
+          install -m 755 script/verify-linux-installation "${support_directory}/verify-linux-installation"
           bash -n "${support_directory}/bundle-linux"
           bash -n "${support_directory}/verify-linux-release"
+          bash -n "${support_directory}/verify-linux-installation"
           # The digest covers the script *contents*, in a fixed order, so it is
           # independent of where each job happens to have staged them.
-          support_sha256=$(cat "${support_directory}/bundle-linux" "${support_directory}/verify-linux-release" | shasum -a 256 | awk '{print $1}')
+          support_sha256=$(cat \
+            "${support_directory}/bundle-linux" \
+            "${support_directory}/verify-linux-release" \
+            "${support_directory}/verify-linux-installation" \
+            | shasum -a 256 | awk '{print $1}')
           echo "sha256=${support_sha256}" >> "$GITHUB_OUTPUT"
           echo "Release support scripts SHA-256: ${support_sha256}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -91,6 +97,7 @@ jobs:
           path: |
             ${{ runner.temp }}/release-support/bundle-linux
             ${{ runner.temp }}/release-support/verify-linux-release
+            ${{ runner.temp }}/release-support/verify-linux-installation
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -135,13 +142,17 @@ jobs:
         run: |
           set -euo pipefail
           support_directory="${RUNNER_TEMP}/release-support"
-          for support_script in bundle-linux verify-linux-release; do
+          for support_script in bundle-linux verify-linux-release verify-linux-installation; do
             staged="${support_directory}/${support_script}"
             [[ -f "${staged}" ]]
             [[ ! -L "${staged}" ]]
             install -m 755 "${staged}" "$GITHUB_WORKSPACE/script/${support_script}"
           done
-          actual_sha256=$(cat "$GITHUB_WORKSPACE/script/bundle-linux" "$GITHUB_WORKSPACE/script/verify-linux-release" | shasum -a 256 | awk '{print $1}')
+          actual_sha256=$(cat \
+            "$GITHUB_WORKSPACE/script/bundle-linux" \
+            "$GITHUB_WORKSPACE/script/verify-linux-release" \
+            "$GITHUB_WORKSPACE/script/verify-linux-installation" \
+            | shasum -a 256 | awk '{print $1}')
           [[ "${actual_sha256}" == "${EXPECTED_SUPPORT_SHA256}" ]]
           echo "Applied verified release support scripts: ${actual_sha256}"
       - name: Run source gates
@@ -154,6 +165,7 @@ jobs:
           [[ "$(tr -d '\r\n' < crates/zed/RELEASE_CHANNEL)" == stable ]]
           bash -n script/bundle-linux
           bash -n script/verify-linux-release
+          bash -n script/verify-linux-installation
           ./script/test-orion-brand
           # The v1.17.0 tag predates the current fixture fingerprints. These exact
           # entries cover fake filesystem credentials and the public AWS CLI package key.
@@ -285,7 +297,9 @@ jobs:
               architecture: $architecture,
               artifact: $artifact,
               sha256: $sha256,
-              signed: true
+              signed: false,
+              source_tag_signed: true,
+              integrity_verified: true
             }' > "$manifest"
           jq -e '
             (.tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
@@ -296,7 +310,9 @@ jobs:
             (.architecture == "x86_64" or .architecture == "aarch64") and
             (.artifact | length > 0) and
             (.sha256 | test("^[0-9a-f]{64}$")) and
-            (.signed == true)
+            (.signed == false) and
+            (.source_tag_signed == true) and
+            (.integrity_verified == true)
           ' "$manifest" > /dev/null
           [[ "${version}" == "${RELEASE_TAG#v}" ]]
           cat "$manifest"
@@ -310,3 +326,73 @@ jobs:
             ${{ runner.temp }}/platform-manifest.json
           if-no-files-found: error
           compression-level: 0
+
+  runtime_acceptance:
+    needs: [validate_release, build_release]
+    runs-on: ${{ inputs.architecture == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: stable-linux-release-support-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-support
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: stable-linux-${{ inputs.architecture }}-${{ inputs.tag }}
+          path: ${{ runner.temp }}/release-artifacts
+      - name: Check out validated release source
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+        run: |
+          set -euo pipefail
+          git init "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" remote add release-source "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 release-source "${RELEASE_COMMIT}"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          [[ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" == "${RELEASE_COMMIT}" ]]
+          [[ -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain)" ]]
+      - name: Apply verified runtime acceptance script
+        env:
+          EXPECTED_SUPPORT_SHA256: ${{ needs.validate_release.outputs.support_script_sha256 }}
+        run: |
+          set -euo pipefail
+          support_directory="${RUNNER_TEMP}/release-support"
+          actual_sha256=$(cat \
+            "${support_directory}/bundle-linux" \
+            "${support_directory}/verify-linux-release" \
+            "${support_directory}/verify-linux-installation" \
+            | shasum -a 256 | awk '{print $1}')
+          [[ "${actual_sha256}" == "${EXPECTED_SUPPORT_SHA256}" ]]
+          install -m 755 \
+            "${support_directory}/verify-linux-installation" \
+            "$GITHUB_WORKSPACE/script/verify-linux-installation"
+      - name: Verify on the minimum supported Ubuntu release
+        env:
+          ARCHITECTURE: ${{ inputs.architecture }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${ARCHITECTURE}" == x86_64 ]]; then
+            ubuntu_release=20.04
+          else
+            ubuntu_release=22.04
+          fi
+          dockerfile="${RUNNER_TEMP}/linux-acceptance.Dockerfile"
+          cat > "${dockerfile}" <<EOF
+          FROM ubuntu:${ubuntu_release}
+          RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              ca-certificates dbus-x11 desktop-file-utils libasound2 libegl1 libfontconfig1 \
+              libgl1 libglib2.0-0 libvulkan1 libwayland-client0 libx11-6 libx11-xcb1 \
+              libxcb1 libxkbcommon-x11-0 mesa-vulkan-drivers procps xauth xdotool xvfb \
+              && rm -rf /var/lib/apt/lists/* \
+              && useradd --create-home --uid 1000 release-test
+          USER release-test
+          ENTRYPOINT ["/workspace/script/verify-linux-installation"]
+          EOF
+          docker build --file "${dockerfile}" --tag orion-linux-release-acceptance "${RUNNER_TEMP}"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$RUNNER_TEMP/release-artifacts:/artifacts:ro" \
+            orion-linux-release-acceptance \
+            --archive "/artifacts/orion-studio-linux-${ARCHITECTURE}.tar.gz" \
+            --expected-version "${RELEASE_TAG#v}"

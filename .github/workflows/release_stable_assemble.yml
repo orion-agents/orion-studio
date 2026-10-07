@@ -223,7 +223,13 @@ jobs:
                (.architecture == $architecture) and
                (.artifact | length > 0) and
                (.sha256 | test("^[0-9a-f]{64}$")) and
-               (.signed == true)' "${manifest}" > /dev/null
+               (if .platform == "linux" then
+                  .signed == false and
+                  .source_tag_signed == true and
+                  .integrity_verified == true
+                else
+                  .signed == true
+                end)' "${manifest}" > /dev/null
             # The manifest digest is a claim, never trust: re-hash the artifact and
             # compare. This also ties the artifact to the signed tag, because the
             # manifest commit was asserted equal to the verified tag commit.
