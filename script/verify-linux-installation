@@ -106,7 +106,10 @@ WGPU_BACKEND=gl \
         unset ORION_STUDIO_HEADLESS ZED_HEADLESS WAYLAND_DISPLAY
         mkdir -p "${XDG_RUNTIME_DIR}"
         chmod 700 "${XDG_RUNTIME_DIR}"
-        setsid dbus-run-session -- "$1" --foreground >"$2" 2>&1 &
+        # No --foreground here: that flag only exists in the Windows build of the
+        # editor (compiled out on other targets), so passing it on Linux makes
+        # clap reject the whole invocation before a window can ever appear.
+        setsid dbus-run-session -- "$1" >"$2" 2>&1 &
         application_pid=$!
         cleanup_application() {
             kill -TERM -- "-${application_pid}" >/dev/null 2>&1 || true
