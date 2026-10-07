@@ -128,7 +128,9 @@ WGPU_BACKEND=gl \
             sleep 1
         done
         printf '%s\n' "=== no window after 120s; all X client window names ===" >&2
-        xdotool search --name ".*" get_window_name %@ 2>&1 || true
+        xdotool search --name ".*" getwindowname %@ 2>&1 || true
+        printf '%s\n' "=== glxinfo -B (adapters as the app sees them) ===" >&2
+        glxinfo -B 2>&1 || true
         launch_bytes=$(wc -c <"$2")
         printf '%s\n' "=== launch log (${launch_bytes} bytes) ===" >&2
         cat "$2" >&2
