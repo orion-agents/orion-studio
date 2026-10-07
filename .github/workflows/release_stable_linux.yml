@@ -538,8 +538,9 @@ jobs:
           FROM ubuntu:${ubuntu_release}
           RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
               ca-certificates dbus-x11 desktop-file-utils libasound2 libegl1 libfontconfig1 \
-              libgl1 libglib2.0-0 libvulkan1 libwayland-client0 libx11-6 libx11-xcb1 \
-              libxcb1 libxkbcommon-x11-0 mesa-vulkan-drivers procps xauth xdotool xvfb \
+              libgl1 libegl-mesa0 libglx-mesa0 libgl1-mesa-dri libglib2.0-0 libvulkan1 \
+              libwayland-client0 libx11-6 libx11-xcb1 libxcb1 libxkbcommon-x11-0 \
+              mesa-vulkan-drivers procps xauth xdotool mesa-utils xvfb fonts-dejavu-core \
               && rm -rf /var/lib/apt/lists/* \
               && useradd --create-home --uid 1000 release-test
           USER release-test
