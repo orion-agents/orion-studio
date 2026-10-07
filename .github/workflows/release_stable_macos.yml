@@ -17,9 +17,9 @@ on:
         required: false
         type: choice
         options:
-          - self-hosted
           - hosted
-        default: self-hosted
+          - self-hosted
+        default: hosted
 
 permissions:
   contents: read
