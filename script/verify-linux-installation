@@ -122,7 +122,11 @@ WGPU_BACKEND=gl \
                 cat "$2" >&2
                 exit 1
             }
-            if xdotool search --name "Orion Studio" >/dev/null 2>&1; then
+            # The editor titles its window after the workspace, not the product:
+            # a fresh install shows "empty project" (verified on 22.04/aarch64,
+            # run 37694584270), so match either that or the product name.
+            if xdotool search --name "Orion Studio" >/dev/null 2>&1 \
+                || xdotool search --name "empty project" >/dev/null 2>&1; then
                 exit 0
             fi
             sleep 1
