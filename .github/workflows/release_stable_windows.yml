@@ -83,6 +83,29 @@ jobs:
           EOF
           fi
           ./script/check-secrets
+      - name: Check production Windows signing configuration
+        env:
+          AZURE_SIGNING_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_SIGNING_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_SIGNING_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+          AZURE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+          AZURE_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          ORION_STUDIO_WINDOWS_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_PUBLISHER }}
+          ORION_STUDIO_WINDOWS_APPX_PUBLISHER: ${{ vars.ORION_STUDIO_WINDOWS_APPX_PUBLISHER }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            AZURE_SIGNING_TENANT_ID AZURE_SIGNING_CLIENT_ID AZURE_SIGNING_CLIENT_SECRET \
+            AZURE_SIGNING_ACCOUNT_NAME AZURE_SIGNING_CERT_PROFILE_NAME AZURE_SIGNING_ENDPOINT \
+            ORION_STUDIO_WINDOWS_PUBLISHER ORION_STUDIO_WINDOWS_APPX_PUBLISHER; do
+            [[ -n "${!name:-}" ]] || missing+=("${name}")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing production Windows signing configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
       - name: Stage release support script
         id: support
         run: |
