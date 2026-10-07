@@ -184,6 +184,21 @@ jobs:
           rustc --version
           "${CC}" --version
           "${CXX}" --version
+      - name: Install ARM SME runtime compatible with Ubuntu 22.04
+        if: ${{ inputs.architecture == 'aarch64' }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          apt-get install -y --no-install-recommends gnupg
+          echo 'deb https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu jammy main' > /etc/apt/sources.list.d/ubuntu-toolchain-r-test.list
+          curl -fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x1E9377A2BA9EF27F' \
+            | sed -n '/-----BEGIN PGP PUBLIC KEY BLOCK-----/,/-----END PGP PUBLIC KEY BLOCK-----/p' \
+            | gpg --dearmor -o /etc/apt/trusted.gpg.d/ubuntu-toolchain-r-test.gpg
+          apt-get update
+          apt-get install -y --no-install-recommends libgcc-s1
+          nm -D --defined-only /lib/aarch64-linux-gnu/libgcc_s.so.1 | grep -F __arm_tpidr2_save
+          dpkg-query -W libgcc-s1
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
