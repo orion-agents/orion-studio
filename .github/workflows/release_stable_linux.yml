@@ -110,20 +110,26 @@ jobs:
   build_release:
     needs: validate_release
     if: ${{ inputs.source_run_id == '' }}
-    # A pinned image rather than ubuntu-latest, so the toolchain cannot drift under a
-    # release. The architecture is part of the label because the gates below are
-    # architecture-specific.
     runs-on: ${{ inputs.architecture == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container:
+      image: ${{ inputs.architecture == 'aarch64' && 'ubuntu:22.04' || 'ubuntu:20.04' }}
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 360
     environment: production
     env:
       CARGO_INCREMENTAL: '0'
-      # Pinned so the C++ toolchain used for the release cannot change between runs.
-      CC: clang-18
-      CXX: clang++-18
+      CC: ${{ inputs.architecture == 'aarch64' && 'clang' || 'clang-18' }}
+      CXX: ${{ inputs.architecture == 'aarch64' && 'clang++' || 'clang++-18' }}
       ORION_STUDIO_REQUIRE_SENTRY: '0'
       ORION_STUDIO_RELEASE_CHANNEL: stable
     steps:
+      - name: Install source checkout tools
+        run: |
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl file git perl python3 sudo time
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: stable-linux-release-support-${{ github.run_id }}
@@ -161,6 +167,19 @@ jobs:
             | shasum -a 256 | awk '{print $1}')
           [[ "${actual_sha256}" == "${EXPECTED_SUPPORT_SHA256}" ]]
           echo "Applied verified release support scripts: ${actual_sha256}"
+      - name: Install build dependencies on the minimum supported Ubuntu release
+        run: |
+          set -euo pipefail
+          ./script/linux
+          source "${HOME}/.cargo/env"
+          echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
+          rustup component add llvm-tools-preview
+          objcopy="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | awk '/^host:/ { print $2 }')/bin/llvm-objcopy"
+          [[ -x "${objcopy}" ]]
+          echo "LLVM_OBJCOPY=${objcopy}" >> "${GITHUB_ENV}"
+          rustc --version
+          "${CC}" --version
+          "${CXX}" --version
       - name: Run source gates
         env:
           RELEASE_TAG: ${{ inputs.tag }}
@@ -222,7 +241,6 @@ jobs:
           set -euo pipefail
           # Peak resident set size and elapsed time are recorded the same way the macOS
           # job records them, so runner sizing decisions have comparable data.
-          /usr/bin/time -v ./script/linux 2>&1 | tee -a "${BUILD_LOG}"
           ./script/download-wasi-sdk 2>&1 | tee -a "${BUILD_LOG}"
           /usr/bin/time -v ./script/bundle-linux 2>&1 | tee -a "${BUILD_LOG}"
       - name: Verify release archive
