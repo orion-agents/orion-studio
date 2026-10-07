@@ -64,7 +64,11 @@ jobs:
         run: |
           set -euo pipefail
           source_directory="${RUNNER_TEMP}/release-source"
-          git worktree add --detach "${source_directory}" "${RELEASE_COMMIT}"
+          git init "${source_directory}"
+          git -C "${source_directory}" remote add release-source "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "${source_directory}" fetch --no-tags --depth=1 release-source "${RELEASE_COMMIT}"
+          git -C "${source_directory}" checkout --detach --force FETCH_HEAD
+          [[ "$(git -C "${source_directory}" rev-parse HEAD)" == "${RELEASE_COMMIT}" ]]
           cd "${source_directory}"
           if [[ "${RELEASE_TAG}" == v1.17.1 ]]; then
             cat >> .gitleaksignore <<'EOF'
