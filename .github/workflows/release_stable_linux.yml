@@ -143,6 +143,7 @@ jobs:
           # runner-local path, and the HEAD equality check is what proves the tree is
           # the validated commit.
           git init "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git -C "$GITHUB_WORKSPACE" remote add release-source "https://github.com/${GITHUB_REPOSITORY}.git"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 release-source "${RELEASE_COMMIT}"
           git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
@@ -235,6 +236,7 @@ jobs:
           check-latest: false
           package-manager-cache: false
       - name: Build and package
+        id: package
         env:
           BUILD_LOG: ${{ runner.temp }}/release-build.log
         run: |
@@ -257,7 +259,7 @@ jobs:
             --remote-server-archive "${remote_server_archive}" \
             --expected-version "${RELEASE_TAG#v}"
       - name: Record build resources
-        if: always()
+        if: ${{ always() && steps.package.outcome != '' }}
         env:
           BUILD_LOG: ${{ runner.temp }}/release-build.log
           RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
