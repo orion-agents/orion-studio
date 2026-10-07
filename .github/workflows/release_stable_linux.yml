@@ -20,9 +20,14 @@ on:
         required: false
         type: boolean
         default: false
+      source_run_id:
+        description: Reuse the verified build artifact from an earlier run of this workflow
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-stable-linux-${{ inputs.tag }}-${{ inputs.architecture }}
@@ -104,6 +109,7 @@ jobs:
 
   build_release:
     needs: validate_release
+    if: ${{ inputs.source_run_id == '' }}
     # A pinned image rather than ubuntu-latest, so the toolchain cannot drift under a
     # release. The architecture is part of the label because the gates below are
     # architecture-specific.
@@ -329,6 +335,7 @@ jobs:
 
   runtime_acceptance:
     needs: [validate_release, build_release]
+    if: ${{ always() && needs.validate_release.result == 'success' && (needs.build_release.result == 'success' || needs.build_release.result == 'skipped') }}
     runs-on: ${{ inputs.architecture == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
@@ -337,9 +344,58 @@ jobs:
           name: stable-linux-release-support-${{ github.run_id }}
           path: ${{ runner.temp }}/release-support
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ inputs.source_run_id == '' }}
         with:
           name: stable-linux-${{ inputs.architecture }}-${{ inputs.tag }}
           path: ${{ runner.temp }}/release-artifacts
+      - name: Download verified build artifact from prior run
+        if: ${{ inputs.source_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARCHITECTURE: ${{ inputs.architecture }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_RUN_ID}" =~ ^[0-9]+$ ]]
+          [[ "$(gh run view "${SOURCE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json workflowName --jq .workflowName)" == 'Release Linux Stable' ]]
+          [[ "$(gh run view "${SOURCE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json jobs --jq '[.jobs[] | select(.name == "build_release") | .conclusion] | first')" == success ]]
+          gh run download "${SOURCE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name "stable-linux-${ARCHITECTURE}-${RELEASE_TAG}" \
+            --dir "${RUNNER_TEMP}/release-artifacts"
+      - name: Flatten and validate release artifact
+        env:
+          RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
+          ARCHITECTURE: ${{ inputs.architecture }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          artifact_directory="${RUNNER_TEMP}/release-artifacts"
+          for artifact_name in \
+            "orion-studio-linux-${ARCHITECTURE}.tar.gz" \
+            "orion-studio-remote-server-linux-${ARCHITECTURE}.gz" \
+            platform-manifest.json build-resources.json; do
+            count=$(find "${artifact_directory}" -type f -name "${artifact_name}" | wc -l)
+            [[ "${count}" -eq 1 ]]
+            found=$(find "${artifact_directory}" -type f -name "${artifact_name}" -print -quit)
+            if [[ "${found}" != "${artifact_directory}/${artifact_name}" ]]; then
+              mv "${found}" "${artifact_directory}/${artifact_name}"
+            fi
+          done
+          manifest="${artifact_directory}/platform-manifest.json"
+          jq -e \
+            --arg tag "${RELEASE_TAG}" \
+            --arg commit "${RELEASE_COMMIT}" \
+            --arg architecture "${ARCHITECTURE}" \
+            '(.tag == $tag) and (.commit == $commit) and
+             (.version == ($tag | ltrimstr("v"))) and
+             (.channel == "stable") and (.platform == "linux") and
+             (.architecture == $architecture) and
+             (.artifact == ("orion-studio-linux-" + $architecture + ".tar.gz")) and
+             (.signed == false) and (.source_tag_signed == true) and
+             (.integrity_verified == true)' "${manifest}" > /dev/null
+          actual_sha256=$(sha256sum "${artifact_directory}/orion-studio-linux-${ARCHITECTURE}.tar.gz" | awk '{ print $1 }')
+          [[ "${actual_sha256}" == "$(jq -r .sha256 "${manifest}")" ]]
       - name: Check out validated release source
         env:
           RELEASE_COMMIT: ${{ needs.validate_release.outputs.tag_commit }}
@@ -396,3 +452,14 @@ jobs:
             orion-linux-release-acceptance \
             --archive "/artifacts/orion-studio-linux-${ARCHITECTURE}.tar.gz" \
             --expected-version "${RELEASE_TAG#v}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ inputs.source_run_id != '' }}
+        with:
+          name: stable-linux-${{ inputs.architecture }}-${{ inputs.tag }}
+          path: |
+            ${{ runner.temp }}/release-artifacts/orion-studio-linux-${{ inputs.architecture }}.tar.gz
+            ${{ runner.temp }}/release-artifacts/orion-studio-remote-server-linux-${{ inputs.architecture }}.gz
+            ${{ runner.temp }}/release-artifacts/platform-manifest.json
+            ${{ runner.temp }}/release-artifacts/build-resources.json
+          if-no-files-found: error
+          compression-level: 0
