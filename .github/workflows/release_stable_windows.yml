@@ -57,6 +57,28 @@ jobs:
           [[ -n "${release_channel_file}" ]]
           [[ "$(git show "${tag_commit}:${release_channel_file}")" == stable ]]
           echo "tag_commit=${tag_commit}" >> "$GITHUB_OUTPUT"
+      - name: Scan validated release source for secrets
+        env:
+          RELEASE_COMMIT: ${{ steps.source.outputs.tag_commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          source_directory="${RUNNER_TEMP}/release-source"
+          git worktree add --detach "${source_directory}" "${RELEASE_COMMIT}"
+          cd "${source_directory}"
+          if [[ "${RELEASE_TAG}" == v1.17.1 ]]; then
+            cat >> .gitleaksignore <<'EOF'
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1031
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1548
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1610
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1664
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/grep_tool.rs:generic-api-key:1048
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:559
+          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:884
+          7986331633204422a2b48f1386cbea9aff81204f:crates/dev_container/src/devcontainer_manifest.rs:generic-api-key:9540
+          EOF
+          fi
+          ./script/check-secrets
       - name: Stage release support script
         id: support
         run: |
@@ -127,19 +149,6 @@ jobs:
           [[ "${version}" == "${RELEASE_TAG#v}" ]]
           [[ "$(tr -d '\r\n' < crates/zed/RELEASE_CHANNEL)" == stable ]]
           ./script/test-orion-brand
-          if [[ "${RELEASE_TAG}" == v1.17.1 ]]; then
-            cat >> .gitleaksignore <<'EOF'
-          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1031
-          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1548
-          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1610
-          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/read_file_tool.rs:generic-api-key:1664
-          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/grep_tool.rs:generic-api-key:1048
-          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:559
-          7986331633204422a2b48f1386cbea9aff81204f:crates/agent/src/tools/list_directory_tool.rs:generic-api-key:884
-          7986331633204422a2b48f1386cbea9aff81204f:crates/dev_container/src/devcontainer_manifest.rs:generic-api-key:9540
-          EOF
-          fi
-          ./script/check-secrets
           cargo fmt --all -- --check
           git diff --check
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
