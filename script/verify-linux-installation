@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    echo "Usage: ${0##*/} --archive PATH --expected-version VERSION"
+}
+
+fail() {
+    echo "FAIL: $*" >&2
+    exit 1
+}
+
+archive=""
+expected_version=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --archive)
+            archive="${2:-}"
+            shift 2
+            ;;
+        --expected-version)
+            expected_version="${2:-}"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            fail "unknown argument: $1"
+            ;;
+    esac
+done
+
+[[ -f "${archive}" ]] || fail "archive not found: ${archive}"
+[[ "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || fail "expected version must have the form MAJOR.MINOR.PATCH"
+
+for command_name in dbus-run-session desktop-file-validate timeout xdotool xvfb-run; do
+    command -v "${command_name}" >/dev/null || fail "required command is unavailable: ${command_name}"
+done
+
+repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+archive=$(cd "$(dirname "${archive}")" && pwd -P)/$(basename "${archive}")
+test_root=$(mktemp -d)
+test_home="${test_root}/home"
+launch_log="${test_root}/launch.log"
+
+cleanup() {
+    rm -rf "${test_root}"
+}
+trap cleanup EXIT
+
+mkdir -p \
+    "${test_home}/.config/zed" \
+    "${test_home}/.local/bin" \
+    "${test_home}/.local/share"
+printf 'preserve\n' > "${test_home}/.config/zed/user-data"
+printf 'preserve\n' > "${test_home}/.local/share/unrelated-data"
+printf '#!/bin/sh\nexit 0\n' > "${test_home}/.local/bin/user-tool"
+chmod +x "${test_home}/.local/bin/user-tool"
+
+archive_sha256=$(sha256sum "${archive}" | awk '{ print $1 }')
+HOME="${test_home}" \
+PATH="${test_home}/.local/bin:${PATH}" \
+ORION_STUDIO_CHANNEL=stable \
+ORION_STUDIO_VERSION="${expected_version}" \
+ORION_STUDIO_BUNDLE_PATH="${archive}" \
+ORION_STUDIO_BUNDLE_SHA256="${archive_sha256}" \
+    "${repository_root}/script/install.sh"
+
+installed_app="${test_home}/.local/orion-studio.app"
+installed_editor="${installed_app}/libexec/orion-studio"
+installed_cli="${installed_app}/bin/orion-studio"
+desktop_file="${test_home}/.local/share/applications/com.orion.OrionStudio.desktop"
+
+[[ -x "${installed_editor}" ]] || fail "installed editor is missing"
+[[ -x "${installed_cli}" ]] || fail "installed CLI is missing"
+for launcher_name in orion-studio orion zed; do
+    [[ -L "${test_home}/.local/bin/${launcher_name}" ]] \
+        || fail "installed launcher is missing: ${launcher_name}"
+done
+[[ -f "${desktop_file}" ]] || fail "installed desktop entry is missing"
+desktop-file-validate "${desktop_file}"
+grep -F "Exec=${installed_cli}" "${desktop_file}" >/dev/null \
+    || fail "desktop entry does not target the installed CLI"
+grep -F 'x-scheme-handler/orion' "${desktop_file}" >/dev/null \
+    || fail "desktop entry does not register the Orion URL scheme"
+
+version_output=$(HOME="${test_home}" "${installed_editor}" --system-specs 2>&1 || true)
+[[ "${version_output}" == *"${expected_version}"* ]] \
+    || fail "installed editor does not report version ${expected_version}: ${version_output}"
+
+HOME="${test_home}" \
+PATH="${test_home}/.local/bin:${PATH}" \
+XDG_CONFIG_HOME="${test_home}/.config" \
+XDG_DATA_HOME="${test_home}/.local/share" \
+XDG_RUNTIME_DIR="${test_home}/.runtime" \
+LIBGL_ALWAYS_SOFTWARE=1 \
+WGPU_BACKEND=gl \
+    xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
+        set -euo pipefail
+        unset ORION_STUDIO_HEADLESS ZED_HEADLESS WAYLAND_DISPLAY
+        mkdir -p "${XDG_RUNTIME_DIR}"
+        chmod 700 "${XDG_RUNTIME_DIR}"
+        setsid dbus-run-session -- "$1" --foreground >"$2" 2>&1 &
+        application_pid=$!
+        cleanup_application() {
+            kill -TERM -- "-${application_pid}" >/dev/null 2>&1 || true
+            wait "${application_pid}" >/dev/null 2>&1 || true
+        }
+        trap cleanup_application EXIT
+        for _ in $(seq 1 60); do
+            kill -0 "${application_pid}" >/dev/null 2>&1 || {
+                cat "$2" >&2
+                exit 1
+            }
+            if xdotool search --onlyvisible --name "Orion Studio" >/dev/null 2>&1; then
+                exit 0
+            fi
+            sleep 1
+        done
+        cat "$2" >&2
+        exit 1
+    ' bash "${installed_editor}" "${launch_log}" \
+    || fail "installed GUI did not create an Orion Studio window"
+
+printf 'n\n' | HOME="${test_home}" ORION_STUDIO_CHANNEL=stable \
+    "${repository_root}/script/uninstall.sh"
+
+for removed_path in \
+    "${installed_app}" \
+    "${test_home}/.local/bin/orion-studio" \
+    "${test_home}/.local/bin/orion" \
+    "${test_home}/.local/bin/zed" \
+    "${desktop_file}"; do
+    [[ ! -e "${removed_path}" && ! -L "${removed_path}" ]] \
+        || fail "uninstall left an owned path behind: ${removed_path}"
+done
+
+[[ -f "${test_home}/.config/zed/user-data" ]] \
+    || fail "uninstall removed unrelated Zed user data"
+[[ -f "${test_home}/.local/share/unrelated-data" ]] \
+    || fail "uninstall removed unrelated local data"
+[[ -x "${test_home}/.local/bin/user-tool" ]] \
+    || fail "uninstall removed an unrelated user command"
+
+printf 'n\n' | HOME="${test_home}" ORION_STUDIO_CHANNEL=stable \
+    "${repository_root}/script/uninstall.sh"
+
+echo "PASS: Linux install, GUI launch, and uninstall"
