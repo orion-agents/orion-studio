@@ -90,12 +90,18 @@ jobs:
           support_directory="${RUNNER_TEMP}/release-support"
           mkdir -p "${support_directory}"
           install -m 644 script/bundle-windows.ps1 "${support_directory}/bundle-windows.ps1"
-          support_sha256=$(sha256sum "${support_directory}/bundle-windows.ps1" | awk '{ print $1 }')
+          install -m 644 crates/zed/resources/windows/sign.ps1 "${support_directory}/sign.ps1"
+          support_sha256=$(cat \
+            "${support_directory}/bundle-windows.ps1" \
+            "${support_directory}/sign.ps1" \
+            | sha256sum | awk '{ print $1 }')
           echo "sha256=${support_sha256}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: stable-windows-release-support-${{ github.run_id }}
-          path: ${{ runner.temp }}/release-support/bundle-windows.ps1
+          path: |
+            ${{ runner.temp }}/release-support/bundle-windows.ps1
+            ${{ runner.temp }}/release-support/sign.ps1
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -137,12 +143,24 @@ jobs:
           EXPECTED_SUPPORT_SHA256: ${{ needs.validate_release.outputs.support_script_sha256 }}
         run: |
           $ErrorActionPreference = "Stop"
-          $staged = Join-Path $env:RUNNER_TEMP "release-support\bundle-windows.ps1"
-          $actual = (Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $env:EXPECTED_SUPPORT_SHA256) {
-              throw "The Windows support script digest does not match validation."
+          $supportDirectory = Join-Path $env:RUNNER_TEMP "release-support"
+          $bundleScript = Join-Path $supportDirectory "bundle-windows.ps1"
+          $signScript = Join-Path $supportDirectory "sign.ps1"
+          $combinedBytes = [byte[]]@(
+              [System.IO.File]::ReadAllBytes($bundleScript)
+              [System.IO.File]::ReadAllBytes($signScript)
+          )
+          $sha256 = [System.Security.Cryptography.SHA256]::Create()
+          try {
+              $actual = [Convert]::ToHexString($sha256.ComputeHash($combinedBytes)).ToLowerInvariant()
+          } finally {
+              $sha256.Dispose()
           }
-          Copy-Item -LiteralPath $staged -Destination "$env:GITHUB_WORKSPACE\script\bundle-windows.ps1" -Force
+          if ($actual -ne $env:EXPECTED_SUPPORT_SHA256) {
+              throw "The Windows support scripts digest does not match validation."
+          }
+          Copy-Item -LiteralPath $bundleScript -Destination "$env:GITHUB_WORKSPACE\script\bundle-windows.ps1" -Force
+          Copy-Item -LiteralPath $signScript -Destination "$env:GITHUB_WORKSPACE\crates\zed\resources\windows\sign.ps1" -Force
       - name: Run source gates
         shell: bash
         env:
@@ -167,7 +185,7 @@ jobs:
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
           Install-Module ArtifactSigning -RequiredVersion 0.1.20 -Scope CurrentUser -Force
           Import-Module ArtifactSigning -RequiredVersion 0.1.20 -Force
-          Get-Command Invoke-TrustedSigning -ErrorAction Stop
+          Get-Command Invoke-ArtifactSigning -ErrorAction Stop
       - name: Build and sign installer
         shell: pwsh
         env:
