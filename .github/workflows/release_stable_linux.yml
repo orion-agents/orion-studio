@@ -522,6 +522,13 @@ jobs:
           install -m 755 \
             "${support_directory}/verify-linux-installation" \
             "$GITHUB_WORKSPACE/script/verify-linux-installation"
+          # The acceptance tree is checked out at the frozen tag commit, where
+          # script/uninstall.sh is recorded 100644 (run 37712366619: exit 126,
+          # Permission denied, when verify-linux-installation executes it). The
+          # executable bit exists on main (PR #60) but a tag cannot be moved, so
+          # restore the bit here — same blob content, mode-only adjustment,
+          # mirroring how verify-linux-installation is injected above.
+          chmod 755 "$GITHUB_WORKSPACE/script/uninstall.sh"
       - name: Verify on the minimum supported Ubuntu release
         env:
           ARCHITECTURE: ${{ inputs.architecture }}
