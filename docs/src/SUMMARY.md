@@ -229,6 +229,7 @@
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)
   - [FreeBSD](./development/freebsd.md)
+  - [Moving to a New Machine](./development/machine-migration.md)
   - [Using Debuggers](./development/debuggers.md)
   - [Performance](./performance.md)
   - [UI/UX Checklist](./development/ui-checklist.md)
