@@ -1,4 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(target_os = "windows"))]
+    println!("cargo:rerun-if-changed=build.rs");
     #[cfg(target_os = "windows")]
     {
         println!("cargo:rerun-if-env-changed=ORION_STUDIO_RELEASE_CHANNEL");

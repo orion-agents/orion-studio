@@ -97,7 +97,7 @@ Distribution maintainers should account for these behaviors:
   the upstream editor, and is retained only as a migration alias.
 - Orion Studio automatically installs versions of common developer tools, similar to rustup/rbenv/pyenv. This behavior is discussed [here](https://github.com/orion-agents/orion-studio/issues/12589).
 - Orion Studio remains compatible with extensions from the upstream [`zed-industries/extensions`](https://github.com/zed-industries/extensions) ecosystem. The organization name is an upstream attribution, not Orion Studio branding. Extensions may install additional tools such as language servers.
-- Hosted AI, telemetry, authentication, and collaboration require explicitly configured endpoints. Packages must not silently fall back to Zed-hosted infrastructure. Review the [default settings](https://github.com/orion-agents/orion-studio/blob/main/assets/settings/default.json) and operator configuration before distribution.
+- Hosted AI, telemetry, authentication, and collaboration require explicitly configured endpoints. Packages must not silently fall back to Orion-hosted infrastructure. Review the [default settings](https://github.com/orion-agents/orion-studio/blob/main/assets/settings/default.json) and operator configuration before distribution.
 - Because of the points above, Orion Studio currently does not work well with sandboxes. See [this discussion](https://github.com/orion-agents/orion-studio/pull/12006#issuecomment-2130421220).
 
 ## Flatpak
@@ -141,7 +141,8 @@ Use this when Orion Studio is using a lot of CPU. It is not useful for hangs.
   On Ubuntu (derivatives) run `sudo apt install linux-tools`.
 
 - Perf record:
-  Run `sudo perf record -p <pid you just found>`, wait a few seconds to gather data, then press Ctrl+C. You should now have a `perf.data` file.
+  Run `sudo perf record -g --call-graph dwarf -p <pid you just found>`, wait a few seconds to gather data, then press Ctrl+C. You should now have a `perf.data` file.
+  The `--call-graph dwarf` option records callers of every sampled function and unwinds through the `.eh_frame` data kept in stripped release binaries; plain `-g` does not work without frame pointers.
 
 - Make the output file user owned:
   run `sudo chown $USER:$USER perf.data`
@@ -154,8 +155,13 @@ Attach `perf.data` and the exact commit to a private maintainer channel or GitHu
 
 This can be done by a maintainer with access to the matching source revision.
 
-- Build Orion Studio with symbols:
-  Check out the commit found previously and modify `Cargo.toml`.
+Released Linux binaries are stripped, but the unstripped binary for every release is archived in Sentry (uploaded by `script/bundle-linux`).
+Download it from the Sentry project's Debug Files page (search by the release version or the binary's build id), then continue with the `perf buildid-cache` step below.
+Stripping preserves the build id, so the downloaded binary matches the user's `perf.data`.
+
+Alternatively, rebuild the binary with symbols:
+
+- Check out the commit found previously and modify `Cargo.toml`.
   Apply the following diff, then make a release build.
 
 ```diff

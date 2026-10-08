@@ -167,13 +167,15 @@ impl OrionAiOnboarding {
             .gap_1()
             .child(Headline::new("Welcome to Orion AI"))
             .child(
-                Label::new("Sign in to try Orion Pro free for 14 days.")
-                    .color(Color::Muted)
-                    .mb_2(),
+                Label::new(
+                    "Sign in to try Orion Pro. Your 14 days begin when you start the trial.",
+                )
+                .color(Color::Muted)
+                .mb_2(),
             )
             .child(PlanDefinitions.sign_in_upsell())
             .child(
-                Button::new("sign_in", "Try Orion Pro for Free")
+                Button::new("sign_in", "Sign In to Try Orion Pro")
                     .disabled(signing_in)
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -300,7 +302,7 @@ impl OrionAiOnboarding {
             .child(Self::pro_trial_stamp(cx))
             .child(Headline::new("Welcome to the Orion Pro Trial"))
             .child(
-                Label::new("Here's what you get for the next 14 days:")
+                Label::new("Included for 14 days from when your trial started:")
                     .color(Color::Muted)
                     .mb_2(),
             )

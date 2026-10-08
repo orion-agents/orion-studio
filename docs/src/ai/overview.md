@@ -7,11 +7,11 @@ description: Understand Orion Studio's AI features, agent paths, model providers
 
 Orion Studio's AI docs are organized around three areas:
 
-| Area         | Use it to choose                             | Examples                                                                              |
-| ------------ | -------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Agents       | How agentic work runs in Orion Studio        | Orion Studio Agent, External Agents, Terminal Threads                                 |
-| Model access | How Orion Studio connects to language models | API access, subscriptions, gateways, local models, deployment-dependent Orion hosting |
-| Features     | Which AI workflow you want to use            | Agentic editing, inline edits, edit prediction, Git assistance                        |
+| Area         | Use it to choose                    | Examples                                                                                   |
+| ------------ | ----------------------------------- | ------------------------------------------------------------------------------------------ |
+| Agents       | How agentic work runs in Orion Studio        | Orion Studio Agent, External Agents, Terminal Threads                                               |
+| Model access | How Orion Studio connects to language models | Orion-hosted models, API access, subscriptions, [gateways](./use-a-gateway.md), local models |
+| Features     | Which AI workflow you want to use   | Agentic editing, inline edits, edit prediction, Git assistance                             |
 
 Start with [AI Quick Start](./quick-start.md) if you know what you want to do. Use [AI by Company](./by-company.md) if you know the company, subscription, model provider, agent, or CLI you want to use.
 
@@ -19,7 +19,7 @@ Start with [AI Quick Start](./quick-start.md) if you know what you want to do. U
 
 Agent paths decide how agentic work runs in Orion Studio.
 
-- [Orion Studio Agent](./zed-agent.md): Orion Studio's native agent. It can use models configured through [LLM Providers](./llm-providers.md), including provider API keys, supported subscriptions, gateways, and local models. Orion-hosted models require a separately deployed service. It also uses built-in tools, profiles, skills, instructions, and MCP servers.
+- [Orion Studio Agent](./zed-agent.md): Orion Studio's native agent. It can use models configured through [LLM Providers](./llm-providers.md), including [Orion-hosted models](../account/zed-hosted-models.md), provider API keys, supported subscriptions, gateways, and [local models](./use-a-local-model.md). It also uses built-in tools, profiles, skills, instructions, and MCP servers.
 - [External Agents](./external-agents.md): ACP-integrated agents that run through their own process and configuration.
 - [Terminal Threads](./terminal-threads.md): terminal-backed threads for running an agent CLI or TUI directly in Orion Studio.
 
@@ -29,7 +29,7 @@ See [Agents](./agents.md) for a comparison.
 
 ## Model Access {#model-access}
 
-Model access controls which models power the Orion Studio Agent and other model-backed Orion Studio AI features. Orion Studio can use provider API access, supported subscription sign-in, gateways, and local models. Hosted Orion models are available only after an operator deploys and configures them.
+Model access controls which models power the Orion Studio Agent and other model-backed Orion Studio AI features. Orion Studio can use hosted models, [provider API access](./use-api-access.md), subscription sign-in, gateways, and local models.
 
 See [LLM Providers](./llm-providers.md) to choose a model access path.
 

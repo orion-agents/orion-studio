@@ -40,11 +40,11 @@ By default, new projects open in your current window's threads sidebar. To open 
 | Toggle terminal | `` Ctrl+` ``  | `` Ctrl+` ``   |
 | Open settings   | `Cmd+,`       | `Ctrl+,`       |
 
-The command palette (`Cmd+Shift+P`) is your gateway to every action in Orion Studio. If you forget a shortcut, search for it there.
+The [command palette](./command-palette.md) (`Cmd+Shift+P`) is your gateway to every action in Orion Studio. If you forget a shortcut, search for it there.
 
 ### Panel Layout
 
-Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout.
+Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the [Agent Panel](./ai/agent-panel.md) and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout.
 
 Use **Panel Layout > AI Native** (or the {#action workspace::UseAiNativeLayout} action) for a conversation-first workspace: the Threads Sidebar moves to the left, the current task's conversation fills the center, and a tab-free **Task Environment** panel docks on the right. The Agent Panel keeps running your threads but stays out of the way; file previews stay on the right, and **Open review in Code Workspace** with **Return to task** are the explicit way in and out of full editing.
 
@@ -55,7 +55,7 @@ Open the Settings Editor with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows). Searc
 Common first changes:
 
 - **Theme**: Press `Cmd+K Cmd+T` (macOS) or `Ctrl+K Ctrl+T` (Linux/Windows) to open the theme selector
-- **Font**: Search for `buffer_font_family` in Settings
+- **Font**: Search for [`buffer_font_family`](./reference/all-settings.md#buffer-font-family) in Settings
 - **Format on save**: Search for `format_on_save` and set to `on`
 
 ### 4. Set Up Your Language

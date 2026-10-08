@@ -33,12 +33,12 @@ Check out the [MCP Server Extensions](../extensions/mcp-extensions.md) page to l
 
 Find MCP extensions in the app by opening the Command Palette and running {#action zed::Extensions}, or by opening **Settings → AI → MCP Servers**, clicking `Add Server`, and choosing `Install from Extensions`.
 
-The available catalog depends on the extension registry configured for the build. A public Orion extension website is not assumed to be deployed. Some entries and repositories may retain Zed names because they come from the upstream extension ecosystem.
+The available catalog depends on the extension registry configured for the build. A public Orion extension website is not assumed to be deployed. Some entries and repositories may retain Orion Studio names because they come from the upstream extension ecosystem.
 
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Orion Studio.
-You can connect both local and remote MCP servers from **Settings → AI → MCP Servers** (also accessible via the {#action agent::OpenSettings} action, then selecting `MCP Servers`). Click `Add Server` in the page header, then choose `Add Local Server` or `Add Remote Server`. Your specified configuration will create entries in your settings file (which you can open with {#action zed::OpenSettingsFile}) similar to the ones below:
+You can connect both local and remote MCP servers from **[Settings → AI → MCP Servers](./agent-settings.md)** (also accessible via the {#action agent::OpenSettings} action, then selecting `MCP Servers`). Click `Add Server` in the page header, then choose `Add Local Server` or `Add Remote Server`. Your specified configuration will create entries in your settings file (which you can open with {#action zed::OpenSettingsFile}) similar to the ones below:
 
 ```json [settings]
 {

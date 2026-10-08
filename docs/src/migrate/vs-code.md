@@ -58,6 +58,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `editor.hover.sticky`                       | `hover_popover_sticky`                         |
 | `editor.hover.hidingDelay`                  | `hover_popover_hiding_delay`                   |
 | `editor.parameterHints.enabled`             | `auto_signature_help`                          |
+| `workbench.editor.languageDetection`        | `language_detection`                           |
 | `editor.multiCursorModifier`                | `multi_cursor_modifier`                        |
 | `editor.selectionHighlight`                 | `selection_highlight`                          |
 | `editor.roundedSelection`                   | `rounded_selection`                            |
@@ -79,12 +80,12 @@ The following VS Code settings are automatically imported when you use **Import 
 
 | VS Code Setting             | Orion Studio Setting           |
 | --------------------------- | ------------------------------ |
+| `files.associations`        | `file_types`                   |
 | `files.autoSave`            | `autosave`                     |
 | `files.autoSaveDelay`       | `autosave.milliseconds`        |
+| `files.exclude`             | `file_scan_exclusions`         |
 | `files.insertFinalNewline`  | `ensure_final_newline_on_save` |
-| `files.associations`        | `file_types`                   |
-| `files.watcherExclude`      | `file_scan_exclusions`         |
-| `files.watcherInclude`      | `file_scan_inclusions`         |
+| `files.readonlyInclude`     | `read_only_files`              |
 | `files.simpleDialog.enable` | `use_system_path_prompts`      |
 | `search.smartCase`          | `use_smartcase_search`         |
 | `search.useIgnoreFiles`     | `search.include_ignored`       |
@@ -151,7 +152,7 @@ The following VS Code settings are automatically imported when you use **Import 
 
 **Other**
 
-| VS Code Setting            | Orion Studio Setting                                         |
+| VS Code Setting            | Orion Studio Setting                                                  |
 | -------------------------- | ------------------------------------------------------------ |
 | `http.proxy`               | `proxy`                                                      |
 | `npm.packageManager`       | `node.npm_path`                                              |
@@ -170,9 +171,18 @@ You can configure most settings in the Settings Editor ({#kb zed::OpenSettings})
 
 Here’s how common VS Code settings translate:
 
+| VS Code             | Orion Studio                | Notes                         |
+| ------------------- | ------------------ | ----------------------------- |
+| editor.fontFamily   | buffer_font_family | Orion Studio uses Orion Studio Mono by default  |
+| editor.fontSize     | buffer_font_size   | Set in pixels                 |
+| editor.tabSize      | tab_size           | Can override per language     |
+| editor.insertSpaces | insert_spaces      | Boolean                       |
+| editor.formatOnSave | format_on_save     | Works with formatter enabled  |
+| editor.wordWrap     | soft_wrap          | Supports optional wrap column |
+
 | VS Code             | Orion Studio       | Notes                                              |
 | ------------------- | ------------------ | -------------------------------------------------- |
-| editor.fontFamily   | buffer_font_family | The bundled compatibility font is named `.ZedMono` |
+| editor.fontFamily   | buffer_font_family | The bundled compatibility font is named `.Orion StudioMono` |
 | editor.fontSize     | buffer_font_size   | Set in pixels                                      |
 | editor.tabSize      | tab_size           | Can override per language                          |
 | editor.insertSpaces | insert_spaces      | Boolean                                            |
@@ -275,7 +285,7 @@ In VS Code, the standard entry point is opening a folder. From there, the left-h
 Orion Studio takes a different approach:
 
 - You can still open folders, but you don’t need to. Opening a single file or even starting with an empty workspace is valid.
-- The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
+- The [Command Palette](../command-palette.md) (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
 - Instead of a persistent panel, Orion Studio encourages you to:
   - Fuzzy-find files by name (`Cmd+P`)
   - Jump directly to symbols (`Cmd+Shift+O`)

@@ -41,14 +41,14 @@ Project instructions override personal `AGENTS.md` when they conflict.
 
 ## Instruction File Support {#support}
 
-| File                               | Orion Studio Agent                                              | External Agents       | Terminal Threads                 |
-| ---------------------------------- | --------------------------------------------------------------- | --------------------- | -------------------------------- |
-| `~/.config/orion-studio/AGENTS.md` | Loaded as personal instructions                                 | Not generally used    | Not used unless the CLI reads it |
-| Project `AGENTS.md`                | Loaded as project instructions                                  | Depends on the agent  | Depends on the CLI               |
-| `CLAUDE.md`                        | Loaded as compatible project instructions by Orion Studio Agent | Claude reads natively | Claude Code CLI reads natively   |
-| `.github/copilot-instructions.md`  | Loaded as compatible project instructions by Orion Studio Agent | Depends on the agent  | Depends on the CLI               |
+| File                              | [Orion Studio Agent](./zed-agent.md)                            | [External Agents](./external-agents.md) | Terminal Threads                 |
+| --------------------------------- | ------------------------------------------------------ | --------------------------------------- | -------------------------------- |
+| `~/.config/zed/AGENTS.md`         | Loaded as personal instructions                        | Not generally used                      | Not used unless the CLI reads it |
+| Project `AGENTS.md`               | Loaded as project instructions                         | Depends on the agent                    | Depends on the CLI               |
+| `CLAUDE.md`                       | Loaded as compatible project instructions by Orion Studio Agent | Claude reads natively                   | Claude Code CLI reads natively   |
+| `.github/copilot-instructions.md` | Loaded as compatible project instructions by Orion Studio Agent | Depends on the agent                    | Depends on the CLI               |
 
-External Agents and Terminal Threads may read their own native instruction files directly. Do not assume Orion Studio's instruction loader controls those agents.
+External Agents and [Terminal Threads](./terminal-threads.md) may read their own native instruction files directly. Do not assume Orion Studio's instruction loader controls those agents.
 
 ## Instructions vs. Skills {#instructions-vs-skills}
 
