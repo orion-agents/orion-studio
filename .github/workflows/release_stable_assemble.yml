@@ -157,7 +157,12 @@ jobs:
               count=$(find "${destination}" -type f -name "${name}" | wc -l)
               [[ "${count}" -eq 1 ]] || { echo "expected exactly one ${name} under ${destination}, found ${count}" >&2; exit 1; }
               found=$(find "${destination}" -type f -name "${name}" -print -quit)
-              mv "${found}" "${destination}/"
+              # The file may already sit directly in the destination (some
+              # platform artifacts upload release files at the platform-dir
+              # root); mv onto itself fails with "are the same file".
+              if [[ "${found}" != "${destination}/${name}" ]]; then
+                mv "${found}" "${destination}/"
+              fi
             done
             find "${destination}" -mindepth 1 -type d -empty -delete
           }
