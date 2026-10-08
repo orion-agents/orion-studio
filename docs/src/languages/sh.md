@@ -64,4 +64,5 @@ shfmt --version
 ## See also:
 
 - [Orion Studio Docs: Language Support: Bash](./bash.md)
+- [Orion Studio Docs: Language Support: Env](./env.md)
 - [Orion Studio Docs: Language Support: Fish](./fish.md)

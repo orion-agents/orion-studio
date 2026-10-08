@@ -21,11 +21,7 @@ You can do that by:
 
 If you have already set up an LLM provider to interact with [the Agent Panel](./agent-panel.md#getting-started), then that will also work for the Inline Assistant.
 
-[External Agents](./external-agents.md) run in agent threads, but they are not available for Inline Assistant generations. The Inline Assistant uses Orion Studio-configured [LLM providers](./llm-providers.md), including provider API keys, gateways, local models, supported subscriptions, and an operator-deployed Orion model service.
-
-The provider ID `orion.dev` in examples is a configuration identifier. It works
-only when a compatible Orion model endpoint is deployed and configured; it is
-not a claim that a public service is online.
+[External Agents](./external-agents.md) run in agent threads, but they are not available for Inline Assistant generations. The Inline Assistant uses Orion Studio-configured [LLM providers](./llm-providers.md), including Orion-hosted models, provider API keys, gateways, [local models](./use-a-local-model.md), and supported subscriptions.
 
 ## Adding Context
 

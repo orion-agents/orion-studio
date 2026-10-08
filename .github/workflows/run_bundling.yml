@@ -21,6 +21,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       CC: clang-18
       CXX: clang++-18
+      LLD: /usr/bin/ld.lld-18
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -61,6 +62,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       CC: clang-18
       CXX: clang++-18
+      LLD: /usr/bin/ld.lld-18
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -180,6 +182,17 @@ jobs:
         package-manager-cache: false
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: run_bundling::bundle_mac::print_macos_toolchain
+      run: |
+        sw_vers
+        xcode-select -p
+        xcodebuild -version
+        xcrun --sdk macosx --show-sdk-version
+        xcrun --sdk macosx --show-sdk-path
+        xcrun clang --version
+        printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR-<unset>}"
+        printf 'SDKROOT=%s\n' "${SDKROOT-<unset>}"
+        printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "${MACOSX_DEPLOYMENT_TARGET-<unset>}"
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
       env: {}
@@ -222,6 +235,17 @@ jobs:
         package-manager-cache: false
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: run_bundling::bundle_mac::print_macos_toolchain
+      run: |
+        sw_vers
+        xcode-select -p
+        xcodebuild -version
+        xcrun --sdk macosx --show-sdk-version
+        xcrun --sdk macosx --show-sdk-path
+        xcrun clang --version
+        printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR-<unset>}"
+        printf 'SDKROOT=%s\n' "${SDKROOT-<unset>}"
+        printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "${MACOSX_DEPLOYMENT_TARGET-<unset>}"
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
       env: {}

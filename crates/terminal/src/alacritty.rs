@@ -55,7 +55,10 @@ pub(super) type AlacrittyGridIterator<'a> = GridIterator<'a, AlacCell>;
 pub(super) type AlacrittyHyperlink = AlacHyperlink;
 
 #[derive(Clone)]
-pub(super) struct OrionTerminalListener(UnboundedSender<PtyEvent>);
+pub(super) struct OrionTerminalListener {
+    sender: UnboundedSender<PtyEvent>,
+    generation: u64,
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct AlacrittySearch {
@@ -190,8 +193,16 @@ pub(super) fn new_term(
     bounds: TerminalBounds,
     events_tx: UnboundedSender<PtyEvent>,
     alternate_scroll: AlternateScroll,
+    generation: u64,
 ) -> Arc<AlacrittyTermLock> {
-    let mut term = Term::new(config.clone(), &bounds, OrionTerminalListener(events_tx));
+    let mut term = Term::new(
+        config.clone(),
+        &bounds,
+        OrionTerminalListener {
+            sender: events_tx,
+            generation,
+        },
+    );
 
     if let AlternateScroll::Off = alternate_scroll {
         term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
@@ -208,7 +219,10 @@ pub(super) fn spawn_event_loop(
 ) -> Result<PtySender> {
     let event_loop = EventLoop::new(
         term,
-        OrionTerminalListener(events_tx),
+        OrionTerminalListener {
+            sender: events_tx,
+            generation: 0,
+        },
         pty,
         drain_on_exit,
         false,
@@ -331,7 +345,9 @@ impl From<AlacTermEvent> for TerminalBackendEvent {
 
 impl EventListener for OrionTerminalListener {
     fn send_event(&self, event: AlacTermEvent) {
-        self.0.unbounded_send(PtyEvent::Event(event.into())).ok();
+        self.sender
+            .unbounded_send(PtyEvent::Event(event.into(), self.generation))
+            .ok();
     }
 }
 
@@ -1205,7 +1221,10 @@ mod tests {
         let mut term = Term::new(
             config,
             &TerminalBounds::default(),
-            OrionTerminalListener(events_tx),
+            OrionTerminalListener {
+                sender: events_tx,
+                generation: 0,
+            },
         );
         for character in "└─zms-demo.target".chars() {
             term.input(character);

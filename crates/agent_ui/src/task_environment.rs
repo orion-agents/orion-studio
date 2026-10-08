@@ -360,7 +360,7 @@ impl TaskEnvironmentPanel {
     fn plan_counts(&self, cx: &App) -> Option<(u32, usize)> {
         let thread = active_agent_thread(&self.workspace, cx)?;
         let thread = thread.read(cx);
-        let plan = thread.plan();
+        let plan = thread.plan()?;
         if plan.is_empty() {
             return None;
         }

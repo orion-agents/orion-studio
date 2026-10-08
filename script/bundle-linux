@@ -156,9 +156,9 @@ upload_debug_symbols_to_sentry
 # Strip debug symbols and save them for upload to DigitalOcean.
 # We use llvm-objcopy because GNU objcopy on older distros (e.g. Ubuntu 20.04)
 # doesn't understand CREL sections produced by newer LLVM.
-"${LLVM_OBJCOPY:-llvm-objcopy}" --strip-debug "${target_dir}/${target_triple}/release/orion-studio"
-"${LLVM_OBJCOPY:-llvm-objcopy}" --strip-debug "${target_dir}/${target_triple}/release/cli"
-"${LLVM_OBJCOPY:-llvm-objcopy}" --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
+llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/orion-studio"
+llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
+llvm-objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
 if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then
@@ -190,8 +190,8 @@ ln -sf "orion-studio" "${app_dir}/bin/orion"
 ln -sf "orion-studio" "${app_dir}/bin/zed"
 
 # Libs
-# Bundle libstdc++ and libgcc_s so older supported systems can run binaries built
-# with our toolchain even when their runtime lacks required C++ or ARM SME symbols.
+# Bundle libstdc++ so older supported systems can run binaries built with our
+# toolchain even when their system libstdc++.so.6 lacks required GLIBCXX symbols.
 #
 # Never bundle the GLib family or its private dependencies: host libraries that
 # get dlopen'd are built against the system GLib, and resolving them against an
@@ -199,7 +199,7 @@ ln -sf "orion-studio" "${app_dir}/bin/zed"
 find_libs() {
     ldd ${target_dir}/${target_triple}/release/orion-studio |\
         cut -d' ' -f3 |\
-        grep -v '\<\(libc.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)' |\
+        grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)' |\
         grep -v '\<\(libglib-2.0.so\|libgobject-2.0.so\|libgio-2.0.so\|libgmodule-2.0.so\|libpcre.so\|libpcre2-8.so\|libmount.so\|libblkid.so\|libselinux.so\|libffi.so\|libresolv.so\|libz.so\)'
 }
 

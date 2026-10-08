@@ -34,8 +34,45 @@ Studio compatibility packages.
 
 ### Installing a release bundle manually
 
-Given a verified `orion-studio-linux-<arch>.tar.gz` artifact, unpack it and add
-the packaged canonical `orion-studio` launcher to your path:
+### Installing via a package manager
+
+There are several third-party Orion Studio packages for various Linux distributions and package managers, sometimes under `zed-editor`. Availability varies by distribution, but you may be able to install Orion Studio using one of these packages:
+
+- Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
+- Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview), [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
+- Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
+- Homebrew: [`zed`](https://formulae.brew.sh/cask/zed), [`zed@preview`](https://formulae.brew.sh/cask/zed@preview)
+- Manjaro: [`zed`](https://manjaristas.org/branch_compare?q=zed)
+- Conda: [`zed`](https://anaconda.org/conda-forge/zed)
+- Nix: `zed-editor` ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
+- Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
+- Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
+- ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
+- AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
+- Flathub: [`dev.zed.Zed`](https://flathub.org/apps/dev.zed.Zed)
+
+See [Repology](https://repology.org/project/zed-editor/versions) for a current list of Orion Studio packages in various repositories.
+
+### Community
+
+When installing a third-party package please be aware that it may not be completely up to date and may be slightly different from the Orion Studio we package (a common change is to rename the binary to `zedit` or `zeditor` to avoid conflicting with other packages).
+
+We'd love your help making Orion Studio available for everyone. If Orion Studio is not yet available for your package manager, and you would like to fix that, we have some notes on [how to do it](./development/linux.md#notes-for-packaging-zed).
+
+The packages in this section provide binary installs for Orion Studio but are not official packages within the associated distributions. These packages are maintained by community members and as such a higher level of caution should be taken when installing them.
+
+### Downloading manually
+
+If you'd prefer, you can install Orion Studio by downloading our pre-built .tar.gz. This is the same artifact that our install script uses, but you can customize the location of your installation by modifying the instructions below:
+
+Download the `.tar.gz` file:
+
+- [zed-linux-x86_64.tar.gz](https://cloud.zed.dev/releases/stable/latest/download?asset=zed&arch=x86_64&os=linux&source=docs)
+  ([preview](https://cloud.zed.dev/releases/preview/latest/download?asset=zed&arch=x86_64&os=linux&source=docs))
+- [zed-linux-aarch64.tar.gz](https://cloud.zed.dev/releases/stable/latest/download?asset=zed&arch=aarch64&os=linux&source=docs)
+  ([preview](https://cloud.zed.dev/releases/preview/latest/download?asset=zed&arch=aarch64&os=linux&source=docs))
+
+Then ensure that the `zed` binary in the tarball is on your path. The easiest way is to unpack the tarball and create a symlink:
 
 ```sh
 mkdir -p ~/.local

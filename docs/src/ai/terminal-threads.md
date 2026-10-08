@@ -11,7 +11,7 @@ Terminal Threads are different from [External Agents](./external-agents.md). Ext
 
 ## What Orion Studio Owns {#what-zed-owns}
 
-The section anchor retains its historical Zed name so incoming documentation links continue to work.
+The section anchor retains its historical Orion Studio name so incoming documentation links continue to work.
 
 Orion Studio owns the thread surface:
 
@@ -30,7 +30,7 @@ The CLI or TUI running inside the terminal owns its own:
 - skills and instruction files
 - MCP configuration
 
-Orion Studio Agent profiles, Orion Studio Agent tool permissions, Orion Studio Skills, and Orion Studio Agent MCP settings do not automatically apply to Terminal Threads.
+[Orion Studio Agent profiles](./agent-profiles.md), Orion Studio Agent tool permissions, Orion Studio Skills, and Orion Studio Agent MCP settings do not automatically apply to Terminal Threads.
 
 ## Opening a Terminal Thread {#opening-a-terminal-thread}
 
@@ -56,7 +56,9 @@ You can also configure this from the Settings UI under **AI**, via the "Terminal
 
 ## Terminal Thread Titles {#terminal-thread-titles}
 
-The terminal title in the toolbar updates automatically to reflect the running shell or process. You can also set a custom name by clicking the title or the pencil icon that appears on hover.
+The terminal title in the toolbar updates automatically to reflect the running shell or process. You can set a custom name by clicking the title or the pencil icon that appears on hover. In the Threads Sidebar, right-click a Terminal Thread and select **Rename Title**, or select it and press {#kb agent::RenameSelectedThread}.
+
+To edit the title of the active Terminal Thread from the Agent Panel, custom-map {#action agent::RenameSelectedThread} in your `keymap.json`. Its default binding is scoped to the Threads Sidebar.
 
 ## Notifications {#terminal-thread-notifications}
 
@@ -161,7 +163,7 @@ terminal_title = ["spinner", "project-name", "run-state", "thread-title"]
 
 Credentials come from the terminal session and the CLI/TUI running inside it.
 
-In remote projects, the CLI may read the remote shell environment and remote config files. In local Terminal Threads, it reads the local shell environment and local config files. Orion Studio does not copy API keys from LLM provider settings into Terminal Threads.
+In remote projects, the CLI may read the remote shell environment and remote config files. In local Terminal Threads, it reads the local shell environment and local config files. Orion Studio does not copy [API keys from LLM provider settings](./use-api-access.md) into Terminal Threads.
 
 ## When to Use Terminal Threads {#when-to-use-terminal-threads}
 

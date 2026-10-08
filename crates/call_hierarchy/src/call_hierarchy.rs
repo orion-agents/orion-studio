@@ -641,8 +641,16 @@ impl PickerDelegate for CallHierarchyDelegate {
                     workspace.active_pane().clone()
                 };
 
-                let editor = workspace
-                    .open_project_item::<Editor>(pane, buffer, true, true, true, true, window, cx);
+                let editor = workspace.open_project_item::<Editor>(
+                    Some(pane),
+                    buffer,
+                    true,
+                    true,
+                    true,
+                    true,
+                    window,
+                    cx,
+                );
 
                 editor.update(cx, |editor, cx| {
                     editor.change_selections(
@@ -2346,7 +2354,7 @@ mod tests {
             LanguageConfig {
                 name: LanguageName::new("Rust"),
                 matcher: Arc::new(LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
                 }),
                 ..LanguageConfig::default()
@@ -2360,7 +2368,7 @@ mod tests {
             LanguageConfig {
                 name: LanguageName::new("Rust"),
                 matcher: Arc::new(LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
                 }),
                 ..LanguageConfig::default()

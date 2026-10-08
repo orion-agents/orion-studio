@@ -112,7 +112,7 @@ To configure it manually, install the [Poolside Agent CLI](https://github.com/po
 }
 ```
 
-Poolside's documentation still uses the historical [`/tools/zed` route](https://docs.poolside.ai/tools/zed). Treat its Zed names and paths as third-party compatibility instructions and map them to Orion Studio's canonical settings path where necessary.
+Poolside's documentation still uses the historical [`/tools/zed` route](https://docs.poolside.ai/tools/zed). Treat its Orion Studio names and paths as third-party compatibility instructions and map them to Orion Studio's canonical settings path where necessary.
 
 ## Start an External Agent Thread {#start-thread}
 
@@ -124,16 +124,16 @@ You can also create keybindings for specific agents with {#action agent::NewExte
 
 External Agents run as separate processes that communicate with Orion Studio over ACP. This creates a boundary between Orion Studio configuration and agent-native configuration.
 
-| Capability                       | Behavior in External Agent threads                                                                  |
-| -------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Model/provider config            | Usually owned by the External Agent                                                                 |
-| Auth/API keys/subscriptions      | Usually owned by the External Agent                                                                 |
-| Orion Studio Agent profiles      | Do not apply unless the integration says otherwise                                                  |
-| Orion Studio Skills              | Do not apply as Orion Studio Skills                                                                 |
-| Native agent skills/instructions | Depends on the agent                                                                                |
-| Orion Studio MCP servers         | May be forwarded over ACP                                                                           |
-| Native MCP config                | May also be read by the agent                                                                       |
-| Tool permissions                 | Orion Studio ACP/tool forwarding permissions may apply; native tool permissions depend on the agent |
+| Capability                                | Behavior in External Agent threads                                                         |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Model/provider config                     | Usually owned by the External Agent                                                        |
+| Auth/API keys/subscriptions               | Usually owned by the External Agent                                                        |
+| [Orion Studio Agent profiles](./agent-profiles.md) | Do not apply unless the integration says otherwise                                         |
+| Orion Studio Skills                                | Do not apply as Orion Studio Skills                                                                 |
+| Native agent skills/instructions          | Depends on the agent                                                                       |
+| Orion Studio MCP servers                           | May be forwarded over ACP                                                                  |
+| Native MCP config                         | May also be read by the agent                                                              |
+| Tool permissions                          | Orion Studio ACP/tool forwarding permissions may apply; native tool permissions depend on the agent |
 
 For Orion Studio's native agent configuration, see [Orion Studio Agent](./zed-agent.md).
 
